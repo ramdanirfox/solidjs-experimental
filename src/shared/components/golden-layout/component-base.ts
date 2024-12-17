@@ -1,8 +1,5 @@
 import { ComponentContainer, GoldenLayout } from "golden-layout";
 
-import "golden-layout/dist/css/goldenlayout-base.css";
-import "golden-layout/dist/css/themes/goldenlayout-light-theme.css";
-
 export abstract class ComponentBase implements GoldenLayout.VirtuableComponent {
     private _rootElement: HTMLElement;
 

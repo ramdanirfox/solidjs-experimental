@@ -2,6 +2,10 @@ import { Component, onMount } from "solid-js";
 import { App } from "~/shared/components/golden-layout/app";
 import { ComponentBase } from "~/shared/components/golden-layout/component-base";
 
+import "./../shared/styles/golden-layout.css";
+import "golden-layout/dist/css/goldenlayout-base.css";
+import "golden-layout/dist/css/themes/goldenlayout-light-theme.css";
+
 export const GoldenLayoutView: Component<any> = () => {
     const cmpBase = ComponentBase;
 

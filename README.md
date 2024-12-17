@@ -14,4 +14,10 @@ Currently includes :
 - PNPM package manager
 
 # Running
-- `pnpm run dev` (open port 3011)
+Install dependencies before running by executing `pnpm i` beforehand
+- Project: `pnpm run dev` (open port 3011)
+- Test (Vitest) `pnpm run test` or `pnpm run test-ui`
+
+# Integration Roadmap
+- [Solid Gridstack](https://github.com/FelixWieland/solid-gridstack) or [gridstack.js](https://github.com/gridstack/gridstack.js)
+- [Winbox](https://github.com/nextapps-de/winbox)
