@@ -8,15 +8,29 @@ import "golden-layout/dist/css/themes/goldenlayout-light-theme.css";
 
 export const GoldenLayoutView: Component<any> = () => {
     const cmpBase = ComponentBase;
-
+    let app: App;
     onMount(() => {
         console.log("Loaded", cmpBase);
-        const app = new App();
+        app = new App(
+            [
+                <div>Hallo Dunia</div>,
+                <h2>Apa Kabar</h2>,
+                <p>Hey Brohhh</p>
+            ]
+        );
         (window as any).goldenLayoutApiTestApp = app;
         app.start();
     });
 
+    const fnAddView = (index: number, title: string) => () => {
+        app.goldenAppendView(index, title);
+    }
+
     return (
+        <>
+        <button type="button" onclick={fnAddView(0, "View 1")}>Tambah View 1</button>
+        <button type="button" onclick={fnAddView(1, "View 2")}>Tambah View 2</button>
+        <button type="button" onclick={fnAddView(2, "View Brohh")}>Tambah View 3</button>
         <section id="bodySection">
             <section id="controls">
                 <section id="registerSection">
@@ -104,5 +118,6 @@ export const GoldenLayoutView: Component<any> = () => {
             <section id="layoutContainer">
             </section>
         </section>
+        </>
     );
 };

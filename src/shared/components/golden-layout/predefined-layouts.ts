@@ -3,6 +3,7 @@ import { BooleanComponent } from './boolean-component';
 import { ColorComponent } from './color-component';
 import { EventComponent } from './event-component';
 import { TextComponent } from './text-component';
+import { SolidGoldenWrapperComponent } from './solidgolden-wrapper-component';
 
 export interface Layout {
     name: string;
@@ -21,7 +22,7 @@ const miniRowConfig: LayoutConfig = {
                 },
                 isClosable: true,
                 reorderEnabled: true,
-                componentType: ColorComponent.typeName,
+                componentType: SolidGoldenWrapperComponent.typeName,
                 size: '30%',
                 componentState: 'gold',
             },
@@ -30,7 +31,7 @@ const miniRowConfig: LayoutConfig = {
                 header: { show: "top", popout: false },
                 type: "component",
                 reorderEnabled: true,
-                componentType: ColorComponent.typeName,
+                componentType: SolidGoldenWrapperComponent.typeName,
                 componentState: undefined,
             },
         ],

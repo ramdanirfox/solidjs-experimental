@@ -14,9 +14,11 @@ import {
 import { BooleanComponent } from './boolean-component';
 import { ColorComponent } from './color-component';
 import { EventComponent } from './event-component';
-import { prefinedLayouts } from './predefined-layouts';
+import { Layout, prefinedLayouts } from './predefined-layouts';
 import { TextComponent } from './text-component';
 import { ComponentBase } from './component-base';
+import { SolidGoldenWrapperComponent } from './solidgolden-wrapper-component';
+import { JSX } from 'solid-js';
 
 export class App {
     private readonly _layoutElement: HTMLElement;
@@ -77,8 +79,11 @@ export class App {
     private readonly _bindComponentEventListener =
         (container: ComponentContainer, itemConfig: ResolvedComponentItemConfig) => this.handleBindComponentEvent(container, itemConfig);
     private readonly _unbindComponentEventListener = (container: ComponentContainer) => this.handleUnbindComponentEvent(container);
-
-    constructor() {
+    public jsxComponents: JSX.Element[] = [];
+    public jsxCmpCurrentIndex = 0;
+    
+    constructor(jsxComponents: JSX.Element[]) {
+        this.jsxComponents = jsxComponents;
         const controlsElement = document.querySelector('#controls') as HTMLElement;
         if (controlsElement === null) {
             throw new Error('controlsElement not found');
@@ -289,11 +294,13 @@ export class App {
     }
 
     private createComponent(container: ComponentContainer, componentTypeName: string, state: JsonValue | undefined, virtual: boolean) {
+        console.log("[GL] Masuk sini", container, componentTypeName, state, virtual);
         switch (componentTypeName) {
             case ColorComponent.typeName: return new ColorComponent(container, state, virtual);
             case TextComponent.typeName: return new TextComponent(container, state, virtual);
             case BooleanComponent.typeName: return new BooleanComponent(container, state, virtual);
             case EventComponent.typeName: return new EventComponent(container, state, virtual);
+            case SolidGoldenWrapperComponent.typeName: return new SolidGoldenWrapperComponent(container, state, virtual, this.jsxComponents);
             default:
                 throw new Error('createComponent: Unexpected componentTypeName: ' + componentTypeName);
         }
@@ -422,7 +429,6 @@ export class App {
         if (this._allComponentsRegistered) {
             return;
         }
-
         this._goldenLayout.registerComponentConstructor(ColorComponent.typeName, ColorComponent);
         this._goldenLayout.registerComponentConstructor(EventComponent.typeName, EventComponent);
         this._registerComponentTypesButton.disabled = true;
@@ -564,6 +570,7 @@ export class App {
         result.push(TextComponent.typeName);
         result.push(BooleanComponent.typeName);
         result.push(EventComponent.typeName);
+        result.push(SolidGoldenWrapperComponent.typeName);
         return result;
     }
 
@@ -609,5 +616,18 @@ export class App {
 
     private numberToPixels(value: number): string {
         return value.toString(10) + 'px';
+    }
+
+    goldenLoadLayout(layout: LayoutConfig) {
+        this._goldenLayout.loadLayout(layout);
+    }
+
+    goldenRegisterComponent(typeName: string, component: GoldenLayout.ComponentConstructor) {
+        this._goldenLayout.registerComponentConstructor(typeName, component);
+    }
+
+    goldenAppendView(index: number, title?: string) {
+        this.jsxCmpCurrentIndex = index;
+        this._goldenLayout.addComponent(SolidGoldenWrapperComponent.typeName, {jsxIndex: index}, title ? title : "SolidJS View");
     }
 }
