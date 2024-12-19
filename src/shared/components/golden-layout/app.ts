@@ -17,7 +17,7 @@ import { EventComponent } from './event-component';
 import { Layout, prefinedLayouts } from './predefined-layouts';
 import { TextComponent } from './text-component';
 import { ComponentBase } from './component-base';
-import { SolidGoldenWrapperComponent } from './solidgolden-wrapper-component';
+import { SolidGoldenFactory, SolidGoldenWrapperComponent } from './solidgolden-wrapper-component';
 import { JSX } from 'solid-js';
 
 export class App {
@@ -81,9 +81,14 @@ export class App {
     private readonly _unbindComponentEventListener = (container: ComponentContainer) => this.handleUnbindComponentEvent(container);
     public jsxComponents: JSX.Element[] = [];
     public jsxCmpCurrentIndex = 0;
+    public solidGoldenFactory = new SolidGoldenFactory();
+    public solidGoldenComponentRef = this.solidGoldenFactory.create("solid view");
     
     constructor(jsxComponents: JSX.Element[]) {
         this.jsxComponents = jsxComponents;
+        console.log("[App] JSXes", this.jsxComponents);
+        this.solidGoldenFactory.setJsxComponents(this.jsxComponents);
+        this.solidGoldenComponentRef = this.solidGoldenFactory.create("solid view"); // WARNING : jsxComponents will not update anymore even after calling this.solidGoldenFactory.setJsxComponents again
         const controlsElement = document.querySelector('#controls') as HTMLElement;
         if (controlsElement === null) {
             throw new Error('controlsElement not found');
@@ -294,19 +299,20 @@ export class App {
     }
 
     private createComponent(container: ComponentContainer, componentTypeName: string, state: JsonValue | undefined, virtual: boolean) {
-        console.log("[GL] Masuk sini", container, componentTypeName, state, virtual);
+        console.trace("[GL] Masuk sini", container, componentTypeName, state, virtual);
         switch (componentTypeName) {
             case ColorComponent.typeName: return new ColorComponent(container, state, virtual);
             case TextComponent.typeName: return new TextComponent(container, state, virtual);
             case BooleanComponent.typeName: return new BooleanComponent(container, state, virtual);
             case EventComponent.typeName: return new EventComponent(container, state, virtual);
-            case SolidGoldenWrapperComponent.typeName: return new SolidGoldenWrapperComponent(container, state, virtual, this.jsxComponents);
+            case this.solidGoldenComponentRef.typeName: return new this.solidGoldenComponentRef(container, state, virtual);
             default:
                 throw new Error('createComponent: Unexpected componentTypeName: ' + componentTypeName);
         }
     }
 
     private handleBindComponentEvent(container: ComponentContainer, itemConfig: ResolvedComponentItemConfig): /* ComponentContainer.Handle */ any {
+        console.log("[GL] Bind Listener", container, itemConfig);
         const componentTypeName = ResolvedComponentItemConfig.resolveComponentTypeName(itemConfig);
         if (componentTypeName === undefined) {
             throw new Error('handleBindComponentEvent: Undefined componentTypeName');
@@ -570,7 +576,7 @@ export class App {
         result.push(TextComponent.typeName);
         result.push(BooleanComponent.typeName);
         result.push(EventComponent.typeName);
-        result.push(SolidGoldenWrapperComponent.typeName);
+        result.push(this.solidGoldenComponentRef.typeName);
         return result;
     }
 
@@ -628,6 +634,6 @@ export class App {
 
     goldenAppendView(index: number, title?: string) {
         this.jsxCmpCurrentIndex = index;
-        this._goldenLayout.addComponent(SolidGoldenWrapperComponent.typeName, {jsxIndex: index}, title ? title : "SolidJS View");
+        this._goldenLayout.addComponent(this.solidGoldenComponentRef.typeName, {jsxIndex: index}, title ? title : undefined);
     }
 }

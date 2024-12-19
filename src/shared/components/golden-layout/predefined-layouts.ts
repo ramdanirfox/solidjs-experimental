@@ -16,23 +16,27 @@ const miniRowConfig: LayoutConfig = {
         content: [
             {
                 type: "component",
-                title: "Golden",
+                title: "Solid",
                 header: {
                     show: "top",
                 },
                 isClosable: true,
                 reorderEnabled: true,
-                componentType: SolidGoldenWrapperComponent.typeName,
+                componentType: "solid view",
                 size: '30%',
-                componentState: 'gold',
+                componentState: {
+                    jsxIndex: 1,
+                },
             },
             {
-                title: "Layout",
+                title: "JS",
                 header: { show: "top", popout: false },
                 type: "component",
                 reorderEnabled: true,
-                componentType: SolidGoldenWrapperComponent.typeName,
-                componentState: undefined,
+                componentType: "solid view",
+                componentState: {
+                    jsxIndex: 4,
+                },
             },
         ],
     },

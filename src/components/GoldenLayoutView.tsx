@@ -5,17 +5,23 @@ import { ComponentBase } from "~/shared/components/golden-layout/component-base"
 import "./../shared/styles/golden-layout.css";
 import "golden-layout/dist/css/goldenlayout-base.css";
 import "golden-layout/dist/css/themes/goldenlayout-light-theme.css";
+import Counter from "./Counter";
+import { useSJXContext } from "~/shared/context/SJXContext";
 
 export const GoldenLayoutView: Component<any> = () => {
     const cmpBase = ComponentBase;
     let app: App;
+    const SJXctx = useSJXContext();
     onMount(() => {
         console.log("Loaded", cmpBase);
         app = new App(
             [
                 <div>Hallo Dunia</div>,
-                <h2>Apa Kabar</h2>,
+                <h2>Apa Kabar {SJXctx?.ctx.increments.val()}</h2>,
                 <p>Hey Brohhh</p>
+                // <Counter />,
+                // <Counter />,
+                // <Counter />
             ]
         );
         (window as any).goldenLayoutApiTestApp = app;
@@ -28,7 +34,7 @@ export const GoldenLayoutView: Component<any> = () => {
 
     return (
         <>
-        <button type="button" onclick={fnAddView(0, "View 1")}>Tambah View 1</button>
+        <button type="button" onclick={fnAddView(0, "View 1")}>Tambah View 1 cnt={SJXctx?.ctx.increments.val()}</button>
         <button type="button" onclick={fnAddView(1, "View 2")}>Tambah View 2</button>
         <button type="button" onclick={fnAddView(2, "View Brohh")}>Tambah View 3</button>
         <section id="bodySection">
