@@ -22,3 +22,7 @@ Install dependencies before running by executing `pnpm i` beforehand
 - [Solid Gridstack](https://github.com/FelixWieland/solid-gridstack) or [gridstack.js](https://github.com/gridstack/gridstack.js)
 - [Winbox](https://github.com/nextapps-de/winbox)
 - [maxgraph](https://maxgraph.github.io/) (continuation of mxgraph)
+
+# Notes - Golden Layout integration with SolidJS
+- Similar JSX instance will replace older one when rendered twice
+- Context doesnt connect each other between different render (pass context from GoldenLayoutView as workaround)
