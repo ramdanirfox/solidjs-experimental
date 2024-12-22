@@ -4,7 +4,7 @@ import { useSJXContext } from "~/shared/context/SJXContext";
 interface IGoldenComponentWrapper {
     currentIndex: number,
     maxIndex: number,
-    jsxComponents: JSX.Element[],
+    jsxComponents: (JSX.Element | (()=>JSX.Element))[],
     state: any
 }
 
@@ -18,12 +18,7 @@ export const  GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
         <p>State: {JSON.stringify(props.state)}</p>
         <p>ctxcnt: cnt={SJXctx?.ctx.increments.val()}</p>
         </>}>
-        <div>
-        {props.jsxComponents[props.currentIndex]} cnt={SJXctx?.ctx.increments.val()}
-        </div>
-        <div>
-            cnt={SJXctx?.ctx.increments.val()}
-        </div>
+        {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (()=>JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
     </Show>
         
     </>

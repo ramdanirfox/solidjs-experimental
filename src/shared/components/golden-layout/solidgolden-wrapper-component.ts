@@ -57,7 +57,7 @@ const [registeredClasses, setRegisteredClasses] = createSignal<RegisteredClasses
 
 export class SolidGoldenFactory {
     constructor() {}
-    public jsxComponents: JSX.Element[] = [];
+    public jsxComponents: (JSX.Element | (()=>JSX.Element))[] = [];
 
     private static defaultOptions: { typeName: string } = {
         typeName: 'solidgolden',
@@ -78,7 +78,7 @@ export class SolidGoldenFactory {
         // console.log("[Factory] JSX Refs", this.jsxComponents, jsxRef);
         const newClass = class klass extends ComponentBase {
             static readonly typeName: string = options.typeName;
-            static jsxCmps: JSX.Element[] = [];
+            static jsxCmps: (JSX.Element | (()=>JSX.Element))[] = [];
 
             private _containerClickListener = () => this.handleClickFocusEvent();
             private _containerFocusinListener = () => this.handleClickFocusEvent();
@@ -95,11 +95,11 @@ export class SolidGoldenFactory {
                 // this.rootHtmlElement.appendChild(this._inputElement);
                 // const a = () => <Counter />;
                 // console.trace("[SJSWrapper] State2 : ", state, klass.jsxCmps);
-                if (state && typeof (state as any).jsxIndex == "number" && klass.jsxCmps[(state as any).jsxIndex]) {
-                    render(() => klass.jsxCmps[(state as any).jsxIndex], this.rootHtmlElement);
-                    console.log("[SJSWrapper] root html", this.rootHtmlElement);
-                }
-                else {
+                // if (state && typeof (state as any).jsxIndex == "number" && klass.jsxCmps[(state as any).jsxIndex]) {
+                //     render(() => klass.jsxCmps[(state as any).jsxIndex], this.rootHtmlElement);
+                //     console.log("[SJSWrapper] root html", this.rootHtmlElement);
+                // }
+                // else {
                     render(() => GoldenComponentWrapper(
                         {
                             currentIndex: (state as any).jsxIndex,
@@ -108,7 +108,7 @@ export class SolidGoldenFactory {
                             state: state
                         }), this.rootHtmlElement);
                     // render(() => Counter(), this.rootHtmlElement);
-                }
+                // }
 
                 this.container.stateRequestEvent = () => this.handleContainerStateRequestEvent();
 
@@ -125,7 +125,7 @@ export class SolidGoldenFactory {
                 this.container.focus();
             }
 
-            updateJsxComponents(jsxComponents: JSX.Element[]) {
+            updateJsxComponents(jsxComponents: (JSX.Element[] | (()=>JSX.Element))[]) {
                 klass.jsxCmps = jsxComponents;
                 // console.trace("[SJSWrapper] Updating JSX", jsxComponents, klass.jsxCmps);
             }
@@ -145,7 +145,7 @@ export class SolidGoldenFactory {
         setRegisteredClasses(classes);
     }
 
-    setJsxComponents(jsxComponents: JSX.Element[]) {
+    setJsxComponents(jsxComponents: (JSX.Element | (()=>JSX.Element))[]) {
         console.log("[Factory] Set JSX", jsxComponents);
         this.jsxComponents = jsxComponents;
         Object.keys(registeredClasses()).forEach((typeName) => {

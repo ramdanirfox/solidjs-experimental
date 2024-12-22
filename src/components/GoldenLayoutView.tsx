@@ -16,10 +16,10 @@ export const GoldenLayoutView: Component<any> = () => {
         console.log("Loaded", cmpBase);
         app = new App(
             [
-                <div>Hallo Dunia</div>,
+                () => <div>Hallo Dunia</div>,
                 <h2>Apa Kabar {SJXctx?.ctx.increments.val()}</h2>,
-                <p>Hey Brohhh</p>
-                // <Counter />,
+                // <p>Hey Brohhh</p>
+                () => <Counter />,
                 // <Counter />,
                 // <Counter />
             ]

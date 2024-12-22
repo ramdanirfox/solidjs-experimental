@@ -79,12 +79,12 @@ export class App {
     private readonly _bindComponentEventListener =
         (container: ComponentContainer, itemConfig: ResolvedComponentItemConfig) => this.handleBindComponentEvent(container, itemConfig);
     private readonly _unbindComponentEventListener = (container: ComponentContainer) => this.handleUnbindComponentEvent(container);
-    public jsxComponents: JSX.Element[] = [];
+    public jsxComponents: (JSX.Element | (()=>JSX.Element))[] = [];
     public jsxCmpCurrentIndex = 0;
     public solidGoldenFactory = new SolidGoldenFactory();
     public solidGoldenComponentRef = this.solidGoldenFactory.create("solid view");
     
-    constructor(jsxComponents: JSX.Element[]) {
+    constructor(jsxComponents: (JSX.Element | (()=>JSX.Element))[]) {
         this.jsxComponents = jsxComponents;
         console.log("[App] JSXes", this.jsxComponents);
         this.solidGoldenFactory.setJsxComponents(this.jsxComponents);
@@ -152,7 +152,7 @@ export class App {
         if (eventBindingVirtualRadio === null) {
             throw new Error('Could not find EventBindingVirtualRadio');
         }
-        this._eventBindingVirtualRadio = eventBindingVirtualRadio;
+        this._eventBindingVirtualRadio = eventBindingVirtualRadio; 
         this._eventBindingVirtualRadio.addEventListener('click', this._eventBindingVirtualRadioClickListener, { passive: true });
 
         const eventBindingEmbeddedRadio = document.querySelector('#eventBindingEmbeddedRadio') as HTMLInputElement;
