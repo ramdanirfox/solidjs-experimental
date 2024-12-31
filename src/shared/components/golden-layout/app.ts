@@ -6,6 +6,7 @@ import {
     GoldenLayout, 
     JsonValue, 
     LayoutConfig, 
+    LayoutManager, 
     LogicalZIndex, 
     ResolvedComponentItemConfig, 
     ResolvedLayoutConfig, 
@@ -635,5 +636,19 @@ export class App {
     goldenAppendView(index: number, title?: string) {
         this.jsxCmpCurrentIndex = index;
         this._goldenLayout.addComponent(this.solidGoldenComponentRef.typeName, {jsxIndex: index}, title ? title : undefined);
+    }
+
+    goldenListenEvents<K extends keyof EventEmitter.EventParamsMap>(e:  K, cb: EventEmitter.Callback<K>) {
+        this._goldenLayout.on(e, cb);
+    }
+    goldenRegisterEventHub(e: string, cb: EventEmitter.Callback<keyof EventEmitter.EventParamsMap>, goldenLayoutRef?: GoldenLayout | LayoutManager) {
+        const gl: LayoutManager | GoldenLayout = goldenLayoutRef ? goldenLayoutRef : this._goldenLayout;
+        gl.eventHub.on(e as keyof EventEmitter.EventParamsMap, cb);
+        console.log("Event Registered", goldenLayoutRef);
+    }
+
+    goldenEmitEventHub(eventName: string, value: string, goldenLayoutRef?: GoldenLayout | LayoutManager) {
+        const gl: LayoutManager | GoldenLayout = goldenLayoutRef ? goldenLayoutRef : this._goldenLayout;
+        gl.eventHub.emit(eventName as keyof EventEmitter.EventParamsMap, value);
     }
 }

@@ -24,6 +24,7 @@ Install dependencies before running by executing `pnpm i` beforehand
 - [Solid Gridstack](https://github.com/FelixWieland/solid-gridstack) or [gridstack.js](https://github.com/gridstack/gridstack.js)
 - [Winbox](https://github.com/nextapps-de/winbox)
 - [maxgraph](https://maxgraph.github.io/) (continuation of mxgraph)
+- [JSGantt Improved](https://github.com/jsGanttImproved/jsgantt-improved/)
 
 # Notes - Golden Layout integration with SolidJS
 - Similar JSX instance will replace older one when rendered twice (to mitigate this, provide function that return JSX.Element to create new instance of JSX)

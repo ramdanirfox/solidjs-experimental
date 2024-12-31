@@ -7,6 +7,7 @@ import "golden-layout/dist/css/goldenlayout-base.css";
 import "golden-layout/dist/css/themes/goldenlayout-light-theme.css";
 import Counter from "./Counter";
 import { useSJXContext } from "~/shared/context/SJXContext";
+import { EventEmitter } from "golden-layout";
 
 export const GoldenLayoutView: Component<any> = () => {
     const cmpBase = ComponentBase;
@@ -14,23 +15,62 @@ export const GoldenLayoutView: Component<any> = () => {
     const SJXctx = useSJXContext();
     onMount(() => {
         console.log("Loaded", cmpBase);
-        app = new App(
-            [
-                () => <div>Hallo Dunia</div>,
-                <h2>Apa Kabar {SJXctx?.ctx.increments.val()}</h2>,
-                // <p>Hey Brohhh</p>
-                () => <Counter />,
-                // <Counter />,
-                // <Counter />
-            ]
-        );
-        (window as any).goldenLayoutApiTestApp = app;
-        app.start();
+        // const unmuteListener = (window as any).fnMuteEventListeners("beforeunload");
+        fnInitializeGlView();
+        // (window as any).addEventListener = (a:any,b:any,c:any) => {
+        //     console.trace("[window addEventListener]", a,b,c);
+        // }
+        // (window as any).fnUnmuteListener();
     });
 
-    const fnAddView = (index: number, title: string) => () => {
-        app.goldenAppendView(index, title);
+    const fnInitializeGlView = () => {
+        const isPopup = window.location.search.includes("gl-window");
+            app = new App(
+                [
+                    () => <div>Hallo Dunia</div>,
+                    <h2>Apa Kabar {SJXctx?.ctx.increments.val()}</h2>,
+                    // <p>Hey Brohhh</p>
+                    () => <Counter />,
+                    // <Counter />,
+                    // <Counter />
+                ]
+            );
+            (window as any).goldenLayoutApiTestApp = app;
+            app.start();
+            // app.goldenListenEvents("__all", (a) => {
+            //     console.log("[GoldLayout] Event Popout Received", a);
+            // });
+            app.goldenListenEvents("windowOpened", (bwPopout) => {
+                console.log("[GoldLayout] Event Popout Received", bwPopout);
+                const eName: string = "tabrestore";
+                // a.getGlInstance().eventHub.on(eName as keyof EventEmitter.EventParamsMap, (c: "__all", d: "__all") => {console.log("[EV] triggered parent side!",c,d); a.popIn()})
+                app.goldenRegisterEventHub(eName, ((c,d) => {console.log("[EV] triggered child side!",c,d); bwPopout.popIn()}) as EventEmitter.Callback<"userBroadcast">, bwPopout.getGlInstance());
+            });
+            app.goldenListenEvents("windowClosed", (a) => {
+                console.log("[GoldLayout] Event Received", a);
+            });
+
+            if (isPopup) {
+                (window).addEventListener("pagehide", (e) => {app.goldenEmitEventHub("tabrestore", "Restore_" + window.location.search)}) // --> reliable
+            }
     }
+
+    const fnAddView = (index: number, title: string) => () => {
+        app.goldenAppendView(index, title); 
+    }
+
+    const fnDitchDefaultGLBeforeUnloadListeners = () => {
+        const globalListenerEvs = (window as any).getEventListeners((window as any));
+        if (globalListenerEvs.beforeunload) {
+            const beforeunloadEvts = globalListenerEvs.beforeunload;
+            beforeunloadEvts.forEach((ev: any) => {
+                (window as any).removeEventListener('beforeunload', ev.listener);
+            })
+        }
+
+    }
+
+    
 
     return (
         <>

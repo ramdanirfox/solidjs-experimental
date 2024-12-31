@@ -11,6 +11,9 @@ export interface Layout {
 }
 
 const miniRowConfig: LayoutConfig = {
+    settings: {
+        popInOnClose: true
+    },
     root: {
         type: ItemType.row,
         content: [
