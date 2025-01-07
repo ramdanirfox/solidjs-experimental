@@ -22,6 +22,7 @@ export default function SvarReactGantt() {
     })
   });
 
+
   const fnMountReact = (root_dom: any) => {
     const Gantt: any = sigCmpSvar().Gantt;
     const Willow: any = sigCmpSvar().Willow;
