@@ -84,6 +84,8 @@ export class App {
     public jsxCmpCurrentIndex = 0;
     public solidGoldenFactory = new SolidGoldenFactory();
     public solidGoldenComponentRef = this.solidGoldenFactory.create("solid view");
+    public componentContainers: any;
+    public componentContainersCb: any;
     
     constructor(jsxComponents: (JSX.Element | (()=>JSX.Element))[]) {
         this.jsxComponents = jsxComponents;
@@ -300,17 +302,18 @@ export class App {
     }
 
     private createComponent(container: ComponentContainer, componentTypeName: string, state: JsonValue | undefined, virtual: boolean) {
-        console.trace("[GL] Masuk sini", container, componentTypeName, state, virtual);
+        console.log("[GL] Masuk sini", container, componentTypeName, state, virtual);
         switch (componentTypeName) {
             case ColorComponent.typeName: return new ColorComponent(container, state, virtual);
             case TextComponent.typeName: return new TextComponent(container, state, virtual);
             case BooleanComponent.typeName: return new BooleanComponent(container, state, virtual);
             case EventComponent.typeName: return new EventComponent(container, state, virtual);
-            case this.solidGoldenComponentRef.typeName: return new this.solidGoldenComponentRef(container, state, virtual);
+            case this.solidGoldenComponentRef.typeName: console.log("[GL] Case Sini"); this.goldenInformComponentCreation(container); return new this.solidGoldenComponentRef(container, state, virtual);
             default:
                 throw new Error('createComponent: Unexpected componentTypeName: ' + componentTypeName);
         }
     }
+
 
     private handleBindComponentEvent(container: ComponentContainer, itemConfig: ResolvedComponentItemConfig): /* ComponentContainer.Handle */ any {
         console.log("[GL] Bind Listener", container, itemConfig);
@@ -650,5 +653,13 @@ export class App {
     goldenEmitEventHub(eventName: string, value: string, goldenLayoutRef?: GoldenLayout | LayoutManager) {
         const gl: LayoutManager | GoldenLayout = goldenLayoutRef ? goldenLayoutRef : this._goldenLayout;
         gl.eventHub.emit(eventName as keyof EventEmitter.EventParamsMap, value);
+    }
+
+    goldenInformComponentCreation(c: ComponentContainer) {
+        this.componentContainersCb(c);
+    }
+
+    goldenRegisterComponentCreatioinCb(cb: (c: ComponentContainer) => void) {
+        this.componentContainersCb = cb;
     }
 }

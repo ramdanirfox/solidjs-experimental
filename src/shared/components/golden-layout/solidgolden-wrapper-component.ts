@@ -97,7 +97,7 @@ export class SolidGoldenFactory {
                 // console.trace("[SJSWrapper] State2 : ", state, klass.jsxCmps);
                 // if (state && typeof (state as any).jsxIndex == "number" && klass.jsxCmps[(state as any).jsxIndex]) {
                 //     render(() => klass.jsxCmps[(state as any).jsxIndex], this.rootHtmlElement);
-                //     console.log("[SJSWrapper] root html", this.rootHtmlElement);
+                    console.log("[SJSWrapper] root html", this.rootHtmlElement);
                 // }
                 // else {
                     render(() => GoldenComponentWrapper(
