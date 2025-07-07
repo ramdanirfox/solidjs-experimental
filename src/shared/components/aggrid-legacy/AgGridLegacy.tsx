@@ -3,6 +3,8 @@
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import { createSignal, onMount, Show } from "solid-js";
+// import AgGridSolid from "solid-ag-grid";
+import Aggrid from "solid-ag-grid";
 
 export default function AgGridLegacy() {
     let [sigAgGrid, setSigAgGrid] = createSignal<any>(null);
@@ -15,7 +17,7 @@ export default function AgGridLegacy() {
         });
     });
 
-    const columnDefs = [
+    const columnDefs: any = [
         { field: 'make' },
         { field: 'model' },
         { field: 'price' },
@@ -29,14 +31,14 @@ export default function AgGridLegacy() {
         flex: 1,
     };
     return (
-        <Show when={sigAgGrid()} fallback={"Loading..."}>
+        // <Show when={sigAgGrid()} fallback={"Loading..."}>
             <div class="ag-theme-alpine" style={{ height: '100vh' }}>
-                <AgGridSolid
+                <Aggrid
                     columnDefs={columnDefs}
                     rowData={rowData}
                     defaultColDef={defaultColDef}
                 />
             </div>
-        </Show>
+        // </Show>
     );
 }

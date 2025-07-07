@@ -1,0 +1,5 @@
+/* Sometimes #deckgl-overlay style is overriden by Hope UI*/
+
+#deckgl-overlay {
+  max-width: unset;
+}

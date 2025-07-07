@@ -1,3 +1,4 @@
+.env
 
 dist
 .solid
@@ -27,3 +28,6 @@ gitignore
 # System Files
 .DS_Store
 Thumbs.db
+
+*storybook.log
+storybook-static

@@ -1,16 +1,16 @@
-import { 
-    ComponentContainer, 
-    ComponentItemConfig, 
-    ContentItem, 
-    EventEmitter, 
-    GoldenLayout, 
-    JsonValue, 
-    LayoutConfig, 
-    LayoutManager, 
-    LogicalZIndex, 
-    ResolvedComponentItemConfig, 
-    ResolvedLayoutConfig, 
-    Stack 
+import {
+    ComponentContainer,
+    ComponentItemConfig,
+    ContentItem,
+    EventEmitter,
+    GoldenLayout,
+    JsonValue,
+    LayoutConfig,
+    LayoutManager,
+    LogicalZIndex,
+    ResolvedComponentItemConfig,
+    ResolvedLayoutConfig,
+    Stack
 } from 'golden-layout';
 import { BooleanComponent } from './boolean-component';
 import { ColorComponent } from './color-component';
@@ -80,14 +80,14 @@ export class App {
     private readonly _bindComponentEventListener =
         (container: ComponentContainer, itemConfig: ResolvedComponentItemConfig) => this.handleBindComponentEvent(container, itemConfig);
     private readonly _unbindComponentEventListener = (container: ComponentContainer) => this.handleUnbindComponentEvent(container);
-    public jsxComponents: (JSX.Element | (()=>JSX.Element))[] = [];
+    public jsxComponents: (JSX.Element | (() => JSX.Element))[] = [];
     public jsxCmpCurrentIndex = 0;
     public solidGoldenFactory = new SolidGoldenFactory();
     public solidGoldenComponentRef = this.solidGoldenFactory.create("solid view");
     public componentContainers: any;
     public componentContainersCb: any;
-    
-    constructor(jsxComponents: (JSX.Element | (()=>JSX.Element))[]) {
+
+    constructor(jsxComponents: (JSX.Element | (() => JSX.Element))[]) {
         this.jsxComponents = jsxComponents;
         console.log("[App] JSXes", this.jsxComponents);
         this.solidGoldenFactory.setJsxComponents(this.jsxComponents);
@@ -155,7 +155,7 @@ export class App {
         if (eventBindingVirtualRadio === null) {
             throw new Error('Could not find EventBindingVirtualRadio');
         }
-        this._eventBindingVirtualRadio = eventBindingVirtualRadio; 
+        this._eventBindingVirtualRadio = eventBindingVirtualRadio;
         this._eventBindingVirtualRadio.addEventListener('click', this._eventBindingVirtualRadioClickListener, { passive: true });
 
         const eventBindingEmbeddedRadio = document.querySelector('#eventBindingEmbeddedRadio') as HTMLInputElement;
@@ -638,10 +638,10 @@ export class App {
 
     goldenAppendView(index: number, title?: string) {
         this.jsxCmpCurrentIndex = index;
-        this._goldenLayout.addComponent(this.solidGoldenComponentRef.typeName, {jsxIndex: index}, title ? title : undefined);
+        this._goldenLayout.addComponent(this.solidGoldenComponentRef.typeName, { jsxIndex: index }, title ? title : undefined);
     }
 
-    goldenListenEvents<K extends keyof EventEmitter.EventParamsMap>(e:  K, cb: EventEmitter.Callback<K>) {
+    goldenListenEvents<K extends keyof EventEmitter.EventParamsMap>(e: K, cb: EventEmitter.Callback<K>) {
         this._goldenLayout.on(e, cb);
     }
     goldenRegisterEventHub(e: string, cb: EventEmitter.Callback<keyof EventEmitter.EventParamsMap>, goldenLayoutRef?: GoldenLayout | LayoutManager) {
@@ -656,7 +656,13 @@ export class App {
     }
 
     goldenInformComponentCreation(c: ComponentContainer) {
-        this.componentContainersCb(c);
+        if (this.componentContainersCb) {
+            this.componentContainersCb(c);
+        }
+        else {
+            console.log("Unable to inform component creation. Perhaps is popout?", c)
+        }
+
     }
 
     goldenRegisterComponentCreatioinCb(cb: (c: ComponentContainer) => void) {

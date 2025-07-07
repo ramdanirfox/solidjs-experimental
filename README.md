@@ -27,6 +27,15 @@ Install dependencies before running by executing `pnpm i` beforehand
 - [maxgraph](https://maxgraph.github.io/) (continuation of mxgraph)
 - [JSGantt Improved](https://github.com/jsGanttImproved/jsgantt-improved/)
 
+# Todo
+
+- https://github.com/NikolaySuslov/solid-braid-quill.git
+
+- [P9] https://github.com/adarshhegde/solid-graph-visualiser
+
+- https://github.com/traccar/maplibre-google-maps
+
+
 # Notes - Golden Layout integration with SolidJS
 - Similar JSX instance will replace older one when rendered twice (to mitigate this, provide function that return JSX.Element to create new instance of JSX)
 - Context doesnt connect each other between different render (pass context from GoldenLayoutView as workaround, but super inconvenient :sad )
