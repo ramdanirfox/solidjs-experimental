@@ -3,25 +3,31 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 import mkcert from 'vite-plugin-mkcert'
 
 const hmrPorts = {
-    client: 4440,
-    server: 4441,
-    'server-function': 4442,
-  }
-  
+  client: 4440,
+  server: 4441,
+  'server-function': 4442,
+}
+
 
 export default defineConfig({
-    server: {
-      https: true
+  server: {
+    https: true,
+    // ...{ port: 8080 }, // port configurable through CLI (see package.json)
+    prerender: {
+      crawlLinks: true,
+      routes: ["/404", "/"]
     },
-    vite: ({ router }) => ({
-        server: {
-          hmr: {
-            port: hmrPorts[router]
-          },
-        },
-        plugins: [
-          basicSsl(),
-          mkcert(),
-        ]
-    })
+    baseURL: process.argv.includes("dev") ? "/" : "/"
+  },
+  vite: ({ router }) => ({
+    server: {
+      hmr: {
+        port: hmrPorts[router]
+      },
+    },
+    plugins: [
+      basicSsl(),
+      mkcert(),
+    ]
+  })
 });

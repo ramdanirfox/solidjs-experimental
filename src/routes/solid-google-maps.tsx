@@ -1,6 +1,6 @@
 import "./index.css";
 import "./../shared/styles/patch-deckgl.css"
-import SJXSolidGoogleMaps from "~/components/SolidGoogleMaps";
+import SJXSolidGoogleMaps from "~/components/SJXSolidGoogleMaps";
 
 export default function PageSolidGoogleMaps() {
   

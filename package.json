@@ -38,6 +38,8 @@
   "dependencies": {
     "@antv/g6": "^5.0.48",
     "@danneu/solid-pixi": "^0.0.2",
+    "@deck.gl-community/editable-layers": "^9.0.3",
+    "@deck.gl/google-maps": "^9.1.12",
     "@dschz/load-script": "^1.0.9",
     "@dschz/solid-create-script": "^1.2.8",
     "@dschz/solid-g6": "^0.1.1",
@@ -54,6 +56,7 @@
     "ag-grid-solid": "28.2.0",
     "air-datepicker": "^3.6.0",
     "bagon-hooks": "^0.0.5",
+    "deck.gl": "^9.1.12",
     "docx-preview": "^0.3.5",
     "gdal3.js": "3.0.0-beta.1",
     "golden-layout": "^2.6.0",

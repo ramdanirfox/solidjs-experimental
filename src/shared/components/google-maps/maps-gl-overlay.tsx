@@ -8,7 +8,7 @@ export interface GoogleProps {
     latitude?: any;
 }
 
-const GoogleOverlay: Component<GoogleProps> = (props) => {
+const SharedGoogleOverlay: Component<GoogleProps> = (props) => {
   let overlayref :any
     const jsx_data = <>
     <div>DONE</div>
@@ -154,4 +154,4 @@ const GoogleOverlay: Component<GoogleProps> = (props) => {
     return <></>;
 }
 
-export default GoogleOverlay;
+export default SharedGoogleOverlay;
