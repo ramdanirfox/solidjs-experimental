@@ -59,7 +59,8 @@ export default function SJXSolidGoogleMaps() {
                         defaultZoom={defaultZoom}
                         defaultCenter={{ lat: 0.54992, lng: 140 }}
                         gestureHandling={'greedy' /* cooperative */}
-                        disableDefaultUI={false}
+                        disableDoubleClickZoom={true}
+                        disableDefaultUI={true}
                         tilt={30}
                         mapId={sigMapID()}
                         renderingType="VECTOR"

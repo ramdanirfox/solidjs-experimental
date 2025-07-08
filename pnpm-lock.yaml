@@ -15,8 +15,8 @@ importers:
         specifier: ^0.0.2
         version: 0.0.2(pixi.js@8.10.1)(solid-js@1.9.7)
       '@deck.gl-community/editable-layers':
-        specifier: ^9.0.3
-        version: 9.0.3(o5f3n6bxaekjxsy7fzqjawlsau)
+        specifier: 9.1.0-beta.8
+        version: 9.1.0-beta.8(o5f3n6bxaekjxsy7fzqjawlsau)
       '@deck.gl/google-maps':
         specifier: ^9.1.12
         version: 9.1.12(@deck.gl/core@9.1.12)(@luma.gl/core@9.1.9)(@luma.gl/webgl@9.1.9(@luma.gl/core@9.1.9))
@@ -47,6 +47,9 @@ importers:
       '@solothought/text2chart':
         specifier: ^1.0.4
         version: 1.0.4(svelte@5.34.9)
+      '@tweenjs/tween.js':
+        specifier: ^25.0.0
+        version: 25.0.0
       '@txnlab/use-wallet-solid':
         specifier: ^4.1.0
         version: 4.1.0(algosdk@3.3.1)(solid-js@1.9.7)
@@ -506,18 +509,18 @@ packages:
       pixi.js: ^8.0.0
       solid-js: ^1.9.5
 
-  '@deck.gl-community/editable-layers@9.0.3':
-    resolution: {integrity: sha512-Jlcs1DBC9CADuQjPYjvpA/gVnuo8u9xCKRKbPYgzqu1jIGJ0+T84yqBfppnqYgbdf93u/9nse/lJ+rQefH/Y9Q==}
+  '@deck.gl-community/editable-layers@9.1.0-beta.8':
+    resolution: {integrity: sha512-Bp0uReHi/C1ZT9Y1Epl7wMr32/i1MbX8PwSZU5zGZv3jDxcJ43p19yElyvgjoQYktRdsAyRCm17qx78c0G2NfA==}
     peerDependencies:
-      '@deck.gl-community/layers': ^9.0.0
-      '@deck.gl/core': ^9.0.12
-      '@deck.gl/extensions': ^9.0.12
-      '@deck.gl/geo-layers': ^9.0.12
-      '@deck.gl/layers': ^9.0.12
-      '@deck.gl/mesh-layers': '>=9.0.6'
-      '@luma.gl/constants': '>=9.0.12'
-      '@luma.gl/core': '>=9.0.12'
-      '@luma.gl/engine': '>=9.0.12'
+      '@deck.gl-community/layers': ^9.1.0-beta.2
+      '@deck.gl/core': ^9.1.12
+      '@deck.gl/extensions': ^9.1.0
+      '@deck.gl/geo-layers': ^9.1.0
+      '@deck.gl/layers': ^9.1.0
+      '@deck.gl/mesh-layers': ^9.1.0
+      '@luma.gl/constants': '>=9.1.9'
+      '@luma.gl/core': '>=9.1.9'
+      '@luma.gl/engine': '>=9.1.9'
       '@math.gl/core': '>=4.0.1'
 
   '@deck.gl-community/layers@9.0.3':
@@ -2148,6 +2151,9 @@ packages:
 
   '@turf/union@7.2.0':
     resolution: {integrity: sha512-Xex/cfKSmH0RZRWSJl4RLlhSmEALVewywiEXcu0aIxNbuZGTcpNoI0h4oLFrE/fUd0iBGFg/EGLXRL3zTfpg6g==}
+
+  '@tweenjs/tween.js@25.0.0':
+    resolution: {integrity: sha512-XKLA6syeBUaPzx4j3qwMqzzq+V4uo72BnlbOjmuljLrRqdsd3qnzvZZoxvMHZ23ndsRS4aufU6JOZYpCbU6T1A==}
 
   '@txnlab/use-wallet-solid@4.1.0':
     resolution: {integrity: sha512-58fQiPwwNCLPUP2FoP4DxMjUOQUwva4ycQu74v6jdPi7O4kx0GJsszx0zKge8/1KEjgv1ndsQK42k+wunmxjgQ==}
@@ -4559,6 +4565,10 @@ packages:
 
   lodash.isarguments@3.1.0:
     resolution: {integrity: sha512-chi4NHZlZqZD18a0imDHnZPrDeBbTtVN7GXMwuGdRH9qotxAjYs3aVLKc7zNOG9eddR5Ksd8rvFEBc9SsggPpg==}
+
+  lodash.omit@4.5.0:
+    resolution: {integrity: sha512-XeqSp49hNGmlkj2EJlfrQFIzQ6lXdNro9sddtQzcJY8QaoC2GO0DT7xaIokHeyM+mIT0mPMlPvkYzg2xCuHdZg==}
+    deprecated: This package is deprecated. Use destructuring assignment syntax instead.
 
   lodash.throttle@4.1.1:
     resolution: {integrity: sha512-wIkUCfVKpVsWo3JSZlc+8MB5it+2AN5W8J7YVMST30UrvcQNZ1Okbj+rbVniijTWE6FGYy4XJq/rHkas8qJMLQ==}
@@ -7114,7 +7124,7 @@ snapshots:
       pixi.js: 8.10.1
       solid-js: 1.9.7
 
-  '@deck.gl-community/editable-layers@9.0.3(o5f3n6bxaekjxsy7fzqjawlsau)':
+  '@deck.gl-community/editable-layers@9.1.0-beta.8(o5f3n6bxaekjxsy7fzqjawlsau)':
     dependencies:
       '@deck.gl-community/layers': 9.0.3(@deck.gl/widgets@9.1.12(@deck.gl/core@9.1.12))(@luma.gl/shadertools@9.1.9(@luma.gl/core@9.1.9))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@deck.gl/core': 9.1.12
@@ -7158,6 +7168,7 @@ snapshots:
       '@types/geojson': 7946.0.16
       cubic-hermite-spline: 1.0.1
       eventemitter3: 5.0.1
+      lodash.omit: 4.5.0
       lodash.throttle: 4.1.1
       uuid: 9.0.0
       viewport-mercator-project: 7.0.4
@@ -9095,6 +9106,8 @@ snapshots:
       '@types/geojson': 7946.0.16
       polyclip-ts: 0.16.8
       tslib: 2.8.1
+
+  '@tweenjs/tween.js@25.0.0': {}
 
   '@txnlab/use-wallet-solid@4.1.0(algosdk@3.3.1)(solid-js@1.9.7)':
     dependencies:
@@ -11043,7 +11056,7 @@ snapshots:
 
   geojson-rbush@3.2.0:
     dependencies:
-      '@turf/bbox': 6.5.0
+      '@turf/bbox': 7.2.0
       '@turf/helpers': 6.5.0
       '@turf/meta': 6.5.0
       '@types/geojson': 7946.0.8
@@ -11649,6 +11662,8 @@ snapshots:
   lodash.defaults@4.2.0: {}
 
   lodash.isarguments@3.1.0: {}
+
+  lodash.omit@4.5.0: {}
 
   lodash.throttle@4.1.1: {}
 

@@ -4,6 +4,7 @@ import * as deckGoogle from "@deck.gl/google-maps";
 import { AtlasService } from "~/shared/services/atlas.service";
 import AtlasUtil from "~/shared/utils/atlas.util";
 import { MapDataService } from "~/shared/services/map-data.service";
+import * as deckEditable from "@deck.gl-community/editable-layers";
 
 interface ISJXGoogleDeckLayerCmpRefs {
     // fnUpdateView: () => void
@@ -24,9 +25,12 @@ export default function SJXGoogleDeckLayer(props: ISJXGoogleDeckLayer) {
     let rawData: any;
     let deckLayers = {
         icon: (): any => { alert("Icon Layer is not ready"); }, // this icon layer use sprite from http://free-tex-packer.com/
+        editable: (): any => { alert("Editable Layer is not ready"); },
+        staticEditable: undefined as any
     };
     let mapref: any;
     const thismapAtlasImage = `${AtlasService.apiAtlasUrl}/${atlasName}.png`;
+    const selectedFeatureIndexes = [] as any;
     const thismapConfig = {
         fnGetScale: (base: number) => {
             const skala = Math.pow((props.sigZoom()) * base / 60, 2);
@@ -58,6 +62,9 @@ export default function SJXGoogleDeckLayer(props: ISJXGoogleDeckLayer) {
                 iconAtlas: thismapAtlasImage,
                 // getIcon: (d: any) => { return `${d.properties.site_class}_${d.properties.bbt_category}.png` },
                 getIcon: (d: any) => { return `im_critical.png` },
+                // onClick: (info: any) => {
+                //     alert(JSON.stringify(info.object));
+                // },
                 iconSizeScale: thismapConfig.fnGetScale(32),
                 iconMapping: preGeneratedIconMapping,
                 // getFilterValue: (f: any) => [siteFilterProcessor(f)],
@@ -65,15 +72,37 @@ export default function SJXGoogleDeckLayer(props: ISJXGoogleDeckLayer) {
                 // extensions: [dataFilterExt],
             });
         };
+
+        deckLayers.editable = (): any => {
+            return new deckEditable.EditableGeoJsonLayer({
+                id: 'geojson-layer-editable',
+                data: rawData,
+                mode: deckEditable.DrawPolygonMode,
+                selectedFeatureIndexes: selectedFeatureIndexes,
+                pickable: true,
+                onClick: (info: any) => {
+                  console.log("Clicked Editable", info);  
+                },
+                onEdit: (e) => {
+                    console.log("Edited feature", e)
+                }
+            });
+        }
+
+        deckLayers.staticEditable = deckLayers.editable();
     }
 
     const fnAttachDeckGL = () => {
         let deckinterface = new deckGoogle.GoogleMapsOverlay({
             interleaved: false,
+            getCursor: deckLayers.staticEditable.getCursor.bind(deckLayers.staticEditable),
             layers: [
                 deckLayers.icon(),
-                // this.textLayer(),
+                deckLayers.staticEditable
             ],
+            style: {
+                zIndex: "10000"
+            }
         });
         deckOverlay = deckinterface;
         deckinterface.setMap(mapref);
@@ -90,6 +119,7 @@ export default function SJXGoogleDeckLayer(props: ISJXGoogleDeckLayer) {
         deckOverlay.setProps({
             layers: [
                 deckLayers.icon(),
+                deckLayers.staticEditable
             ]
         })
     }

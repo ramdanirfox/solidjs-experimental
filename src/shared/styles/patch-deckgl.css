@@ -2,4 +2,6 @@
 
 #deckgl-overlay {
   max-width: unset;
+  /* pointer-events: all !important; */ 
+  /* When in drawing mode, you have to programmatically switch between pointer-events: none and pointer-events: all based on enabled mode */
 }

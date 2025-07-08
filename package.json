@@ -38,7 +38,7 @@
   "dependencies": {
     "@antv/g6": "^5.0.48",
     "@danneu/solid-pixi": "^0.0.2",
-    "@deck.gl-community/editable-layers": "^9.0.3",
+    "@deck.gl-community/editable-layers": "9.1.0-beta.8",
     "@deck.gl/google-maps": "^9.1.12",
     "@dschz/load-script": "^1.0.9",
     "@dschz/solid-create-script": "^1.2.8",
@@ -49,6 +49,7 @@
     "@sect/solid-hiding-header": "^2.0.24",
     "@solid-primitives/timer": "^1.3.10",
     "@solothought/text2chart": "^1.0.4",
+    "@tweenjs/tween.js": "^25.0.0",
     "@txnlab/use-wallet-solid": "^4.1.0",
     "@xyflow/system": "^0.0.62",
     "@zumer/snapdom": "^1.7.1",
