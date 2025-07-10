@@ -1,10 +1,10 @@
 import { Accessor, createEffect, createSignal, onMount } from "solid-js";
-import * as deck from "deck.gl";
-import * as deckGoogle from "@deck.gl/google-maps";
+import { GeoJsonLayer, IconLayer } from "deck.gl";
+import { GoogleMapsOverlay } from "@deck.gl/google-maps";
 import { AtlasService } from "~/shared/services/atlas.service";
 import AtlasUtil from "~/shared/utils/atlas.util";
 import { MapDataService } from "~/shared/services/map-data.service";
-import * as deckEditable from "@deck.gl-community/editable-layers";
+import { EditableGeoJsonLayer, DrawPolygonMode} from "@deck.gl-community/editable-layers";
 
 interface ISJXGoogleDeckLayerCmpRefs {
     // fnUpdateView: () => void
@@ -19,6 +19,17 @@ interface ISJXGoogleDeckLayer {
 
 export default function SJXGoogleDeckLayer(props: ISJXGoogleDeckLayer) {
     const [sigZoomLevel, setSigZoomLevel] = createSignal(3);
+    const deckEditable = {
+        EditableGeoJsonLayer,
+        DrawPolygonMode
+    };
+    const deckGoogle = {
+        GoogleMapsOverlay
+    };
+    const deck = {
+        GeoJsonLayer,
+        IconLayer
+    };
     let deckOverlay: any;
     let atlasName = "marker_atlas";
     let preGeneratedIconMapping: any;
@@ -102,7 +113,7 @@ export default function SJXGoogleDeckLayer(props: ISJXGoogleDeckLayer) {
             ],
             style: {
                 zIndex: "10000"
-            }
+            },
         });
         deckOverlay = deckinterface;
         deckinterface.setMap(mapref);
@@ -115,7 +126,7 @@ export default function SJXGoogleDeckLayer(props: ISJXGoogleDeckLayer) {
     };
 
     const fnUpdateDeckGL = () => {
-        console.log("Updating deckgl..");
+        console.log("Updating deckgl..", deckOverlay);
         deckOverlay.setProps({
             layers: [
                 deckLayers.icon(),
