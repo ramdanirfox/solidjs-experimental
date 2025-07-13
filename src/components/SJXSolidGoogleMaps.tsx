@@ -6,7 +6,6 @@ import SJXGoogleDeckLayer from "./SJXGoogleDeckLayer";
 import { Easing, Group, Tween, update } from "@tweenjs/tween.js";
 
 export default function SJXSolidGoogleMaps() {
-    const [count, setCount] = createSignal(0);
     const [sigMapZoom, setSigMapZoom] = createSignal(3);
     const [sigGMapRef, setSigGMapRef] = createSignal();
     const [sigGoogleRef, setSigGoogleRef] = createSignal();
@@ -46,7 +45,7 @@ export default function SJXSolidGoogleMaps() {
             center: { lat: pos?.lat() || 0, lng: pos?.lng() || 0 },
         };
 
-        const time = 10000;
+        const time = 3000;
         const halfTime = time / 2;
 
         // Initial and target camera options

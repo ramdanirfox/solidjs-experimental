@@ -28,6 +28,7 @@ export default defineConfig({
     plugins: [
       basicSsl(),
       mkcert(),
-    ]
+    ],
+    optimizeDeps: {include: ["mapbox-gl"]}
   })
 });
