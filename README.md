@@ -48,3 +48,8 @@ Install dependencies before running by executing `pnpm i` beforehand
 # Others
  tar -cvf - -p tileserver-gl-light/ | xz > tileserver-gl-light_4101_node16151.tar.xz
  cat my_large_archive.tar.gz.part_* > my_large_archive_reconstructed.tar.gz
+
+ # Sources
+
+ArcLayer path - https://github.com/visgl/deck.gl/issues/8447
+Manual ArcLayer path - https://codepen.io/chrisgervang/pen/yLwQdoe

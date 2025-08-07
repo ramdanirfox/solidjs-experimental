@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, For, onMount, Show } from "solid-js";
 import "./Counter.css";
 import { APIProvider, Map, MapCameraChangedEvent, useMap } from 'solid-google-maps'
 import SharedGoogleOverlay from "~/shared/components/google-maps/maps-gl-overlay";
@@ -35,7 +35,7 @@ export default function SJXSolidGoogleMaps() {
         setSigMapZoom(e.detail.zoom);
     };
 
-    const fnFlyTo = (targetpos: {lng : number, lat : number, zoom: number}) => {
+    const fnFlyTo = (targetpos: { lng: number, lat: number, zoom: number }) => {
         const map = sigGMapRef() as unknown as google.maps.Map;
         const pos = map.getCenter();
         const cameraOptions: google.maps.CameraOptions = {
@@ -191,7 +191,7 @@ export default function SJXSolidGoogleMaps() {
         requestAnimationFrame(animate);
     }
 
-    const panToBounds = (bounds: [number, number][]) => {
+    const fnPanToBounds = (bounds: [number, number][]) => {
         const latLngBounds = new google.maps.LatLngBounds(
             new google.maps.LatLng(bounds[0][1], bounds[0][0]),
             new google.maps.LatLng(bounds[1][1], bounds[1][0])
@@ -205,6 +205,36 @@ export default function SJXSolidGoogleMaps() {
         });
     }
 
+    const fnRecursivelyExtendCoordinate = () => {
+
+    }
+
+    const fnGeoJSONToBounds = (geojson: any) => {
+        const latLngBounds = new google.maps.LatLngBounds();
+        geojson.features.forEach((feature: any) => {
+            const coordinates = feature.geometry.coordinates;
+            const extendCoordinates = (coords: any) => {
+                if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+                    latLngBounds.extend(new google.maps.LatLng(coords[1], coords[0]));
+                } else if (Array.isArray(coords)) {
+                    coords.forEach(extendCoordinates);
+                }
+            };
+
+            extendCoordinates(coordinates);
+        });
+        return latLngBounds;
+    }
+
+    const fnFlyToArc = () => {
+
+    }
+
+    onMount(() => {
+        console.log("Function panToBounds", fnPanToBounds);
+        console.log("Function fnGeoJSONToBounds", fnGeoJSONToBounds);
+    })
+
     return (
         <div>
             <Show when={!sigAPIKey()}>
@@ -217,7 +247,7 @@ export default function SJXSolidGoogleMaps() {
             <Show when={sigAPIKey()}>
                 <button onClick={() => fnFlyTo({ lat: -6.309615123970005, lng: 106.82188445078322, zoom: 15 })}>flyToTween</button>
                 <button onClick={() => fnFlyToBounds([[106.81548037914058, -6.301188823396288], [106.82820078053862, -6.318298021062958]], { padding: 1 })}>flyToBboxTween</button>
-                <button onClick={() => panToBounds([[106.81548037914058, -6.301188823396288], [106.82820078053862, -6.318298021062958]])}>panToBounds</button>
+                <button onClick={() => fnPanToBounds([[106.81548037914058, -6.301188823396288], [106.82820078053862, -6.318298021062958]])}>panToBounds</button>
                 <APIProvider
                     onLoad={fnGoogleLoad}
                     libraries={[ // API Provider is better placed at outer section of your app
@@ -235,6 +265,12 @@ export default function SJXSolidGoogleMaps() {
                         gestureHandling={'greedy' /* cooperative */}
                         disableDoubleClickZoom={true}
                         disableDefaultUI={true}
+                        defaultBounds={{
+                            north: -11.5,
+                            south: 11.5,
+                            east: 141.5,
+                            west: 95
+                        }}
                         mapId={sigMapID()}
                         renderingType="VECTOR"
                         onZoomChanged={fnZoomChanged}
