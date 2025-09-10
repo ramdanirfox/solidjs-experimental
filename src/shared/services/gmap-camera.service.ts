@@ -295,6 +295,7 @@ export const GMapCameraServiceFactory = (googleref: any, gmapref: any) => {
                 .start();
 
             function animate(time: number) {
+                if (!twInstance.isPlaying()) return;
                 animationFrameId = requestAnimationFrame(animate);
                 twInstance.update(time);
                 console.log("animatingbbox");
