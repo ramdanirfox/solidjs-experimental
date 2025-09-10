@@ -94,6 +94,7 @@ export default function SJXSolidGoogleMaps() {
 
     const fnOnDrag = () => {
         console.log("User attempt to drag");
+        gmapCameraFlyToApi && !gmapCameraFlyToApi.isStopped() && gmapCameraFlyToApi.stopAnimation();
     }
 
     onMount(() => {
@@ -112,8 +113,8 @@ export default function SJXSolidGoogleMaps() {
             </Show>
             <Show when={sigAPIKey()}>
                 <button onClick={() => fnFlyTo({ lat: -6.309615123970005, lng: 106.82188445078322, zoom: 15 })}>flyToTween</button>
-                <button onClick={() => fnFlyToBounds([[106.81548037914058, -6.301188823396288], [106.82820078053862, -6.318298021062958]], { padding: 1, useFlyTo: true })}>flyToBboxTween</button>
-                <button onClick={() => fnFlyToBounds([[140.34466715682066, -2.394364723691936], [140.73294259110833, -2.6180471200476774]], { padding: 1, useFlyTo: true })}>flyToBboxTweenJayapura</button>
+                <button onClick={() => fnFlyToBounds([[106.81548037914058, -6.301188823396288], [106.82820078053862, -6.318298021062958]], { padding: 1, useFlyTo: false })}>flyToBboxTween</button>
+                <button onClick={() => fnFlyToBounds([[140.34466715682066, -2.394364723691936], [140.73294259110833, -2.6180471200476774]], { padding: 1, useFlyTo: false })}>flyToBboxTweenJayapura</button>
                 <button onClick={() => fnPanToBounds([[106.81548037914058, -6.301188823396288], [106.82820078053862, -6.318298021062958]])}>panToBounds</button>
                 <APIProvider
                     onLoad={fnGoogleLoad}
