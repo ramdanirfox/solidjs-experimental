@@ -154,6 +154,57 @@ export default function SJXSolidGoogleMaps() {
             return Math.min(latZoom, lngZoom, ZOOM_MAX);
         }
 
+        /**
+         * Calculates a dynamic max arc zoom based on distance and zoom difference.
+         * @param camera1 The starting camera
+         * @param camera2 The target camera
+         * @param arcFactor A multiplier to adjust the prominence of the arc (e.g., 0.5 to 2.0)
+         * @returns The calculated max zoom for the arc's peak
+         */
+        function calculateMaxArcZoom(
+            camera1: { center: google.maps.LatLngLiteral; zoom: number },
+            camera2: { center: google.maps.LatLngLiteral; zoom: number },
+            arcFactor: number = 1
+        ): number {
+            const from = new googleRef.maps.LatLng(camera1.center);
+            const to = new googleRef.maps.LatLng(camera2.center);
+
+            // Calculate the distance in kilometers between the two points
+            const distanceKm = googleRef.maps.geometry.spherical.computeDistanceBetween(from, to) / 1000;
+
+            // Use a logarithmic scale for distance to get a smooth, non-linear relationship
+            const distanceScale = Math.log(distanceKm + 1);
+
+            // Factor in the zoom difference to make the arc more pronounced for large changes
+            const zoomDiff = Math.abs(camera1.zoom - camera2.zoom);
+
+            // The base arc is proportional to the distance and zoom difference, adjusted by the factor
+            const arcHeight = (distanceScale + zoomDiff) * arcFactor;
+
+            return Math.max(camera1.zoom, camera2.zoom) + arcHeight;
+        }
+
+        function calculateFlyDuration(
+            camera1: { center: google.maps.LatLngLiteral; zoom: number },
+            camera2: { center: google.maps.LatLngLiteral; zoom: number }
+        ): number {
+            const from = new googleRef.maps.LatLng(camera1.center);
+            const to = new googleRef.maps.LatLng(camera2.center);
+
+            const distanceKm = googleRef.maps.geometry.spherical.computeDistanceBetween(from, to) / 1000;
+            const zoomDiff = Math.abs(camera1.zoom - camera2.zoom);
+
+            // Use a base duration (e.g., 1000ms) and add time for distance and zoom changes
+            const baseDuration = 1000;
+            const distanceTime = Math.log(distanceKm + 1) * 500; // Add 200ms per unit of log-distance
+            const zoomTime = zoomDiff * 100; // Add 100ms per unit of zoom difference
+
+            const duration = baseDuration + distanceTime + zoomTime;
+
+            // Cap the duration to prevent excessively long animations (e.g., 5 seconds)
+            return Math.min(duration, 5000);
+        }
+
         const padding = cameraOption?.padding ?? 50;
         const mapDiv = map.getDiv();
         const mapDim = {
@@ -163,23 +214,55 @@ export default function SJXSolidGoogleMaps() {
         const fitZoom = getBoundsZoom(bounds, mapDim, padding);
 
         // Animate camera to bounds
-        const cameraOptions: google.maps.CameraOptions = {
-            tilt: cameraOption?.tilt ?? map.getTilt(),
-            heading: cameraOption?.heading ?? map.getHeading(),
-            zoom: fitZoom,
-            center
-        };
 
-        const twInstance = new Tween({
+        const camera1 = {
             tilt: map.getTilt(),
             heading: map.getHeading(),
             zoom: map.getZoom(),
-            center: map.getCenter()?.toJSON()
-        })
-            .to(cameraOptions, 15000)
+            center: map.getCenter()?.toJSON(),
+            arc: 0
+        };
+
+        const camera2: google.maps.CameraOptions = {
+            tilt: cameraOption?.tilt ?? map.getTilt(),
+            heading: cameraOption?.heading ?? map.getHeading(),
+            zoom: fitZoom,
+            center,
+            arc: 1
+        } as any;
+
+        // const twInstance = new Tween(camera1)
+        //     .to(camera2, 15000)
+        //     .easing(Easing.Quadratic.Out)
+        //     .onUpdate((current) => {
+        //         map.moveCamera(current);
+        //     })
+        //     .start();
+
+        // --- NEW LOGIC FOR ARCING MOVEMENT ---
+        const precalcDuration = calculateFlyDuration(camera1 as any, camera2 as any);
+        console.log("duration precalculation", precalcDuration);
+        const twInstance = new Tween(camera1)
+            .to(camera2, precalcDuration) // Shorter duration for a snappier feel
             .easing(Easing.Quadratic.Out)
             .onUpdate((current) => {
-                map.moveCamera(current);
+                // Get interpolated values from the tween
+                const tweenedLat = (1 - current.arc) * camera1.center!.lat + current.arc * (camera2 as any).center.lat;
+                const tweenedLng = (1 - current.arc) * camera1.center!.lng + current.arc * (camera2 as any).center.lng;
+
+                // Calculate the arc's elevation (simple parabolic curve)
+                const arcFactor = -0.9; // You can make this an option in fnFlyToBounds
+                const maxArcZoom = calculateMaxArcZoom(camera1 as any, camera2 as any, arcFactor);
+                // const maxArcZoom = Math.max(camera1.zoom!, camera2.zoom!) - 3; // Zoom out more in the middle
+                const arcZoom = maxArcZoom - Math.pow(current.arc * 2 - 1, 2) * (maxArcZoom - current.zoom!);
+                // const arcZoom = maxArcZoom - Math.pow(current.arc * 2 - 1, 2) * (maxArcZoom - (camera2 as any).zoom); // Corrected line
+
+                map.moveCamera({
+                    center: { lat: tweenedLat, lng: tweenedLng },
+                    zoom: arcZoom,
+                    tilt: current.tilt,
+                    heading: current.heading
+                });
             })
             .start();
 
@@ -247,12 +330,13 @@ export default function SJXSolidGoogleMaps() {
             <Show when={sigAPIKey()}>
                 <button onClick={() => fnFlyTo({ lat: -6.309615123970005, lng: 106.82188445078322, zoom: 15 })}>flyToTween</button>
                 <button onClick={() => fnFlyToBounds([[106.81548037914058, -6.301188823396288], [106.82820078053862, -6.318298021062958]], { padding: 1 })}>flyToBboxTween</button>
+                <button onClick={() => fnFlyToBounds([[140.34466715682066, -2.394364723691936], [140.73294259110833, -2.6180471200476774]], { padding: 1 })}>flyToBboxTweenJayapura</button>
                 <button onClick={() => fnPanToBounds([[106.81548037914058, -6.301188823396288], [106.82820078053862, -6.318298021062958]])}>panToBounds</button>
                 <APIProvider
                     onLoad={fnGoogleLoad}
                     libraries={[ // API Provider is better placed at outer section of your app
                         // 'drawing',
-                        // 'geometry',
+                        'geometry',
                         'places',
                         // 'visualization'
                     ]} apiKey={sigAPIKey()}>

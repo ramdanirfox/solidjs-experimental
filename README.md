@@ -53,3 +53,6 @@ Install dependencies before running by executing `pnpm i` beforehand
 
 ArcLayer path - https://github.com/visgl/deck.gl/issues/8447
 Manual ArcLayer path - https://codepen.io/chrisgervang/pen/yLwQdoe
+
+Routing example
+https://valhalla1.openstreetmap.de/route?json={%22locations%22:[{%22lat%22:-6.315891,%22lon%22:106.816505,%22street%22:%22Park%22},{%22lat%22:-6.336195,%22lon%22:106.803065,%22street%22:%22Point%20Home%22}],%22costing%22:%22auto%22,%22costing_options%22:{%22auto%22:{%22country_crossing_penalty%22:2000.0}},%22units%22:%22kilometers%22,%22id%22:%22my_work_route%22,%20%22format%22:%20%22osrm%22,%20%22shape_format%22:%22geojson%22}
