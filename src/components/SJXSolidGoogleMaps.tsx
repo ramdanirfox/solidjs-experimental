@@ -5,6 +5,7 @@ import SharedGoogleOverlay from "~/shared/components/google-maps/maps-gl-overlay
 import SJXGoogleDeckLayer from "./SJXGoogleDeckLayer";
 import { Easing, Group, Tween, update } from "@tweenjs/tween.js";
 import { GMapCameraFlyToAPI, GMapCameraService, GMapCameraServiceFactory } from "~/shared/services/gmap-camera.service";
+import SharedGoogleTerradraw from "~/shared/components/google-maps/maps-terradraw";
 
 export default function SJXSolidGoogleMaps() {
     const [sigMapZoom, setSigMapZoom] = createSignal(3);
@@ -131,6 +132,7 @@ export default function SJXSolidGoogleMaps() {
                         ref={(mapRef) => fnMapReady(mapRef)}
                         style={{ height: '500px', width: '100%' }}
                         gestureHandling={'greedy' /* cooperative */}
+                        onProjectionChanged={() => {console.log("Projection Change")}}
                         disableDoubleClickZoom={true}
                         disableDefaultUI={true}
                         defaultBounds={{
@@ -176,6 +178,21 @@ export default function SJXSolidGoogleMaps() {
                             gmapref={sigGMapRef()}
                             onReady={() => { }}
                         />
+                        <SharedGoogleTerradraw
+                            googleref={sigGoogleRef()}
+                            gmapref={sigGMapRef()}
+                            onTerradrawFinish={(ids, type, snapshot) => {
+                                console.log("Disini FInisshh", ids, type, snapshot);
+                            }}
+                            onReady={(api) => {
+                                api
+                             }}>
+                                {(api) => (
+                                    <>
+                                        <button onClick={() => { api?.fnChangeDrawMode("freehand") }}>FreeHand</button>
+                                    </>
+                                )}
+                        </SharedGoogleTerradraw>
                     </Show>
                 </APIProvider>
             </Show>
