@@ -5,6 +5,7 @@ import { TerraDrawGoogleMapsAdapter } from "terra-draw-google-maps-adapter";
 export interface ISharedGoogleTerradrawAPI {
     terraDrawInstance: TerraDraw | undefined;
     fnChangeDrawMode: (mode: string) => void;
+    fnClearDraw: () => void;
 }
 
 export interface ISharedGoogleTerradraw {
@@ -12,8 +13,8 @@ export interface ISharedGoogleTerradraw {
     gmapref?: any;
     googleref?: any;
     onReady?: (api: any) => void
-    onTerradrawUpdate?: (ids: any[], type: string, snapshot: any) => void;
-    onTerradrawFinish?: (ids: any, type: any, snapshot: any) => void;
+    onTerradrawUpdate?: (api: ISharedGoogleTerradrawAPI | undefined, ids: any[], type: string, snapshot: any) => void;
+    onTerradrawFinish?: (api: ISharedGoogleTerradrawAPI | undefined, ids: any, type: any, snapshot: any) => void;
 }
 
 const SharedGoogleTerradraw: Component<ISharedGoogleTerradraw> = (props: ISharedGoogleTerradraw) => {
@@ -46,8 +47,12 @@ const SharedGoogleTerradraw: Component<ISharedGoogleTerradraw> = (props: IShared
         return colorPalette[index] as `#${string}`;
     };
 
-    const fnChangeDrawMode = (mode: "freehand" | string) => {
+    const fnChangeDrawMode = (mode: "freehand" | "select" | string) => {
         sigTerraDrawInstance()?.setMode(mode);
+    };
+
+    const fnClearDraw = () => {
+        sigTerraDrawInstance()?.clear();
     };
 
     onMount(() => {
@@ -174,22 +179,20 @@ const SharedGoogleTerradraw: Component<ISharedGoogleTerradraw> = (props: IShared
             console.log("FeatureUpdate", ids, type);
             const snapshot = sigTerraDrawInstance()?.getSnapshot();
             console.log("Snapshot", snapshot);
-            props.onTerradrawUpdate!(ids, type, snapshot);
+            props.onTerradrawUpdate!(sigCmpAPI(), ids, type, snapshot);
         });
 
         props.onTerradrawFinish && sigTerraDrawInstance()?.on("finish", (id, ctx) => {
             console.log("FeatureFinish", id, ctx);
             const snapshot = sigTerraDrawInstance()?.getSnapshot();
             console.log("Snapshot", snapshot);
-            props.onTerradrawFinish!(id, ctx, snapshot);
+            props.onTerradrawFinish!(sigCmpAPI(), id, ctx, snapshot);
         });
 
         setSigCmpAPI({
             terraDrawInstance: sigTerraDrawInstance(),
             fnChangeDrawMode: fnChangeDrawMode,
-            onUpdate: (features: any) => {
-                console.log("WIP")
-            }
+            fnClearDraw: fnClearDraw
         });
         props.onReady && props.onReady(sigCmpAPI());
     });

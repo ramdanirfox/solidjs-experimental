@@ -190,6 +190,8 @@ export default function SJXSolidGoogleMaps() {
                                 {(api) => (
                                     <>
                                         <button onClick={() => { api?.fnChangeDrawMode("freehand") }}>FreeHand</button>
+                                        <button onClick={() => { api?.fnChangeDrawMode("select") }}>Select</button>
+                                        <button onClick={() => { api?.fnClearDraw() }}>Clear</button>
                                     </>
                                 )}
                         </SharedGoogleTerradraw>
