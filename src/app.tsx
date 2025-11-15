@@ -8,6 +8,7 @@ export default function App() {
   return (
     
       <Router
+        base="/solidjs-experimental"
         root={props => (
           <SJXProvider count={1}>
             <MetaProvider>

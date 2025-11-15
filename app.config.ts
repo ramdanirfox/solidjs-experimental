@@ -17,7 +17,7 @@ export default defineConfig({
       crawlLinks: true,
       routes: ["/404", "/"]
     },
-    baseURL: process.argv.includes("dev") ? "/" : "/"
+    baseURL: process.argv.includes("dev") ? "/solidjs-experimental" : "/solidjs-experimental"
   },
   vite: ({ router }) => ({
     server: {
