@@ -5,6 +5,8 @@
 This repo contains sample of certain library integration with SolidJS
 Currently includes :
 - [Golden Layout](https://github.com/golden-layout/golden-layout) (web based dock layout manager)
+- Mounting React Component (svar-gantt)
+- Google Maps and DeckGL Integration
 - Vitest
 - SolidStart
 
