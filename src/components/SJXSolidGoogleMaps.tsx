@@ -6,6 +6,7 @@ import SJXGoogleDeckLayer from "./SJXGoogleDeckLayer";
 import { Easing, Group, Tween, update } from "@tweenjs/tween.js";
 import { GMapCameraFlyToAPI, GMapCameraService, GMapCameraServiceFactory } from "~/shared/services/gmap-camera.service";
 import SharedGoogleTerradraw from "~/shared/components/google-maps/maps-terradraw";
+import SJXGeojsonPathFinder from "./SJXGeojsonPathFinder";
 
 export default function SJXSolidGoogleMaps() {
     const [sigMapZoom, setSigMapZoom] = createSignal(3);
@@ -195,6 +196,7 @@ export default function SJXSolidGoogleMaps() {
                                     </>
                                 )}
                         </SharedGoogleTerradraw>
+                        <SJXGeojsonPathFinder />
                     </Show>
                 </APIProvider>
             </Show>

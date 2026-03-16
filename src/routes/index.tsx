@@ -20,6 +20,9 @@ export default function Home() {
       <div>
         <A href="/solid-google-maps">Solid Google Maps (With DeckGL)</A>
       </div>
+      <div>
+        <A href="/chart-3d">Sample 3D Chart (With Vibes)</A>
+      </div>
     </main>
   );  
 }

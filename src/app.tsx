@@ -3,12 +3,13 @@ import { Router } from "@solidjs/router";
 import { FileRoutes } from "@solidjs/start/router";
 import { Suspense } from "solid-js";
 import { SJXProvider } from "./shared/context/SJXContext";
+import { APP_DEV_BASEURL } from "./shared/constants/app.constant";
 
 export default function App() {
   return (
     
       <Router
-        base="/solidjs-experimental"
+        base={APP_DEV_BASEURL}
         root={props => (
           <SJXProvider count={1}>
             <MetaProvider>

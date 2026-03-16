@@ -31,3 +31,6 @@ Thumbs.db
 
 *storybook.log
 storybook-static
+
+public/assets/json/networking.geojson
+public/assets/json/networking.json

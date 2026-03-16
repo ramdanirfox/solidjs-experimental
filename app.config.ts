@@ -1,6 +1,7 @@
 import { defineConfig } from "@solidjs/start/config";
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import mkcert from 'vite-plugin-mkcert'
+import { APP_DEV_BASEURL } from "./src/shared/constants/app.constant";
 
 const hmrPorts = {
   client: 4440,
@@ -17,7 +18,7 @@ export default defineConfig({
       crawlLinks: true,
       routes: ["/404", "/"]
     },
-    baseURL: process.argv.includes("dev") ? "/solidjs-experimental" : "/solidjs-experimental"
+    baseURL: process.argv.includes("dev") ? APP_DEV_BASEURL : APP_DEV_BASEURL
   },
   vite: ({ router }) => ({
     server: {

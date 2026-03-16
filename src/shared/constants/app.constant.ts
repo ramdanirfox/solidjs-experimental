@@ -1,0 +1,1 @@
+export const APP_DEV_BASEURL = "/solidjs-experimental";

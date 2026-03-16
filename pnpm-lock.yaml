@@ -83,12 +83,18 @@ importers:
       gdal3.js:
         specifier: 3.0.0-beta.1
         version: 3.0.0-beta.1
+      geojson-path-finder:
+        specifier: ^2.1.0
+        version: 2.1.0
       golden-layout:
         specifier: ^2.6.0
         version: 2.6.0
       jsgantt-improved:
         specifier: ^2.8.10
         version: 2.8.10
+      ky:
+        specifier: ^1.14.3
+        version: 1.14.3
       lightweight-charts:
         specifier: ^5.0.7
         version: 5.0.7
@@ -1915,18 +1921,18 @@ packages:
     peerDependencies:
       storybook: ^9.0.4
 
-  '@storybook/builder-vite@10.1.0-alpha.1':
-    resolution: {integrity: sha512-ygHT0TdewT/vYaN28h/lnRmHWrlxO5CKuq9N8ulWXN9OxQVfm+HRuVGq7CUHtkitZKb/TY9WtJM0E9UIqjmONw==}
+  '@storybook/builder-vite@10.3.0-alpha.17':
+    resolution: {integrity: sha512-wKBGKQL+JVxJofWbObOQ4NF6i+4wa6jruzVpwqv8yzZpUkbP+waGNp3hvTaXkhgcSKLYK5Wd1WquzPzMht2DPA==}
     peerDependencies:
-      storybook: ^10.1.0-alpha.1
-      vite: ^5.0.0 || ^6.0.0 || ^7.0.0
+      storybook: ^10.3.0-alpha.17
+      vite: ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0
 
-  '@storybook/csf-plugin@10.1.0-alpha.1':
-    resolution: {integrity: sha512-6IIm/7bt/j4fAiKLwoppwIx++DMv1+mblZI18eGfa1RZ+3qmjUdXu7pCummkD640Qa8IeFDCWvx3UEIIZqEQ8g==}
+  '@storybook/csf-plugin@10.3.0-alpha.17':
+    resolution: {integrity: sha512-n2dDj2y/B4CKutVfO+lh6IebFKmLKMMhJLqX/q5P7BTp1RLCtqYojGYQi/1PAGl0X7uoK21I5sA2nz0Wpuxhpg==}
     peerDependencies:
       esbuild: '*'
       rollup: '*'
-      storybook: ^10.1.0-alpha.1
+      storybook: ^10.3.0-alpha.17
       vite: '*'
       webpack: '*'
     peerDependenciesMeta:
@@ -2121,8 +2127,14 @@ packages:
   '@turf/distance@6.5.0':
     resolution: {integrity: sha512-xzykSLfoURec5qvQJcfifw/1mJa+5UwByZZ5TZ8iaqjGYN0vomhV9aiSLeYdUGtYRESZ+DYC/OzY+4RclZYgMg==}
 
+  '@turf/distance@7.3.4':
+    resolution: {integrity: sha512-9drWgd46uHPPyzgrcRQLgSvdS/SjVlQ6ZIBoRQagS5P2kSjUbcOXHIMeOSPwfxwlKhEtobLyr+IiR2ns1TfF8w==}
+
   '@turf/ellipse@6.5.0':
     resolution: {integrity: sha512-kuXtwFviw/JqnyJXF1mrR/cb496zDTSbGKtSiolWMNImYzGGkbsAsFTjwJYgD7+4FixHjp0uQPzo70KDf3AIBw==}
+
+  '@turf/explode@7.3.4':
+    resolution: {integrity: sha512-7QWhp3f8jhrWjvArhJ74hXBFHMaiJr/2Y1PzHCWue2/pC5MbbTV0o7peehwrrrJC/1uD6CVb3hlcb77IxtMQkw==}
 
   '@turf/helpers@5.1.5':
     resolution: {integrity: sha512-/lF+JR+qNDHZ8bF9d+Cp58nxtZWJ3sqFe6n3u3Vpj+/0cqkjk4nXKYBSY0azm+GIYB5mWKxUXvuP/m0ZnKj1bw==}
@@ -2132,6 +2144,9 @@ packages:
 
   '@turf/helpers@7.2.0':
     resolution: {integrity: sha512-cXo7bKNZoa7aC7ydLmUR02oB3IgDe7MxiPuRz3cCtYQHn+BJ6h1tihmamYDWWUlPHgSNF0i3ATc4WmDECZafKw==}
+
+  '@turf/helpers@7.3.4':
+    resolution: {integrity: sha512-U/S5qyqgx3WTvg4twaH0WxF3EixoTCfDsmk98g1E3/5e2YKp7JKYZdz0vivsS5/UZLJeZDEElOSFH4pUgp+l7g==}
 
   '@turf/intersect@6.5.0':
     resolution: {integrity: sha512-2legGJeKrfFkzntcd4GouPugoqPUjexPZnOvfez+3SfIMrHvulw8qV8u7pfVyn2Yqs53yoVCEjS5sEpvQ5YRQg==}
@@ -2147,6 +2162,9 @@ packages:
 
   '@turf/invariant@7.2.0':
     resolution: {integrity: sha512-kV4u8e7Gkpq+kPbAKNC21CmyrXzlbBgFjO1PhrHPgEdNqXqDawoZ3i6ivE3ULJj2rSesCjduUaC/wyvH/sNr2Q==}
+
+  '@turf/invariant@7.3.4':
+    resolution: {integrity: sha512-88Eo4va4rce9sNZs6XiMJowWkikM3cS2TBhaCKlU+GFHdNf8PFEpiU42VDU8q5tOF6/fu21Rvlke5odgOGW4AQ==}
 
   '@turf/line-intersect@6.5.0':
     resolution: {integrity: sha512-CS6R1tZvVQD390G9Ea4pmpM6mJGPWoL82jD46y0q1KSor9s6HupMIo1kY4Ny+AEYQl9jd21V3Scz20eldpbTVA==}
@@ -2165,6 +2183,9 @@ packages:
 
   '@turf/meta@7.2.0':
     resolution: {integrity: sha512-igzTdHsQc8TV1RhPuOLVo74Px/hyPrVgVOTgjWQZzt3J9BVseCdpfY/0cJBdlSRI4S/yTmmHl7gAqjhpYH5Yaw==}
+
+  '@turf/meta@7.3.4':
+    resolution: {integrity: sha512-tlmw9/Hs1p2n0uoHVm1w3ugw1I6L8jv9YZrcdQa4SH5FX5UY0ATrKeIvfA55FlL//PGuYppJp+eyg/0eb4goqw==}
 
   '@turf/midpoint@6.5.0':
     resolution: {integrity: sha512-MyTzV44IwmVI6ec9fB2OgZ53JGNlgOpaYl9ArKoF49rXpL84F9rNATndbe0+MQIhdkw8IlzA6xVP4lZzfMNVCw==}
@@ -4058,6 +4079,9 @@ packages:
   geojson-equality-ts@1.0.2:
     resolution: {integrity: sha512-h3Ryq+0mCSN/7yLs0eDgrZhvc9af23o/QuC4aTiuuzP/MRCtd6mf5rLsLRY44jX0RPUfM8c4GqERQmlUxPGPoQ==}
 
+  geojson-path-finder@2.1.0:
+    resolution: {integrity: sha512-ngg+rxoUSkhjOpKaQ2VpuvY6v2o/12JF1JF09AUzMg5iOVJ2dKLfT4vr8NleEk5pVwmx3nANyH8rK8mCn90LSA==}
+
   geojson-rbush@3.2.0:
     resolution: {integrity: sha512-oVltQTXolxvsz1sZnutlSuLDEcQAKYC/uXt9zDzJJ6bu0W+baTI8LZBaTup5afzibEH4N3jlq2p+a152wlBJ7w==}
 
@@ -4599,6 +4623,10 @@ packages:
 
   kuler@2.0.0:
     resolution: {integrity: sha512-Xq9nH7KlWZmXAtodXDDRE7vs6DU1gTU8zYDHDiWLSip45Egwq3plLHzPn27NgvzL2r1LMPC1vdqh98sQxtqj4A==}
+
+  ky@1.14.3:
+    resolution: {integrity: sha512-9zy9lkjac+TR1c2tG+mkNSVlyOpInnWdSMiue4F+kq8TwJSgv6o8jhLRg8Ho6SnZ9wOYUq/yozts9qQCfk7bIw==}
+    engines: {node: '>=18'}
 
   lambda-local@2.2.0:
     resolution: {integrity: sha512-bPcgpIXbHnVGfI/omZIlgucDqlf4LrsunwoKue5JdZeGybt8L6KyJz2Zu19ffuZwIwLj2NAI2ZyaqNT6/cetcg==}
@@ -8740,9 +8768,9 @@ snapshots:
     transitivePeerDependencies:
       - '@types/react'
 
-  '@storybook/builder-vite@10.1.0-alpha.1(esbuild@0.25.5)(rollup@4.41.1)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5))':
+  '@storybook/builder-vite@10.3.0-alpha.17(esbuild@0.25.5)(rollup@4.41.1)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5))':
     dependencies:
-      '@storybook/csf-plugin': 10.1.0-alpha.1(esbuild@0.25.5)(rollup@4.41.1)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5))
+      '@storybook/csf-plugin': 10.3.0-alpha.17(esbuild@0.25.5)(rollup@4.41.1)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5))
       storybook: 9.0.4(@testing-library/dom@10.4.0)
       ts-dedent: 2.2.0
       vite: 6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0)
@@ -8751,7 +8779,7 @@ snapshots:
       - rollup
       - webpack
 
-  '@storybook/csf-plugin@10.1.0-alpha.1(esbuild@0.25.5)(rollup@4.41.1)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5))':
+  '@storybook/csf-plugin@10.3.0-alpha.17(esbuild@0.25.5)(rollup@4.41.1)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5))':
     dependencies:
       storybook: 9.0.4(@testing-library/dom@10.4.0)
       unplugin: 2.3.5
@@ -9096,6 +9124,13 @@ snapshots:
       '@turf/helpers': 6.5.0
       '@turf/invariant': 6.5.0
 
+  '@turf/distance@7.3.4':
+    dependencies:
+      '@turf/helpers': 7.3.4
+      '@turf/invariant': 7.3.4
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+
   '@turf/ellipse@6.5.0':
     dependencies:
       '@turf/helpers': 6.5.0
@@ -9103,11 +9138,23 @@ snapshots:
       '@turf/rhumb-destination': 6.5.0
       '@turf/transform-rotate': 6.5.0
 
+  '@turf/explode@7.3.4':
+    dependencies:
+      '@turf/helpers': 7.3.4
+      '@turf/meta': 7.3.4
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+
   '@turf/helpers@5.1.5': {}
 
   '@turf/helpers@6.5.0': {}
 
   '@turf/helpers@7.2.0':
+    dependencies:
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+
+  '@turf/helpers@7.3.4':
     dependencies:
       '@types/geojson': 7946.0.16
       tslib: 2.8.1
@@ -9137,6 +9184,12 @@ snapshots:
   '@turf/invariant@7.2.0':
     dependencies:
       '@turf/helpers': 7.2.0
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
+
+  '@turf/invariant@7.3.4':
+    dependencies:
+      '@turf/helpers': 7.3.4
       '@types/geojson': 7946.0.16
       tslib: 2.8.1
 
@@ -9173,6 +9226,12 @@ snapshots:
     dependencies:
       '@turf/helpers': 7.2.0
       '@types/geojson': 7946.0.16
+
+  '@turf/meta@7.3.4':
+    dependencies:
+      '@turf/helpers': 7.3.4
+      '@types/geojson': 7946.0.16
+      tslib: 2.8.1
 
   '@turf/midpoint@6.5.0':
     dependencies:
@@ -11264,6 +11323,13 @@ snapshots:
     dependencies:
       '@types/geojson': 7946.0.16
 
+  geojson-path-finder@2.1.0:
+    dependencies:
+      '@turf/distance': 7.3.4
+      '@turf/explode': 7.3.4
+      '@turf/helpers': 7.2.0
+      tinyqueue: 2.0.3
+
   geojson-rbush@3.2.0:
     dependencies:
       '@turf/bbox': 7.2.0
@@ -11794,6 +11860,8 @@ snapshots:
   ktx-parse@0.7.1: {}
 
   kuler@2.0.0: {}
+
+  ky@1.14.3: {}
 
   lambda-local@2.2.0:
     dependencies:
@@ -13174,7 +13242,7 @@ snapshots:
 
   storybook-solidjs-vite@1.0.0-beta.7(@storybook/test@8.6.14(storybook@9.0.4(@testing-library/dom@10.4.0)))(esbuild@0.25.5)(rollup@4.41.1)(solid-js@1.9.7)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite-plugin-solid@2.11.0(@testing-library/jest-dom@6.6.3)(solid-js@1.9.7)(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0)))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5)):
     dependencies:
-      '@storybook/builder-vite': 10.1.0-alpha.1(esbuild@0.25.5)(rollup@4.41.1)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5))
+      '@storybook/builder-vite': 10.3.0-alpha.17(esbuild@0.25.5)(rollup@4.41.1)(storybook@9.0.4(@testing-library/dom@10.4.0))(vite@6.3.5(@types/node@22.10.2)(jiti@2.4.2)(terser@5.37.0))(webpack@5.99.9(esbuild@0.25.5))
       '@storybook/types': 9.0.0-alpha.1(storybook@9.0.4(@testing-library/dom@10.4.0))
       magic-string: 0.30.17
       solid-js: 1.9.7
