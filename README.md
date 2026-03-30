@@ -20,6 +20,17 @@ Install dependencies before running by executing `pnpm i` beforehand
 - Project: `pnpm run dev` (open port 3011)
 - Test (Vitest) `pnpm run test` or `pnpm run test-ui`
 
+# Tauri Android Configurations
+
+install sdk 35 
+install ndk 28
+install jdk 21
+
+Post signing :
+
+AppData\Local\Android\Sdk\build-tools\35.0.0>apksigner.bat sign --ks %USERPROFILE%\upload-keystore.jks --out %USERPROFILE%\app-signed.apk %USERPROFILE%\app-universal-release-unsigned.apk
+
+
 # Integration Roadmap
 - Golden Layout - Listen and/or to as many APIs
 - Golden Layout - Programmatic event possiblities

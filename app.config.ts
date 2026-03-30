@@ -21,6 +21,7 @@ export default defineConfig({
     baseURL: process.argv.includes("dev") ? APP_DEV_BASEURL : APP_DEV_BASEURL
   },
   vite: ({ router }) => ({
+    clearScreen: false,
     server: {
       hmr: {
         port: hmrPorts[router]
