@@ -1,8 +1,9 @@
 import { createSignal } from "solid-js";
+import { APP_DEV_BASEURL } from "../constants/app.constant";
 
 
 export const AtlasService = {
-    apiAtlasUrl: "src/assets/atlas",
+    apiAtlasUrl: APP_DEV_BASEURL + "/assets/atlas",
     apiControllers: {} as { [key: number | string]: AbortController },
     getAtlasDefinition: async function (atlasname: string) {
         const controller = new AbortController();
