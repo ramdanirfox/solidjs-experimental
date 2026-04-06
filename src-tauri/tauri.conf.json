@@ -7,7 +7,7 @@
     "frontendDist": "../.output/public",
     "devUrl": "https://localhost:3011/solidjs-experimental",
     "beforeDevCommand": "pnpm run dev",
-    "beforeBuildCommand": "pnpm run build"
+    "beforeBuildCommand": "pnpm run prodpack"
   },
   "app": {
     "windows": [

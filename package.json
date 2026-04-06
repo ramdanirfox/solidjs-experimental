@@ -3,13 +3,15 @@
   "scripts": {
     "dev": "vinxi dev --host --port 3011",
     "build": "vinxi build",
+    "prodpack": "npm run build && npm run align-dir",
     "start": "vinxi start",
     "test": "vitest run",
     "test-watch": "vitest",
     "test-ui": "vitest --ui",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "align-dir": "node scripts/analyze_constant.js"
   },
   "type": "module",
   "devDependencies": {
