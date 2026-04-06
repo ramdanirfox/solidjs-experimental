@@ -90,7 +90,7 @@ async function fnImportConst() {
     fs.mkdirSync(__dirname + '/../.output' + constantValue, { recursive: false });
     copyFolderRecursiveSync(__dirname + '/../.output/public', __dirname + '/../.output' + constantValue);
     fs.renameSync(__dirname + '/../.output' + constantValue + '/public', __dirname + '/../.output/public' + constantValue);
-    fs.rmSync(__dirname + '/../.output' + constantValue);
+    fs.rmdirSync(__dirname + '/../.output' + constantValue);
     console.log("Folder copied");
   }
 }
