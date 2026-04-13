@@ -77,7 +77,7 @@ export const GoldenLayoutView: Component<any> = () => {
                 </Portal>
             </Show>
             <section id="bodySection">
-                <section id="controls">
+                <section id="controls"> {/* Decoupled */ }
                     <section id="registerSection">
                         <section id="registerNotVirtualSection">
                             <button id="registerNotVirtualButton" class="control" >Register Component Types</button>

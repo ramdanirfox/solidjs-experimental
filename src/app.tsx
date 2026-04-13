@@ -36,7 +36,7 @@ export default function App() {
           Error | Uncaught Client Exception
         </div>
         <div>
-          <p>{error.message}</p>
+          <p>{error.message} {error.stack}</p>
           <button onClick={reset}>Retry</button>
           <button onClick={() => window.location.reload()}>Reload</button>
         </div>
