@@ -677,7 +677,7 @@ export interface IGoldenAppRootProps {
 
 export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     const [sigCfg, setSigCfg] = createSignal({
-        useVirtualEventBinding: false
+        useVirtualEventBinding: true
     });
 
     const solidGoldenFactory = new SolidGoldenFactory();
@@ -685,8 +685,24 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     const solidGoldenComponentRef = solidGoldenFactory.create("solid view");
 
     let _layoutElement: HTMLElement;
+    // let _goldenLayoutBoundingClientRect: DOMRect = new DOMRect();
+    let _goldenLayoutBoundingClientRect: DOMRect = {
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "top": 0,
+        "right": 0,
+        "bottom": 0,
+        "left": 0,
+        toJSON: () => { }
+    };
 
     const _boundComponentMap = new Map<ComponentContainer, ComponentBase>();
+
+    const fnNumberToPixels = (value: number): string => {
+        return value.toString(10) + 'px';
+    }
 
     const fnHandleUnbindComponentEvent = (container: ComponentContainer) => {
         const component = _boundComponentMap.get(container);
@@ -704,6 +720,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         } else {
             // If embedded, then component handles unbinding of component elements from content.element
         }
+        console.log("[GL] Unbinding Component", container);
         _boundComponentMap.delete(container);
     }
 
@@ -732,7 +749,60 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         }
     }
 
+    const fnHandleContainerVirtualRectingRequiredEvent = (container: ComponentContainer, width: number, height: number) => {
+        const component = _boundComponentMap.get(container);
+        if (component === undefined) {
+            throw new Error('handleContainerVirtualRectingRequiredEvent: Component not found');
+        }
+
+        const rootElement = component.rootHtmlElement;
+        if (rootElement === undefined) {
+            throw new Error('handleContainerVirtualRectingRequiredEvent: Component does not have a root HTML element');
+        }
+
+        const containerBoundingClientRect = (container.element as HTMLElement).getBoundingClientRect();
+        const left = containerBoundingClientRect.left - _goldenLayoutBoundingClientRect.left;
+        rootElement.style.left = fnNumberToPixels(left);
+        const top = containerBoundingClientRect.top - _goldenLayoutBoundingClientRect.top;
+        rootElement.style.top = fnNumberToPixels(top);
+        rootElement.style.width = fnNumberToPixels(width);
+        rootElement.style.height = fnNumberToPixels(height);
+    }
+
+    const fnHandleContainerVirtualVisibilityChangeRequiredEvent = (container: ComponentContainer, visible: boolean) => {
+        const component = _boundComponentMap.get(container);
+        if (component === undefined) {
+            throw new Error('handleContainerVisibilityChangeRequiredEvent: Component not found');
+        }
+
+        const componentRootElement = component.rootHtmlElement;
+        if (componentRootElement === undefined) {
+            throw new Error('handleContainerVisibilityChangeRequiredEvent: Component does not have a root HTML element');
+        }
+
+        if (visible) {
+            componentRootElement.style.display = '';
+        } else {
+            componentRootElement.style.display = 'none';
+        }
+    }
+
+    const fnHandleContainerVirtualZIndexChangeRequiredEvent = (container: ComponentContainer, logicalZIndex: LogicalZIndex, defaultZIndex: string) => {
+        const component = _boundComponentMap.get(container);
+        if (component === undefined) {
+            throw new Error('handleContainerVirtualZIndexChangeRequiredEvent: Component not found');
+        }
+
+        const componentRootElement = component.rootHtmlElement;
+        if (componentRootElement === undefined) {
+            throw new Error('handleContainerVirtualZIndexChangeRequiredEvent: Component does not have a root HTML element');
+        }
+
+        componentRootElement.style.zIndex = defaultZIndex;
+    }
+
     const fnHandleBindComponentEvent = (container: ComponentContainer, itemConfig: ResolvedComponentItemConfig): /* ComponentContainer.Handle */ any => {
+        // TODO: Implementation unfinished
         console.log("[GL] Bind Listener", container, itemConfig);
         const componentTypeName = ResolvedComponentItemConfig.resolveComponentTypeName(itemConfig);
         if (componentTypeName === undefined) {
@@ -740,10 +810,25 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         }
         console.log("[GL] Bind Listener 2", componentTypeName);
         const component = fnCreateComponent(container, componentTypeName, itemConfig.componentState, sigCfg().useVirtualEventBinding);
-        return {
-            component,
-            virtual: false,
+        _boundComponentMap.set(container, component);
+        if (sigCfg().useVirtualEventBinding) {
+            const componentRootElement = component.rootHtmlElement;
+            _layoutElement.appendChild(componentRootElement);
+            container.virtualRectingRequiredEvent = (container, width, height) => fnHandleContainerVirtualRectingRequiredEvent(container, width, height);
+            container.virtualVisibilityChangeRequiredEvent = (container, visible) => fnHandleContainerVirtualVisibilityChangeRequiredEvent(container, visible);
+            container.virtualZIndexChangeRequiredEvent = (container, logicalZIndex, defaultZIndex) => fnHandleContainerVirtualZIndexChangeRequiredEvent(container, logicalZIndex, defaultZIndex);
+            return {
+                component,
+                virtual: true,
+            }
         }
+        else {
+            return {
+                component,
+                virtual: false,
+            }
+        }
+
     }
 
     const _bindComponentEventListener =
@@ -756,7 +841,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     }
 
     const fnHandleBeforeResizingEvent = (count: number) => {
-        // this._goldenLayoutBoundingClientRect = this._layoutElement.getBoundingClientRect();
+        _goldenLayoutBoundingClientRect = _layoutElement.getBoundingClientRect();
         // this._lastVirtualRectingCount = count;
         // this._lastVirtualRectingCountSpan.innerText = this._lastVirtualRectingCount.toString();
         console.log("[GL] handleBeforeResizingEvent", count);
@@ -776,7 +861,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         const layouts = prefinedLayouts.allComponents;
         const miniRowLayout = layouts.find((layout: any) => layout.name === 'miniRow');
         console.log("Predefined Layouts: ", layouts, "Selected miniRowLayout: ", miniRowLayout, _goldenLayout);
-        // _goldenLayout.loadLayout(miniRowLayout!.config);
+        setTimeout(() => {
+            // SSR Unsafe Section
+            _goldenLayout.loadLayout(miniRowLayout!.config);
+        }, 0);
     }
 
     onMount(() => {
@@ -785,7 +873,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
     return (
         <section id="bodySection">
-            <section class="layoutContainer" ref={fnHandleContainerInit}>
+            <section class="layoutContainer w-full h-84" ref={fnHandleContainerInit}>
             </section>
         </section>
     )

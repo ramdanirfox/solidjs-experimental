@@ -43,3 +43,11 @@ p {
     max-width: none;
   }
 }
+
+.w-full {
+  width: 100%;
+}
+
+.h-84 {
+  height: 84rem;
+}
