@@ -925,16 +925,30 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                 _goldenLayout.loadLayout(miniRowLayout!.config);
                 console.log("[GL] _boundComponentMap", _boundComponentMap);
             }, 0);
-            
+
             console.log("[GL] Treated as main window");
+            const recentlyPopInIds = [""];
             fnGoldenListenEvents("windowOpened", (bwPopout) => {
                 console.log("[GoldLayout] Event Popout Received", bwPopout);
                 const eName: string = "tabrestore";
                 fnGoldenRegisterEventHub(
                     eName,
-                    ((c, d) => {
+                    ((c: string, d) => {
+                        // d is undefined
                         console.log("[EV] triggered child side!", c, d);
-                        bwPopout.popIn()
+                        if (recentlyPopInIds.includes(c)) {
+                            
+                        }
+                        else {
+                            recentlyPopInIds.push(c);
+                            setTimeout(() => {
+                                const idx = recentlyPopInIds.indexOf(c);
+                                if (idx > -1) {
+                                    recentlyPopInIds.splice(idx, 1);
+                                }
+                            }, 1000);
+                            bwPopout.popIn();
+                        }
                     }) as EventEmitter.Callback<"userBroadcast">,
                     bwPopout.getGlInstance()
                 );
@@ -949,7 +963,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     return (
         <>
             <section id="bodySection">
-                C : {sigBoundComponentCounter()}, Ct : {_boundComponentMap.size}
+                {/* C : {sigBoundComponentCounter()}, Ct : {_boundComponentMap.size} */}
                 <For each={(sigBoundComponentCounter(), Array.from(_boundComponentMap.values()))}>
                     {(g, sigIdx) => {
                         const c = g as ComponentBase; // well, it actually more than just ComponentBase (see solidgolden-wrapper-component.ts)
