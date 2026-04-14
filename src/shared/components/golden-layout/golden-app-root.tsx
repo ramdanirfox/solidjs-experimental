@@ -895,23 +895,23 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     return (
         <>
             <section id="bodySection">
-                <For each={(sigBoundComponentCounter(), Array.from(_boundComponentMap))}>
+                <For each={(sigBoundComponentCounter(), Array.from(_boundComponentMap.values()))}>
                     {(g, sigIdx) => {
-                        const c = g as [ComponentContainer, ComponentBase]; // well, it actually more than just ComponentBase (see solidgolden-wrapper-component.ts)
-                        return <>
+                        const c = g as ComponentBase; // well, it actually more than just ComponentBase (see solidgolden-wrapper-component.ts)
+                        return (
                             <Show when={sigIdx() > -1} fallback={<></>}>
-                                <Show when={c[1]}>
-                                    <Portal mount={c[1].rootHtmlElement}>
+                                <Show when={c}>
+                                    <Portal mount={c.rootHtmlElement}>
                                         <GoldenComponentWrapper 
-                                            currentIndex={(c[1] as any).state.jsxIndex}
+                                            currentIndex={(c as any).state.jsxIndex}
                                             maxIndex={props.jsxComponents.length}
                                             jsxComponents={props.jsxComponents}
-                                            state={(c[1] as any).state}
+                                            state={(c as any).state}
                                         />
                                     </Portal>
                                 </Show>
                             </Show>
-                        </>
+                        )
                     }}
                 </For>
                 <section class="layoutContainer w-full h-84" ref={fnHandleContainerInit}>
