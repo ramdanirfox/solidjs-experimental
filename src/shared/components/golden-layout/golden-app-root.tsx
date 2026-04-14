@@ -702,6 +702,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     const solidGoldenComponentRef = solidGoldenFactory.create("solid view");
 
     let _layoutElement: HTMLElement;
+    let goldenLayoutRef: GoldenLayout;
     // let _goldenLayoutBoundingClientRect: DOMRect = new DOMRect();
     let _goldenLayoutBoundingClientRect: DOMRect = {
         "x": 0,
@@ -720,6 +721,21 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
     const fnNumberToPixels = (value: number): string => {
         return value.toString(10) + 'px';
+    }
+
+    const fnGoldenListenEvents = <K extends keyof EventEmitter.EventParamsMap>(e: K, cb: EventEmitter.Callback<K>) => {
+        goldenLayoutRef.on(e, cb);
+    }
+
+    const fnGoldenRegisterEventHub = (e: string, cb: EventEmitter.Callback<keyof EventEmitter.EventParamsMap>, goldenLayoutMgrRef?: GoldenLayout | LayoutManager) => {
+        const gl: LayoutManager | GoldenLayout = goldenLayoutMgrRef ? goldenLayoutMgrRef : goldenLayoutRef;
+        gl.eventHub.on(e as keyof EventEmitter.EventParamsMap, cb);
+        console.log("Event Registered", gl);
+    }
+
+    const fnGoldenEmitEventHub = (eventName: string, value: string, goldenLayoutMgrRef?: GoldenLayout | LayoutManager) => {
+        const gl: LayoutManager | GoldenLayout = goldenLayoutMgrRef ? goldenLayoutMgrRef : goldenLayoutRef;
+        gl.eventHub.emit(eventName as keyof EventEmitter.EventParamsMap, value);
     }
 
     const fnHandleUnbindComponentEvent = (container: ComponentContainer) => {
@@ -871,6 +887,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         _layoutElement = container;
         console.log("Container created", container);
         const _goldenLayout = new GoldenLayout(container, _bindComponentEventListener, _fnUnbindComponentEventListener);
+        goldenLayoutRef = _goldenLayout;
         _goldenLayout.resizeWithContainerAutomatically = true;
         (_goldenLayout as any).beforeResizingEvent = (count: any) => fnHandleBeforeResizingEvent(count);
         _goldenLayout.addEventListener('stackHeaderClick', (event) => fnHandleStackHeaderClick(event));
@@ -878,14 +895,51 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         //     name: 'miniRow',
         //     config: miniRowConfig,
         // };
-        const layouts = prefinedLayouts.allComponents;
-        const miniRowLayout = layouts.find((layout: any) => layout.name === 'miniRow');
-        console.log("Predefined Layouts: ", layouts, "Selected miniRowLayout: ", miniRowLayout, _goldenLayout);
-        setTimeout(() => {
-            // SSR Unsafe Section
-            _goldenLayout.loadLayout(miniRowLayout!.config);
-            console.log("[GL] _boundComponentMap", _boundComponentMap);
-        }, 0);
+
+        if (_goldenLayout.isSubWindow) {
+            console.log("[GL] Treated as subwindow");
+            _goldenLayout.checkAddDefaultPopinButton();
+
+            // const subWindowUsesRegistrationBindings = false; // change to true if you want to test sub windows with registration bindings
+            // if (subWindowUsesRegistrationBindings) {
+            //     this.registerComponentTypes();
+            // }
+        }
+
+        fnGoldenListenEvents("windowClosed", (a) => {
+            console.log("[GoldLayout] Event Received", a);
+        });
+
+        // const isPopup = _goldenLayout.isSubWindow;
+        const isPopup = window.location.search.includes("gl-window");
+        if (isPopup) {
+            console.log("[GL] Treated as popup");
+            (window).addEventListener("pagehide", (e) => { fnGoldenEmitEventHub("tabrestore", "Restore_" + window.location.search) }) // --> reliable
+        }
+        else {
+            const layouts = prefinedLayouts.allComponents;
+            const miniRowLayout = layouts.find((layout: any) => layout.name === 'miniRow');
+            console.log("Predefined Layouts: ", layouts, "Selected miniRowLayout: ", miniRowLayout, _goldenLayout);
+            setTimeout(() => {
+                // SSR Unsafe Section
+                _goldenLayout.loadLayout(miniRowLayout!.config);
+                console.log("[GL] _boundComponentMap", _boundComponentMap);
+            }, 0);
+            
+            console.log("[GL] Treated as main window");
+            fnGoldenListenEvents("windowOpened", (bwPopout) => {
+                console.log("[GoldLayout] Event Popout Received", bwPopout);
+                const eName: string = "tabrestore";
+                fnGoldenRegisterEventHub(
+                    eName,
+                    ((c, d) => {
+                        console.log("[EV] triggered child side!", c, d);
+                        bwPopout.popIn()
+                    }) as EventEmitter.Callback<"userBroadcast">,
+                    bwPopout.getGlInstance()
+                );
+            });
+        }
     }
 
     onMount(() => {
@@ -895,6 +949,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     return (
         <>
             <section id="bodySection">
+                C : {sigBoundComponentCounter()}, Ct : {_boundComponentMap.size}
                 <For each={(sigBoundComponentCounter(), Array.from(_boundComponentMap.values()))}>
                     {(g, sigIdx) => {
                         const c = g as ComponentBase; // well, it actually more than just ComponentBase (see solidgolden-wrapper-component.ts)
@@ -902,7 +957,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                             <Show when={sigIdx() > -1} fallback={<></>}>
                                 <Show when={c}>
                                     <Portal mount={c.rootHtmlElement}>
-                                        <GoldenComponentWrapper 
+                                        <GoldenComponentWrapper
                                             currentIndex={(c as any).state.jsxIndex}
                                             maxIndex={props.jsxComponents.length}
                                             jsxComponents={props.jsxComponents}
@@ -914,7 +969,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                         )
                     }}
                 </For>
-                <section class="layoutContainer w-full h-84" ref={fnHandleContainerInit}>
+                <section class="layoutContainer w-full h-96" ref={fnHandleContainerInit}>
                 </section>
             </section>
         </>

@@ -12,11 +12,11 @@ export const GoldenLayoutView2: Component<any> = () => {
         <GoldenAppRoot
             jsxComponents={[
                 () => <div>Hallo Dunia</div>,
-                () => <GoldenAppRoot jsxComponents={[
-                    () => <div>Pagiku cerah!</div>,
-                    () => <div>Matahari bersinar!</div>,
-                ]} />,
-                // () => <Counter />,
+                // () => <GoldenAppRoot jsxComponents={[
+                //     () => <div>Pagiku cerah!</div>,
+                //     () => <div>Matahari bersinar!</div>,
+                // ]} />,
+                () => <Counter />,
                 () => <h2>Apa Kabar {SJXctx?.ctx.increments.val()}</h2>,
             ]}
         />

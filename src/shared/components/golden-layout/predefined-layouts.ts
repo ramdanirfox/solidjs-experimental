@@ -12,13 +12,14 @@ export interface Layout {
 
 const miniRowConfig: LayoutConfig = {
     settings: {
-        popInOnClose: true
+        popInOnClose: false
     },
     root: {
         type: ItemType.row,
         content: [
             {
                 type: "component",
+                id: "solid",
                 title: "Solid",
                 header: {
                     show: "top",
@@ -33,7 +34,8 @@ const miniRowConfig: LayoutConfig = {
             },
             {
                 title: "JS",
-                header: { show: "top", popout: false },
+                id: "js",
+                header: { show: "top", popout: "pop" },
                 type: "component",
                 reorderEnabled: true,
                 componentType: "solid view",
@@ -51,6 +53,9 @@ const miniRowLayout: Layout = {
 };
 
 const miniStackConfig: LayoutConfig = {
+    settings: {
+        popInOnClose: true
+    },
     root: {
         type: ItemType.stack,
         content: [
