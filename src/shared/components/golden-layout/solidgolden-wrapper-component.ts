@@ -100,13 +100,13 @@ export class SolidGoldenFactory {
                     console.log("[SJSWrapper] root html", this.rootHtmlElement);
                 // }
                 // else {
-                    render(() => GoldenComponentWrapper(
-                        {
-                            currentIndex: (state as any).jsxIndex,
-                            maxIndex: klass.jsxCmps.length,
-                            jsxComponents: klass.jsxCmps,
-                            state: state
-                        }), this.rootHtmlElement);
+                    // render(() => GoldenComponentWrapper(
+                    //     {
+                    //         currentIndex: (state as any).jsxIndex,
+                    //         maxIndex: klass.jsxCmps.length,
+                    //         jsxComponents: klass.jsxCmps,
+                    //         state: state
+                    //     }), this.rootHtmlElement);
                     // render(() => Counter(), this.rootHtmlElement);
                 // }
 

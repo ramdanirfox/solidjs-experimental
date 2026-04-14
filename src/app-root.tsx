@@ -1,6 +1,7 @@
 import { useNavigate } from "@solidjs/router";
 import { Accessor, createEffect, createSignal, Show, Suspense } from "solid-js";
 import { APP_DEV_BASEURL } from "./shared/constants/app.constant";
+import "./app-root.css";
 
 interface ISJXRootContainerProps {
     children: any;

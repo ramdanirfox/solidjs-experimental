@@ -2,6 +2,7 @@ import { defineConfig } from "@solidjs/start/config";
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import mkcert from 'vite-plugin-mkcert'
 import { APP_DEV_BASEURL } from "./src/shared/constants/app.constant";
+import tailwindcss from '@tailwindcss/vite';
 
 const hmrPorts = {
   client: 4440,
@@ -28,6 +29,7 @@ export default defineConfig({
       },
     },
     plugins: [
+      tailwindcss(),
       basicSsl(),
       mkcert(),
     ],

@@ -19,7 +19,9 @@ import { Layout, prefinedLayouts } from './predefined-layouts';
 import { TextComponent } from './text-component';
 import { ComponentBase } from './component-base';
 import { SolidGoldenFactory, SolidGoldenWrapperComponent } from './solidgolden-wrapper-component';
-import { createSignal, JSX, onMount } from 'solid-js';
+import { createSignal, For, JSX, onMount, Show } from 'solid-js';
+import { Portal } from 'solid-js/web';
+import { GoldenComponentWrapper } from '~/components/GoldenComponentWrapper';
 
 class GoldenAppClass {
     private readonly _layoutElement: HTMLElement;
@@ -671,6 +673,21 @@ class GoldenAppClass {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export interface IGoldenAppRootProps {
     jsxComponents: (JSX.Element | (() => JSX.Element))[]
 }
@@ -699,6 +716,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     };
 
     const _boundComponentMap = new Map<ComponentContainer, ComponentBase>();
+    const [sigBoundComponentCounter, setSigBoundComponentCounter] = createSignal(0);
 
     const fnNumberToPixels = (value: number): string => {
         return value.toString(10) + 'px';
@@ -721,6 +739,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
             // If embedded, then component handles unbinding of component elements from content.element
         }
         console.log("[GL] Unbinding Component", container);
+        setSigBoundComponentCounter(sigBoundComponentCounter() - 1);
         _boundComponentMap.delete(container);
     }
 
@@ -808,9 +827,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         if (componentTypeName === undefined) {
             throw new Error('handleBindComponentEvent: Undefined componentTypeName');
         }
-        console.log("[GL] Bind Listener 2", componentTypeName);
         const component = fnCreateComponent(container, componentTypeName, itemConfig.componentState, sigCfg().useVirtualEventBinding);
+        console.log("[GL] Built Component", container, component);
         _boundComponentMap.set(container, component);
+        setSigBoundComponentCounter(sigBoundComponentCounter() + 1);
         if (sigCfg().useVirtualEventBinding) {
             const componentRootElement = component.rootHtmlElement;
             _layoutElement.appendChild(componentRootElement);
@@ -864,6 +884,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         setTimeout(() => {
             // SSR Unsafe Section
             _goldenLayout.loadLayout(miniRowLayout!.config);
+            console.log("[GL] _boundComponentMap", _boundComponentMap);
         }, 0);
     }
 
@@ -872,9 +893,30 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     });
 
     return (
-        <section id="bodySection">
-            <section class="layoutContainer w-full h-84" ref={fnHandleContainerInit}>
+        <>
+            <section id="bodySection">
+                <For each={(sigBoundComponentCounter(), Array.from(_boundComponentMap))}>
+                    {(g, sigIdx) => {
+                        const c = g as [ComponentContainer, ComponentBase]; // well, it actually more than just ComponentBase (see solidgolden-wrapper-component.ts)
+                        return <>
+                            <Show when={sigIdx() > -1} fallback={<></>}>
+                                <Show when={c[1]}>
+                                    <Portal mount={c[1].rootHtmlElement}>
+                                        <GoldenComponentWrapper 
+                                            currentIndex={(c[1] as any).state.jsxIndex}
+                                            maxIndex={props.jsxComponents.length}
+                                            jsxComponents={props.jsxComponents}
+                                            state={(c[1] as any).state}
+                                        />
+                                    </Portal>
+                                </Show>
+                            </Show>
+                        </>
+                    }}
+                </For>
+                <section class="layoutContainer w-full h-84" ref={fnHandleContainerInit}>
+                </section>
             </section>
-        </section>
+        </>
     )
 }
