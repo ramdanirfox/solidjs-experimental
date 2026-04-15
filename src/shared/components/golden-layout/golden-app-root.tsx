@@ -696,6 +696,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     const [sigCfg, setSigCfg] = createSignal({
         useVirtualEventBinding: true
     });
+    const [sigMuteAutoPopIn, setSigMuteAutoPopin] = createSignal(false);
 
     const solidGoldenFactory = new SolidGoldenFactory();
     solidGoldenFactory.setJsxComponents(props.jsxComponents);
@@ -836,9 +837,19 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         componentRootElement.style.zIndex = defaultZIndex;
     }
 
+    const fnTemporarilyMuteAutoPopin = () => {
+        setSigMuteAutoPopin(true);
+        console.log("[GL Patch] Mute Auto Popin is", sigMuteAutoPopIn());
+        setTimeout(() => {
+            setSigMuteAutoPopin(false);
+            console.log("[GL Patch] Mute Auto Popin is", sigMuteAutoPopIn());
+        }, 500);
+    }
+
     const fnHandleBindComponentEvent = (container: ComponentContainer, itemConfig: ResolvedComponentItemConfig): /* ComponentContainer.Handle */ any => {
         // TODO: Implementation unfinished
         console.log("[GL] Bind Listener", container, itemConfig);
+        fnTemporarilyMuteAutoPopin();
         const componentTypeName = ResolvedComponentItemConfig.resolveComponentTypeName(itemConfig);
         if (componentTypeName === undefined) {
             throw new Error('handleBindComponentEvent: Undefined componentTypeName');
@@ -940,15 +951,26 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                             
                         }
                         else {
-                            recentlyPopInIds.push(c);
                             setTimeout(() => {
-                                const idx = recentlyPopInIds.indexOf(c);
-                                if (idx > -1) {
+                                let idx = recentlyPopInIds.indexOf(c);
+                                let counter = 0;
+                                console.log("[GL] Popin decision", recentlyPopInIds);
+                                while (idx > -1) {
+                                    counter++;
                                     recentlyPopInIds.splice(idx, 1);
+                                    idx = recentlyPopInIds.indexOf(c);
                                 }
-                            }, 1000);
-                            bwPopout.popIn();
+                                if (counter > 1) {
+                                    console.log("[GL] Assume popin done via forced ways (close window, change url, etc)", recentlyPopInIds, c);
+                                    // bwPopout.popIn();
+                                }
+                                else {
+                                    console.log("[GL] Assume popin done via GL popIn element button (perform No-Op)", recentlyPopInIds, c);
+                                    if (!sigMuteAutoPopIn()) { bwPopout.popIn(); }
+                                }
+                            }, 100);
                         }
+                        recentlyPopInIds.push(c);
                     }) as EventEmitter.Callback<"userBroadcast">,
                     bwPopout.getGlInstance()
                 );
