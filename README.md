@@ -30,6 +30,7 @@ Post signing :
 
 AppData\Local\Android\Sdk\build-tools\35.0.0>apksigner.bat sign --ks %USERPROFILE%\upload-keystore.jks --out %USERPROFILE%\app-signed.apk %USERPROFILE%\app-universal-release-unsigned.apk
 
+If you face some build error EPERM with `pnpm run prodpack` when moving folder, try to shutdown development server first
 
 # Integration Roadmap
 - Golden Layout - Listen and/or to as many APIs
@@ -52,6 +53,9 @@ AppData\Local\Android\Sdk\build-tools\35.0.0>apksigner.bat sign --ks %USERPROFIL
 # Notes - Golden Layout integration with SolidJS
 - Similar JSX instance will replace older one when rendered twice (to mitigate this, provide function that return JSX.Element to create new instance of JSX)
 - Context doesnt connect each other between different render (pass context from GoldenLayoutView as workaround, but super inconvenient :sad )
+
+UPDATES 2026-04
+- Context work now as expected (we try to keep reactive graph still intact by implement component mounting with SolidJS Portal) by using GoldenLayoutView2
 
 # Notes - react-solid-bridge
 - It's outdated, works with React 17.0.2
