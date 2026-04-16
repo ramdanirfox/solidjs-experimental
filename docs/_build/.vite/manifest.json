@@ -3,16 +3,20 @@
     "file": "assets/Counter-CWIoMshG.css",
     "src": "_Counter-CWIoMshG.css"
   },
-  "_SJXContext-CmP8xBfQ.js": {
-    "file": "assets/SJXContext-CmP8xBfQ.js",
+  "_SJXContext-B7bHwqWR.js": {
+    "file": "assets/SJXContext-B7bHwqWR.js",
     "name": "SJXContext",
     "imports": [
-      "_web-CZ3DQZL7.js"
+      "_web-Dsh988zy.js"
     ]
   },
   "__commonjsHelpers-Cpj98o6Y.js": {
     "file": "assets/_commonjsHelpers-Cpj98o6Y.js",
     "name": "_commonjsHelpers"
+  },
+  "_app.constant-DCfKD7jM.js": {
+    "file": "assets/app.constant-DCfKD7jM.js",
+    "name": "app.constant"
   },
   "_index-BsTTqy_7.js": {
     "file": "assets/index-BsTTqy_7.js",
@@ -26,13 +30,13 @@
     "file": "assets/index-DC5SOrQ9.css",
     "src": "_index-DC5SOrQ9.css"
   },
-  "_main-CtvtsEiC.js": {
-    "file": "assets/main-CtvtsEiC.js",
+  "_main-3rNXhDWR.js": {
+    "file": "assets/main-3rNXhDWR.js",
     "name": "main",
     "isDynamicEntry": true,
     "imports": [
       "__commonjsHelpers-Cpj98o6Y.js",
-      "_svar-BC80hZNC.js"
+      "_svar-DRpNChOx.js"
     ]
   },
   "_patch-deckgl-BOigIJ48.css": {
@@ -43,56 +47,56 @@
     "file": "assets/preload-helper-CgER5ffx.js",
     "name": "preload-helper"
   },
-  "_routing-3aS_K-lk.js": {
-    "file": "assets/routing-3aS_K-lk.js",
+  "_routing-DAuldvPJ.js": {
+    "file": "assets/routing-DAuldvPJ.js",
     "name": "routing",
     "imports": [
-      "_web-CZ3DQZL7.js"
+      "_web-Dsh988zy.js"
     ]
   },
   "_svar-3Xbsfa7r.css": {
     "file": "assets/svar-3Xbsfa7r.css",
     "src": "_svar-3Xbsfa7r.css"
   },
-  "_svar-BC80hZNC.js": {
-    "file": "assets/svar-BC80hZNC.js",
+  "_svar-DRpNChOx.js": {
+    "file": "assets/svar-DRpNChOx.js",
     "name": "svar",
     "isDynamicEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js",
+      "_web-Dsh988zy.js",
       "_preload-helper-CgER5ffx.js",
       "__commonjsHelpers-Cpj98o6Y.js"
     ],
     "dynamicImports": [
       "node_modules/.pnpm/wx-react-gantt@1.3.0_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/wx-react-gantt/dist/gantt.js",
-      "_main-CtvtsEiC.js"
+      "_main-3rNXhDWR.js"
     ],
     "css": [
       "assets/svar-3Xbsfa7r.css",
       "assets/index-DC5SOrQ9.css"
     ]
   },
-  "_web-CZ3DQZL7.js": {
-    "file": "assets/web-CZ3DQZL7.js",
+  "_web-Dsh988zy.js": {
+    "file": "assets/web-Dsh988zy.js",
     "name": "web"
   },
   "node_modules/.pnpm/ag-grid-solid@28.2.0_ag-grid-community@28.2.0_solid-js@1.9.7/node_modules/ag-grid-solid/dist/esm/index.js": {
-    "file": "assets/index-BCQ6HQ30.js",
+    "file": "assets/index-DqHDbVbE.js",
     "name": "index",
     "src": "node_modules/.pnpm/ag-grid-solid@28.2.0_ag-grid-community@28.2.0_solid-js@1.9.7/node_modules/ag-grid-solid/dist/esm/index.js",
     "isDynamicEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js"
+      "_web-Dsh988zy.js"
     ]
   },
   "node_modules/.pnpm/wx-react-gantt@1.3.0_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/wx-react-gantt/dist/gantt.js": {
-    "file": "assets/gantt-TzgpwTo_.js",
+    "file": "assets/gantt-yzKKTSLL.js",
     "name": "gantt",
     "src": "node_modules/.pnpm/wx-react-gantt@1.3.0_react-dom@18.3.1_react@18.3.1__react@18.3.1/node_modules/wx-react-gantt/dist/gantt.js",
     "isDynamicEntry": true,
     "imports": [
-      "_svar-BC80hZNC.js",
-      "_web-CZ3DQZL7.js",
+      "_svar-DRpNChOx.js",
+      "_web-Dsh988zy.js",
       "_preload-helper-CgER5ffx.js",
       "__commonjsHelpers-Cpj98o6Y.js"
     ],
@@ -101,13 +105,13 @@
     ]
   },
   "src/routes/aggrid.tsx?pick=default&pick=$css": {
-    "file": "assets/aggrid-BOwOPgsT.js",
+    "file": "assets/aggrid-DfmuNHAU.js",
     "name": "aggrid",
     "src": "src/routes/aggrid.tsx?pick=default&pick=$css",
     "isEntry": true,
     "isDynamicEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js",
+      "_web-Dsh988zy.js",
       "_preload-helper-CgER5ffx.js"
     ],
     "dynamicImports": [
@@ -118,15 +122,29 @@
       "assets/index-DC5SOrQ9.css"
     ]
   },
+  "src/routes/chart-3d.tsx?pick=default&pick=$css": {
+    "file": "assets/chart-3d-TKg1SvNS.js",
+    "name": "chart-3d",
+    "src": "src/routes/chart-3d.tsx?pick=default&pick=$css",
+    "isEntry": true,
+    "isDynamicEntry": true,
+    "imports": [
+      "_web-Dsh988zy.js"
+    ],
+    "css": [
+      "assets/index-DC5SOrQ9.css",
+      "assets/patch-deckgl-BOigIJ48.css"
+    ]
+  },
   "src/routes/golden-layout.tsx?pick=default&pick=$css": {
-    "file": "assets/golden-layout-K-0Y06kG.js",
+    "file": "assets/golden-layout-F93PPRFw.js",
     "name": "golden-layout",
     "src": "src/routes/golden-layout.tsx?pick=default&pick=$css",
     "isEntry": true,
     "isDynamicEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js",
-      "_SJXContext-CmP8xBfQ.js"
+      "_web-Dsh988zy.js",
+      "_SJXContext-B7bHwqWR.js"
     ],
     "css": [
       "assets/golden-layout-Cl0jAG5q.css",
@@ -135,27 +153,27 @@
     ]
   },
   "src/routes/index.tsx?pick=default&pick=$css": {
-    "file": "assets/index-BpqAqMi3.js",
+    "file": "assets/index-0_eVZq2g.js",
     "name": "index",
     "src": "src/routes/index.tsx?pick=default&pick=$css",
     "isEntry": true,
     "isDynamicEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js",
-      "_routing-3aS_K-lk.js"
+      "_web-Dsh988zy.js",
+      "_routing-DAuldvPJ.js"
     ],
     "css": [
       "assets/index-DC5SOrQ9.css"
     ]
   },
   "src/routes/maplibre-google-maps.tsx?pick=default&pick=$css": {
-    "file": "assets/maplibre-google-maps-D_PgT9Nd.js",
+    "file": "assets/maplibre-google-maps-BigSZ5sf.js",
     "name": "maplibre-google-maps",
     "src": "src/routes/maplibre-google-maps.tsx?pick=default&pick=$css",
     "isEntry": true,
     "isDynamicEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js",
+      "_web-Dsh988zy.js",
       "_preload-helper-CgER5ffx.js",
       "__commonjsHelpers-Cpj98o6Y.js"
     ],
@@ -169,13 +187,14 @@
     ]
   },
   "src/routes/solid-google-maps.tsx?pick=default&pick=$css": {
-    "file": "assets/solid-google-maps-DvgyyelQ.js",
+    "file": "assets/solid-google-maps-D2f95VlX.js",
     "name": "solid-google-maps",
     "src": "src/routes/solid-google-maps.tsx?pick=default&pick=$css",
     "isEntry": true,
     "isDynamicEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js",
+      "_web-Dsh988zy.js",
+      "_app.constant-DCfKD7jM.js",
       "__commonjsHelpers-Cpj98o6Y.js"
     ],
     "css": [
@@ -185,13 +204,13 @@
     ]
   },
   "src/routes/svar.tsx?pick=default&pick=$css": {
-    "file": "assets/svar-D4Irugbf.js",
+    "file": "assets/svar-DQSOyhyo.js",
     "name": "svar",
     "src": "src/routes/svar.tsx?pick=default&pick=$css",
     "isEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js",
-      "_svar-BC80hZNC.js",
+      "_web-Dsh988zy.js",
+      "_svar-DRpNChOx.js",
       "_preload-helper-CgER5ffx.js",
       "__commonjsHelpers-Cpj98o6Y.js"
     ],
@@ -200,23 +219,28 @@
     ]
   },
   "virtual:$vinxi/handler/client": {
-    "file": "assets/client-CMULkpn2.js",
+    "file": "assets/client-DJTO47N_.js",
     "name": "client",
     "src": "virtual:$vinxi/handler/client",
     "isEntry": true,
     "imports": [
-      "_web-CZ3DQZL7.js",
+      "_web-Dsh988zy.js",
       "_preload-helper-CgER5ffx.js",
-      "_SJXContext-CmP8xBfQ.js",
-      "_routing-3aS_K-lk.js"
+      "_SJXContext-B7bHwqWR.js",
+      "_app.constant-DCfKD7jM.js",
+      "_routing-DAuldvPJ.js"
     ],
     "dynamicImports": [
       "src/routes/aggrid.tsx?pick=default&pick=$css",
+      "src/routes/chart-3d.tsx?pick=default&pick=$css",
       "src/routes/golden-layout.tsx?pick=default&pick=$css",
       "src/routes/index.tsx?pick=default&pick=$css",
       "src/routes/maplibre-google-maps.tsx?pick=default&pick=$css",
       "src/routes/solid-google-maps.tsx?pick=default&pick=$css",
       "src/routes/svar.tsx?pick=default&pick=$css"
+    ],
+    "css": [
+      "assets/client-D1WW2HBj.css"
     ]
   }
 }
