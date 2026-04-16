@@ -1,4 +1,4 @@
-import { JSX, onMount, Show } from "solid-js";
+import { JSX, onCleanup, onMount, Show } from "solid-js";
 import { useSJXContext } from "~/shared/context/SJXContext";
 
 interface IGoldenComponentWrapper {
@@ -11,6 +11,7 @@ interface IGoldenComponentWrapper {
 export const  GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
     const SJXctx = useSJXContext();
     onMount(() => console.log("[GoldenComponentWrapper] It supposed to load component " + props.currentIndex));
+    onCleanup(() => console.log("[GoldenComponentWrapper] It supposed to unload component " + props.currentIndex));
     return (<>
     <Show when={props.jsxComponents[props.currentIndex]} fallback={<>
         <h1>SolidGoldenView Not Found</h1>
