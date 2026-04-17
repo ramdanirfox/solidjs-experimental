@@ -22,6 +22,7 @@ import { SolidGoldenFactory, SolidGoldenWrapperComponent } from './solidgolden-w
 import { createSignal, For, JSX, onMount, Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { GoldenComponentWrapper } from '~/components/GoldenComponentWrapper';
+import { createStore } from 'solid-js/store';
 
 interface GenericObject {
     [key: string]: any;
@@ -59,8 +60,15 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
     const _boundComponentMap = new Map<ComponentContainer, ComponentBase>();
     const [sigBoundComponentCounter, setSigBoundComponentCounter] = createSignal(0);
+    // const [sigBoundComponentById, setSigBoundComponentById] = createSignal<Record<string, ComponentBase>>({});
+    // const [sigBoundComponentArray, setSigBoundComponentArray] = createSignal<[]{id: string, component: ComponentBase}>([]);
+    const [boundComponents, setBoundComponents] = createStore<Record<string, {
+        id: string,
+        component: ComponentBase,
+        rootElement: HTMLElement
+    }>>({});
+    const [sigMemorizedContainerStyle, setSigMemorizedContainerStyle] = createSignal<Record<string, any>>({});
     const [sigMemorizedRectMap, setSigMemorizedRectMap] = createSignal(new Map());
-    
 
     const fnNumberToPixels = (value: number): string => {
         return value.toString(10) + 'px';
@@ -134,6 +142,27 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         setSigBoundComponentCounter(sigBoundComponentCounter() - 1);
     }
 
+    const fnHandleUnbindComponentEventV2 = (container: ComponentContainer) => {
+        const component = _boundComponentMap.get(container);
+        if (component === undefined) {
+            throw new Error('handleUnbindComponentEvent: Component not found');
+        }
+
+        const componentRootElement = component.rootHtmlElement;
+        if (componentRootElement === undefined) {
+            throw new Error('handleUnbindComponentEvent: Component does not have a root HTML element');
+        }
+
+        if (container.virtual) {
+            _layoutElement!.removeChild(componentRootElement);
+        } else {
+            // If embedded, then component handles unbinding of component elements from content.element
+        }
+        console.log("[GL] Unbinding Component", container);
+        _boundComponentMap.delete(container);
+        setSigBoundComponentCounter(sigBoundComponentCounter() - 1);
+    }
+
     const _fnUnbindComponentEventListener = (container: ComponentContainer) => fnHandleUnbindComponentEvent(container);
 
     const fnGoldenInformComponentCreation = (c: ComponentContainer) => {
@@ -177,6 +206,9 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         rootElement.style.top = fnNumberToPixels(top);
         rootElement.style.width = fnNumberToPixels(width);
         rootElement.style.height = fnNumberToPixels(height);
+        const id = (component.container as any)._config.id
+        // console.log("Component inst", component, sigMemorizedContainerStyle());
+        setSigMemorizedContainerStyle({...sigMemorizedContainerStyle(), [id]: {...rootElement.style}});
     }
 
     const fnHandleContainerVirtualVisibilityChangeRequiredEvent = (container: ComponentContainer, visible: boolean) => {
@@ -231,7 +263,21 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         const component = fnCreateComponent(container, componentTypeName, itemConfig.componentState, sigCfg().useVirtualEventBinding);
         console.log("[GL] Built Component", container, component);
         _boundComponentMap.set(container, component);
-        setSigBoundComponentCounter(sigBoundComponentCounter() + 1);
+        const id = itemConfig.id; // ID unik yang konsisten
+        if (boundComponents[id]) {
+            setBoundComponents(id, 'component', component);
+            setBoundComponents(id, 'rootElement', component.rootHtmlElement);
+            console.log("IT GOES HERE", id);
+        } else {
+            // JIKA BARU: Tambahkan ke store
+            setBoundComponents(id, {
+                id,
+                component: component,
+                rootElement: component.rootHtmlElement
+            });
+            setSigBoundComponentCounter(c => c + 1);
+        }
+        // setSigBoundComponentCounter(sigBoundComponentCounter() + 1);
         if (sigCfg().useVirtualEventBinding) {
             const componentRootElement = component.rootHtmlElement;
             _layoutElement.appendChild(componentRootElement);
@@ -303,10 +349,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
         // layout memorizer
         fnGoldenListenEvents("stateChanged" as any, (obj: any) => {
-            // should be muted when popout occur
-            // let state = goldenLayoutRef.saveLayout();
-            // let adapted = fnGoldenUtilSavedLayoutAdapter(state);
-            // console.log("[GL Evt] State Changed", state, adapted, obj, goldenLayoutRef);
+            // should be muted when popout occur    
+            let state = goldenLayoutRef.saveLayout();
+            let adapted = fnGoldenUtilSavedLayoutAdapter(state);
+            console.log("[GL Evt] State Changed", state, adapted, obj, goldenLayoutRef);
         });
 
         // const isPopup = _goldenLayout.isSubWindow;
@@ -376,11 +422,13 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
     return (
         <>
-            <section id="bodySection">
+            <section class="bodySection">
                 {/* C : {sigBoundComponentCounter()}, Ct : {_boundComponentMap.size} */}
-                <For each={(sigBoundComponentCounter(), Array.from(_boundComponentMap.values()))}>
+                {// well, it actually more than just ComponentBase (see solidgolden-wrapper-component.ts)
+                }
+                {/* <For each={(sigBoundComponentCounter(), Array.from(_boundComponentMap.values()))}>
                     {(g, sigIdx) => {
-                        const c = g as ComponentBase; // well, it actually more than just ComponentBase (see solidgolden-wrapper-component.ts)
+                        const c = g as ComponentBase; 
                         return (
                             <Show when={sigIdx() > -1} fallback={<></>}>
                                 <Show when={c}>
@@ -392,6 +440,42 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                                             state={(c as any).state}
                                         />
                                     </Portal>
+                                </Show>
+                            </Show>
+                        )
+                    }}
+                </For> */}
+                <For each={Object.values(boundComponents)}>
+                    {(item) => {
+                        const c = item.component;
+                        const isIframe = (c as any).state.jsxPreservationMode == "static-host";
+                        const s = sigMemorizedContainerStyle()[(c.container as any)._config.id] || {};
+                        console.log("[GL render] s", s, c, (c.container as any)._config.id);
+                        return (
+                            <Show when={item.rootElement}>
+                                <Show when={isIframe} fallback={
+                                    <Portal mount={item.rootElement}>
+                                        <GoldenComponentWrapper
+                                            currentIndex={(c as any).state.jsxIndex}
+                                            maxIndex={props.jsxComponents.length}
+                                            jsxComponents={props.jsxComponents}
+                                            state={(c as any).state}
+                                        />
+                                    </Portal>
+                                }>
+                                    <div class="sjx-static-host" style={{
+                                        width: sigMemorizedContainerStyle()[(c.container as any)._config.id]?.width,
+                                        height: sigMemorizedContainerStyle()[(c.container as any)._config.id]?.height,
+                                        left: sigMemorizedContainerStyle()[(c.container as any)._config.id]?.left,
+                                        top: sigMemorizedContainerStyle()[(c.container as any)._config.id]?.top
+                                    }}>
+                                        <GoldenComponentWrapper
+                                            currentIndex={(c as any).state.jsxIndex}
+                                            maxIndex={props.jsxComponents.length}
+                                            jsxComponents={props.jsxComponents}
+                                            state={(c as any).state}
+                                        />
+                                    </div>
                                 </Show>
                             </Show>
                         )

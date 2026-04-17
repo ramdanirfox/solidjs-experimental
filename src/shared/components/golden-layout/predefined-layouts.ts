@@ -30,6 +30,7 @@ const miniRowConfig: LayoutConfig = {
                 size: '30%',
                 componentState: {
                     jsxIndex: 1,
+                    jsxPreservationMode: "standard"
                 },
             },
             {
@@ -41,6 +42,7 @@ const miniRowConfig: LayoutConfig = {
                 componentType: "solid view",
                 componentState: {
                     jsxIndex: 4,
+                    jsxPreservationMode: "static-host"
                 },
             },
         ],

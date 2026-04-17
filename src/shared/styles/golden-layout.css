@@ -1,4 +1,4 @@
-#bodySection {
+.bodySection {
     display: flex;
     flex-direction: row;
     height: 100%;
@@ -28,7 +28,7 @@
     flex-wrap: nowrap;
 }
 
-.radioLine > *:not(:first-child) {
+.radioLine>*:not(:first-child) {
     margin-left: 0.4em;
 }
 
@@ -38,11 +38,11 @@
     align-items: center;
 }
 
-.labelledRadio > input {
+.labelledRadio>input {
     margin: 0;
 }
 
-.labelledRadio > label {
+.labelledRadio>label {
     margin-left: 0.2em;
 }
 
@@ -109,4 +109,12 @@
 
 #stackHeaderClickedDiv {
     display: inline-flex;
+}
+
+.sjx-static-host {
+    /* position: absolute; */
+    position: absolute;
+    overflow: hidden;
+    z-index: auto;
+    background-color: antiquewhite;
 }
