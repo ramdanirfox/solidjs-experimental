@@ -34,6 +34,18 @@ const miniRowConfig: LayoutConfig = {
                 },
             },
             {
+                title: "JS2",
+                id: "js2",
+                header: { show: "top", popout: "pop" },
+                type: "component",
+                reorderEnabled: true,
+                componentType: "solid view",
+                componentState: {
+                    jsxIndex: 2,
+                    jsxPreservationMode: "standard"
+                },
+            },
+            {
                 title: "JS",
                 id: "js",
                 header: { show: "top", popout: "pop" },

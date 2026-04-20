@@ -19,7 +19,7 @@ import { Layout, prefinedLayouts } from './predefined-layouts';
 import { TextComponent } from './text-component';
 import { ComponentBase } from './component-base';
 import { SolidGoldenFactory, SolidGoldenWrapperComponent } from './solidgolden-wrapper-component';
-import { createSignal, For, JSX, onMount, Show } from 'solid-js';
+import { createRenderEffect, createSignal, For, JSX, onCleanup, onMount, Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { GoldenComponentWrapper } from '~/components/GoldenComponentWrapper';
 import { createStore } from 'solid-js/store';
@@ -57,6 +57,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         "left": 0,
         toJSON: () => { }
     };
+    const portalRefs: Record<string, HTMLDivElement> = {};
 
     const _boundComponentMap = new Map<ComponentContainer, ComponentBase>();
     const [sigBoundComponentCounter, setSigBoundComponentCounter] = createSignal(0);
@@ -69,6 +70,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     }>>({});
     const [sigMemorizedContainerStyle, setSigMemorizedContainerStyle] = createSignal<Record<string, any>>({});
     const [sigMemorizedRectMap, setSigMemorizedRectMap] = createSignal(new Map());
+    const [sigLayoutElement, setSigLayoutElement] = createSignal<HTMLElement>();
 
     const fnNumberToPixels = (value: number): string => {
         return value.toString(10) + 'px';
@@ -208,7 +210,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         rootElement.style.height = fnNumberToPixels(height);
         const id = (component.container as any)._config.id
         // console.log("Component inst", component, sigMemorizedContainerStyle());
-        setSigMemorizedContainerStyle({...sigMemorizedContainerStyle(), [id]: {...rootElement.style}});
+        setSigMemorizedContainerStyle({ ...sigMemorizedContainerStyle(), [id]: { ...rootElement.style } });
     }
 
     const fnHandleContainerVirtualVisibilityChangeRequiredEvent = (container: ComponentContainer, visible: boolean) => {
@@ -227,6 +229,9 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         } else {
             componentRootElement.style.display = 'none';
         }
+
+        const id = (component.container as any)._config.id;
+        setSigMemorizedContainerStyle({ ...sigMemorizedContainerStyle(), [id]: { ...componentRootElement.style } });
     }
 
     const fnHandleContainerVirtualZIndexChangeRequiredEvent = (container: ComponentContainer, logicalZIndex: LogicalZIndex, defaultZIndex: string) => {
@@ -241,6 +246,9 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         }
 
         componentRootElement.style.zIndex = defaultZIndex;
+        const id = (component.container as any)._config.id;
+        // console.log("Component inst", component, sigMemorizedContainerStyle());
+        setSigMemorizedContainerStyle({ ...sigMemorizedContainerStyle(), [id]: { ...componentRootElement.style } });
     }
 
     const fnTemporarilyMuteAutoPopin = () => {
@@ -316,6 +324,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
     const fnHandleContainerInit = (container: any) => {
         _layoutElement = container;
+        setSigLayoutElement(container);
         console.log("Container created", container);
         const _goldenLayout = new GoldenLayout(container, _bindComponentEventListener, _fnUnbindComponentEventListener);
         goldenLayoutRef = _goldenLayout;
@@ -416,6 +425,33 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         }
     }
 
+    const fnCollectPortalRef = (portalEl: HTMLDivElement, cid: string) => {
+        portalRefs[cid] = portalEl;
+        onCleanup(() => {
+            delete portalRefs[cid];
+        });
+    };
+
+    createRenderEffect(() => {
+        const styles = sigMemorizedContainerStyle();
+
+        for (const id in portalRefs) {
+            const el = portalRefs[id];
+            const style = styles[id];
+
+            if (el && style) {
+                Object.assign(el.style, {
+                    width: style.width,
+                    height: style.height,
+                    left: style.left,
+                    top: style.top,
+                    zIndex: style.zIndex,
+                    position: 'absolute' // Biasanya dibutuhkan jika mengatur top/left
+                });
+            }
+        }
+    });
+
     onMount(() => {
 
     });
@@ -448,11 +484,12 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                 <For each={Object.values(boundComponents)}>
                     {(item) => {
                         const c = item.component;
+                        const cid = (c.container as any)._config.id;
                         const isIframe = (c as any).state.jsxPreservationMode == "static-host";
                         const s = sigMemorizedContainerStyle()[(c.container as any)._config.id] || {};
                         console.log("[GL render] s", s, c, (c.container as any)._config.id);
                         return (
-                            <Show when={item.rootElement}>
+                            <Show when={item.rootElement && sigLayoutElement()}>
                                 <Show when={isIframe} fallback={
                                     <Portal mount={item.rootElement}>
                                         <GoldenComponentWrapper
@@ -463,19 +500,23 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                                         />
                                     </Portal>
                                 }>
-                                    <div class="sjx-static-host" style={{
-                                        width: sigMemorizedContainerStyle()[(c.container as any)._config.id]?.width,
-                                        height: sigMemorizedContainerStyle()[(c.container as any)._config.id]?.height,
-                                        left: sigMemorizedContainerStyle()[(c.container as any)._config.id]?.left,
-                                        top: sigMemorizedContainerStyle()[(c.container as any)._config.id]?.top
-                                    }}>
-                                        <GoldenComponentWrapper
-                                            currentIndex={(c as any).state.jsxIndex}
-                                            maxIndex={props.jsxComponents.length}
-                                            jsxComponents={props.jsxComponents}
-                                            state={(c as any).state}
-                                        />
-                                    </div>
+                                    {/* <Portal mount={sigLayoutElement()} ref={(el) => fnCollectPortalRef(el, cid)}> */}
+                                        <div class="sjx-static-host" style={{
+                                            width: sigMemorizedContainerStyle()[cid]?.width,
+                                            height: sigMemorizedContainerStyle()[cid]?.height,
+                                            left: sigMemorizedContainerStyle()[cid]?.left,
+                                            top: sigMemorizedContainerStyle()[cid]?.top,
+                                            "z-index": 1,
+                                            display: sigMemorizedContainerStyle()[cid]?.display,
+                                        }}>
+                                            <GoldenComponentWrapper
+                                                currentIndex={(c as any).state.jsxIndex}
+                                                maxIndex={props.jsxComponents.length}
+                                                jsxComponents={props.jsxComponents}
+                                                state={(c as any).state}
+                                            />
+                                        </div>
+                                    {/* </Portal> */}
                                 </Show>
                             </Show>
                         )
