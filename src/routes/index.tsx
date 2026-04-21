@@ -23,6 +23,9 @@ export default function Home() {
       <div>
         <A href="/chart-3d">Sample 3D Chart (With Vibes)</A>
       </div>
+        <div>
+        <A href="/globe-maplibre">Globe Maplibre</A>
+      </div>
     </main>
   );  
 }

@@ -83,6 +83,7 @@
     "solid-flow": "^1.0.4",
     "solid-google-maps": "^0.0.2",
     "solid-map-gl": "^1.11.3",
+    "solid-maplibre": "^0.4.1",
     "solid-markdown-wasm": "^1.6.0",
     "solid-new-window": "^0.0.5",
     "solid-qr": "^1.0.3",

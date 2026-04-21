@@ -93,7 +93,20 @@ export const SJXApiService = {
     svcGetNetworkRouteData: function () {
         const url = `networking`;
         const finaldevurl = this.cfg.BASE_URI_DEV + url + this.cfg.POSTFIX_URI_DEV + "";
-        console.log("final" , finaldevurl);
+        console.log("final", finaldevurl);
+        const idreq = (new Date().getTime()).toString();
+        const opts: Options = this.fnKyOpts(url, idreq);
+        if (this.cfg.IS_DEV) { return ky.get(finaldevurl, opts).json() }
+        else {
+            return ky.get(this.cfg.BASE_URI + url, {
+                ...opts
+            }).json();
+        }
+    },
+    svcGetWorldwideGeojson: function () {
+        const url = `worldwide_lite_geo`;
+        const finaldevurl = this.cfg.BASE_URI_DEV + url + this.cfg.POSTFIX_URI_DEV + "";
+        console.log("final", finaldevurl);
         const idreq = (new Date().getTime()).toString();
         const opts: Options = this.fnKyOpts(url, idreq);
         if (this.cfg.IS_DEV) { return ky.get(finaldevurl, opts).json() }
