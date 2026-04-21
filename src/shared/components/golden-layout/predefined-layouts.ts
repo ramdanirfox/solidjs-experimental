@@ -14,6 +14,10 @@ const miniRowConfig: LayoutConfig = {
     settings: {
         popInOnClose: false
     },
+    dimensions: {
+        borderWidth: 5,
+        headerHeight: 1
+    },
     root: {
         type: ItemType.row,
         content: [

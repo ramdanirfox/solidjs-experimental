@@ -112,9 +112,100 @@
 }
 
 .sjx-static-host {
-    /* position: absolute; */
     position: absolute;
     overflow: hidden;
     z-index: auto;
-    background-color: antiquewhite;
+    /* background-color: antiquewhite; */
+}
+
+/* Golden Layout Customization */
+
+.layoutContainer {
+  overflow: hidden;
+}    
+
+.layoutContainer>.lm_goldenlayout {
+  /* background-color: transparent !important; */
+  background-color: transparent;
+  /* backdrop-filter: blur(8px); */
+}
+
+.layoutContainer .lm_content {
+  background-color: #00000044;
+  border: none;
+  border-radius: 8px;
+  border-top-left-radius: 0;
+  backdrop-filter: blur(8px);
+}
+
+.layoutContainer .lm_header .lm_tab {
+  background: #0004;
+  border: 1px solid #0000;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  font-size: 0.8rem;
+  /* padding: 0 0.6rem 0.4rem;
+  padding-right: 1.5rem; */
+}
+
+.layoutContainer .lm_header .lm_tab.lm_active {
+  box-shadow: none;
+}
+
+.layoutContainer .lm-tab,
+.layoutContainer .lm_controls {
+  backdrop-filter: blur(8px);
+  background-color: #00000044;
+}
+
+.layoutContainer .lm_tab.lm_active {
+  color: #FFF;
+  /* line-height: 1; */
+  display: flex;
+  align-items: flex-end;
+  /* padding-top: 0;
+  padding-bottom: 0 !important; */
+}
+
+.layoutContainer .lm_header .lm_controls>* {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.layoutContainer .lm_header {
+  /* height: 2.35rem !important */
+  display: flex;
+  align-items: flex-end;
+}
+
+/* .lm_header .lm_tab .lm_close_tab { */
+/* width: 1rem; */
+/* height: 1rem;
+  background-size: contain; */
+/* } */
+
+/* Golden Layout Fluid Animator */
+
+.layoutContainer .lm_maximised .lm_header {
+  background-color: transparent;
+}
+
+.layoutContainer>div, .bodySection>.sjx-static-host {
+  transition: height 0.3s, width 0.3s, top 0.3s, left 0.3s, opacity 0.3s;
+  container-type: inline-size;
+  pointer-events: all;
+}
+
+.layoutContainer>div.lmcustom-hidden {
+  pointer-events: none;
+}
+
+/* .layoutContainer .lm_stack.lm_maximised {
+    position: absolute;
+} */
+
+@container (max-width: 384px) {
+  .sjx-flex-responsive {
+    flex-direction: column;
+  }
 }

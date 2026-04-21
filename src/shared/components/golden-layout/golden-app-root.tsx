@@ -364,6 +364,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
             console.log("[GL Evt] State Changed", state, adapted, obj, goldenLayoutRef);
         });
 
+        fnGoldenListenEvents("stackCreated" as any, (a, b) => {
+            console.log("[GoldLayout] Stack Created", a, b);
+        });
+
         // const isPopup = _goldenLayout.isSubWindow;
         const isPopup = window.location.search.includes("gl-window");
         if (isPopup) {
@@ -486,8 +490,6 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                         const c = item.component;
                         const cid = (c.container as any)._config.id;
                         const isIframe = (c as any).state.jsxPreservationMode == "static-host";
-                        const s = sigMemorizedContainerStyle()[(c.container as any)._config.id] || {};
-                        console.log("[GL render] s", s, c, (c.container as any)._config.id);
                         return (
                             <Show when={item.rootElement && sigLayoutElement()}>
                                 <Show when={isIframe} fallback={
@@ -497,6 +499,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                                             maxIndex={props.jsxComponents.length}
                                             jsxComponents={props.jsxComponents}
                                             state={(c as any).state}
+                                            glContainerRef={c.container}
                                         />
                                     </Portal>
                                 }>
@@ -506,7 +509,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                                             height: sigMemorizedContainerStyle()[cid]?.height,
                                             left: sigMemorizedContainerStyle()[cid]?.left,
                                             top: sigMemorizedContainerStyle()[cid]?.top,
-                                            "z-index": 1,
+                                            "z-index": sigMemorizedContainerStyle()[cid]?.zIndex == "auto" ? "1" : sigMemorizedContainerStyle()[cid]?.zIndex,
                                             display: sigMemorizedContainerStyle()[cid]?.display,
                                         }}>
                                             <GoldenComponentWrapper
@@ -514,6 +517,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                                                 maxIndex={props.jsxComponents.length}
                                                 jsxComponents={props.jsxComponents}
                                                 state={(c as any).state}
+                                                glContainerRef={c.container}
                                             />
                                         </div>
                                     {/* </Portal> */}
