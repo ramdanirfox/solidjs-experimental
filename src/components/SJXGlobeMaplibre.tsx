@@ -21,6 +21,7 @@ function MapFlyer(props: MapFlyerProps) {
 export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     const [center, setCenter] = createSignal<[number, number]>([106.82976614124544, -6.2773016456564275]);
     const [sigGeojsonWorldWide, setSigGeojsonWorldWide] = createSignal<any>();
+    const [hoveredId, setHoveredId] = createSignal<string | number | null>(null);
     const noopGlobeStyle = {
         version: 8 as 8,
         sources: {},
@@ -36,47 +37,91 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
         ]
     } as any;
 
-    let hoveredId: any = null;
+      const fnLayerMouseMove = (e: any) => {
+        if (e.features && e.features.length > 0) {
+            console.log("mousemove", e.features);
+            const newId = e.features[0].id;
+            const prev = hoveredId();
 
-    const fnHoverHighlighter = (map: maplibregl.Map) => {
-        map.on("mousemove", "geojson-polygon-fill", (e) => {
-            if (e.features && e.features.length > 0) {
-                const newHoveredId = e.features[0].id;
-                console.log("hovered feature id", e.features[0]);
-                if (newHoveredId !== hoveredId) {
-                    // Reset state fitur sebelumnya
-                    if (hoveredId !== null) {
-                        map.setFeatureState(
-                            { source: "my-source-id", id: hoveredId },
-                            { hover: false }
-                        );
-                    }
+            // Hanya eksekusi logika jika kita pindah ke poligon yang berbeda
+            if (prev !== newId) {
+            const map = e.target;
 
-                    hoveredId = newHoveredId;
-
-                    // Set state fitur baru
-                    map.setFeatureState(
-                        { source: "my-source-id", id: hoveredId },
-                        { hover: true }
-                    );
-                }
-            }
-        });
-
-        map.on("mouseleave", "geojson-polygon-fill", () => {
-            if (hoveredId !== null) {
+            // Bersihkan yang lama (jika ada)
+            if (prev) {
                 map.setFeatureState(
-                    { source: "my-source-id", id: hoveredId },
-                    { hover: false }
+                { source: "my-source-id", id: prev },
+                { hover: false }
                 );
             }
-            hoveredId = null;
-        });
+
+            // Set yang baru
+            setHoveredId(newId);
+            map.setFeatureState(
+                { source: "my-source-id", id: newId },
+                { hover: true }
+            );
+            }
+        }
+    };
+
+   const fnLayerMouseOut = (e: any) => {
+     const oldId = hoveredId();
+    if (oldId !== null) {
+      const map = e.target;
+      map.setFeatureState(
+        { source: "my-source-id", id: oldId },
+        { hover: false }
+      );
+      setHoveredId(null);
     }
+   }
+
 
     const fnRegisterListeners = (map: any) => {
-        fnHoverHighlighter(map);
+        // fnHoverHighlighter(map);
     };
+
+    const fnRegisterAnimator = (map: any) => {  
+        console.log("registering animation...", map);
+        const secondsPerRevolution = 120;
+        const maxRollOver = 360;
+        const framesPerSecond = 60;
+
+        let isInteracting = false;
+
+        // Bergerak karena user (drag, zoom, tilt)
+
+        map.on('mouseover', (e) => {
+            if (e.originalEvent) isInteracting = true;
+        });
+
+        // Berhenti total (termasuk setelah inertia selesai)
+        map.on('mouseout', () => {
+            isInteracting = false;
+        });
+
+
+        const animate = () => {
+            // PERBAIKAN: Cek apakah user sedang berinteraksi
+            // isMoving() menangkap drag, zoom, rotate, dan tilt manual
+            const isUserInteracting = map.isMoving() || map.isZooming() || map.isRotating() || isInteracting;
+
+            if (!isUserInteracting) {
+                const center = map.getCenter();
+                center.lng += (360 / secondsPerRevolution) / framesPerSecond;
+                
+                if (center.lng >= maxRollOver) center.lng -= 360;
+                
+                // Gunakan jumpTo agar lebih ringan daripada setCenter untuk animasi frame-by-frame
+                map.jumpTo({ center: center });
+            }
+            
+            requestAnimationFrame(animate);
+        };
+
+        animate();
+    }
 
     const MapsProbe = () => {
         const keys = useMap() + "";
@@ -85,7 +130,8 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
             const sub = useMap()?.();
             console.log("Use map", sub);
             if (sub) {
-                fnRegisterListeners(sub);
+                // fnRegisterListeners(sub);
+                fnRegisterAnimator(sub);
             }
         });
         // fnRegisterListeners(map);
@@ -122,6 +168,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                     <MapFlyer center={center()} />
                     <MapsProbe />
                     <Source
+                        id="my-source-id"
                         source={{
                             type: "geojson",
                             data: sigGeojsonWorldWide(),
@@ -129,14 +176,27 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                         }}
                     >
                         <Layer
-                            onclick={(e) => {console.log(e)}}
+                            onclick={(e) => {console.log(e); alert("Clicked on " + e.features?.[0].properties?.name_en);}}
+                            onmousemove={(e) => {fnLayerMouseMove(e);}}
+                            onmouseout={(e) => {console.log("mouseout", e); fnLayerMouseOut(e);}}
                             layer={{
                                 id: "geojson-polygon-fill",
-                                type: "fill", // Mengubah dari 'circle' ke 'fill'
+                                type: "fill",
                                 paint: {
-                                    "fill-color": "#ff0000",        // Warna merah solid untuk poligon
-                                    "fill-opacity": 0.7,            // Membuatnya agak transparan (opsional)
-                                    "fill-outline-color": "#ffffff" // Garis tepi putih (setara stroke)
+                                    // Menggunakan ekspresi 'case' untuk mengecek state 'hover'
+                                    "fill-color": [
+                                        "case",
+                                        ["boolean", ["feature-state", "hover"], false],
+                                        "#ffff00", // Warna Kuning saat kursor di atasnya (Highlight)
+                                        "#ff0000"  // Warna Merah default
+                                    ],
+                                    "fill-opacity": [
+                                        "case",
+                                        ["boolean", ["feature-state", "hover"], false],
+                                        1,   // Full terang saat hover
+                                        0.7  // Semi-transparan saat normal
+                                    ],
+                                    "fill-outline-color": "#ffffff"
                                 },
                             } as any}
                         />

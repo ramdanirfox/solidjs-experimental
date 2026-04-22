@@ -109,7 +109,7 @@ export const SJXApiService = {
         console.log("final", finaldevurl);
         const idreq = (new Date().getTime()).toString();
         const opts: Options = this.fnKyOpts(url, idreq);
-        if (this.cfg.IS_DEV) { return ky.get(finaldevurl, opts).json() }
+        if (/* this.cfg.IS_DEV */ true) { return ky.get(finaldevurl, opts).json() }
         else {
             return ky.get(this.cfg.BASE_URI + url, {
                 ...opts
