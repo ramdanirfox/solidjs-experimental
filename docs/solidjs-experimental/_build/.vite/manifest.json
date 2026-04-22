@@ -14,8 +14,8 @@
     "file": "assets/_commonjsHelpers-Cpj98o6Y.js",
     "name": "_commonjsHelpers"
   },
-  "_api.service-Bgzv8aEx.js": {
-    "file": "assets/api.service-Bgzv8aEx.js",
+  "_api.service-Cf-IvK3O.js": {
+    "file": "assets/api.service-Cf-IvK3O.js",
     "name": "api.service",
     "imports": [
       "_app.constant-DCfKD7jM.js"
@@ -133,14 +133,14 @@
     ]
   },
   "src/components/SJXGlobeMaplibre.tsx": {
-    "file": "assets/SJXGlobeMaplibre-BnrrOvOB.js",
+    "file": "assets/SJXGlobeMaplibre-Bnl3T5zh.js",
     "name": "SJXGlobeMaplibre",
     "src": "src/components/SJXGlobeMaplibre.tsx",
     "isDynamicEntry": true,
     "imports": [
       "_web-BdzR6YsY.js",
       "_maplibre-gl-C6xOPQv9.js",
-      "_api.service-Bgzv8aEx.js",
+      "_api.service-Cf-IvK3O.js",
       "__commonjsHelpers-Cpj98o6Y.js",
       "_app.constant-DCfKD7jM.js"
     ]
@@ -178,7 +178,7 @@
     ]
   },
   "src/routes/globe-maplibre.tsx?pick=default&pick=$css": {
-    "file": "assets/globe-maplibre-7vIHnW9Y.js",
+    "file": "assets/globe-maplibre-DdWRrxI7.js",
     "name": "globe-maplibre",
     "src": "src/routes/globe-maplibre.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -248,7 +248,7 @@
     ]
   },
   "src/routes/solid-google-maps.tsx?pick=default&pick=$css": {
-    "file": "assets/solid-google-maps-DahxhmU8.js",
+    "file": "assets/solid-google-maps-DmEOBds2.js",
     "name": "solid-google-maps",
     "src": "src/routes/solid-google-maps.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -257,7 +257,7 @@
       "_web-BdzR6YsY.js",
       "_app.constant-DCfKD7jM.js",
       "__commonjsHelpers-Cpj98o6Y.js",
-      "_api.service-Bgzv8aEx.js"
+      "_api.service-Cf-IvK3O.js"
     ],
     "css": [
       "assets/index-DC5SOrQ9.css",
@@ -281,7 +281,7 @@
     ]
   },
   "virtual:$vinxi/handler/client": {
-    "file": "assets/client-Dh05aA6q.js",
+    "file": "assets/client-CvBxSHZ-.js",
     "name": "client",
     "src": "virtual:$vinxi/handler/client",
     "isEntry": true,
