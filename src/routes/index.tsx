@@ -2,29 +2,30 @@ import Counter from "~/components/Counter";
 import "./index.css";
 import { GoldenLayoutView } from "~/components/GoldenLayoutView";
 import { A } from "@solidjs/router";
+import { APP_DEV_BASEURL } from "~/shared/constants/app.constant";
 
 export default function Home() {
-
+  const BASEURL = APP_DEV_BASEURL;
   return (
     <main>
       <h1>Example List</h1>
       <div>
-        <a href="/golden-layout">Golden Layout</a>
+        <a href={`${BASEURL}/golden-layout`}>Golden Layout</a>
       </div>
       <div>
-        <a href="/svar">SvarGantt {"( mounting React component in SolidJS)"}</a>
+        <a href={`${BASEURL}/svar`}>SvarGantt {"( mounting React component in SolidJS)"}</a>
       </div>
       <div>
-        <a href="/aggrid">Legacy AG Grid</a>
+        <a href={`${BASEURL}/aggrid`}>Legacy AG Grid</a>
       </div>
       <div>
-        <a href="/solid-google-maps">Solid Google Maps (With DeckGL)</a>
+        <a href={`${BASEURL}/solid-google-maps`}>Solid Google Maps (With DeckGL)</a>
       </div>
       <div>
-        <a href="/chart-3d">Sample 3D Chart (With Vibes)</a>
+        <a href={`${BASEURL}/chart-3d`}>Sample 3D Chart (With Vibes)</a>
       </div>
-        <div>
-        <a href="/globe-maplibre">Globe Maplibre</a>
+      <div>
+        <a href={`${BASEURL}/globe-maplibre`}>Globe Maplibre</a>
       </div>
     </main>
   );  

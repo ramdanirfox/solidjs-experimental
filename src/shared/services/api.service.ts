@@ -115,5 +115,18 @@ export const SJXApiService = {
                 ...opts
             }).json();
         }
+    },
+    svcGetWorldwideCentroid: function () {
+        const url = `world_countries_centroids`;
+        const finaldevurl = this.cfg.BASE_URI_DEV + url + this.cfg.POSTFIX_URI_DEV + "";
+        console.log("final", finaldevurl);
+        const idreq = (new Date().getTime()).toString();
+        const opts: Options = this.fnKyOpts(url, idreq);
+        if (/* this.cfg.IS_DEV */ true) { return ky.get(finaldevurl, opts).json() }
+        else {
+            return ky.get(this.cfg.BASE_URI + url, {
+                ...opts
+            }).json();
+        }
     }
 }

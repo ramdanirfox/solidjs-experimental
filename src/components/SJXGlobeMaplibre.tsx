@@ -2,6 +2,8 @@ import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js"
 import { Layer, Map, NavigationControl, Source, useMapEffect, useMap } from "solid-maplibre";
 import { SJXApiService } from "~/shared/services/api.service";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { GeoJSONFeature } from "maplibre-gl";
+import { xfnPolylabel } from "~/shared/utils/polylabel.util";
 
 export interface ISJXGlobeMaplibre {
 
@@ -25,19 +27,48 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     const noopGlobeStyle = {
         version: 8 as 8,
         sources: {},
-        projection: { type: "globe" },
+        projection: {
+            type: "globe",
+            // atmosphere: {
+            //     "color": "pink",
+            //     "intensity": 0.5
+            // }
+        },
+        // sky: {
+        //     "atmosphere-color": "#454545",
+        //     // "atmosphere-intensity": 0.5,
+        //     "base-color": "#001d3d", // Warna ruang angkasa
+        //     "stars-intensity": 0.8
+        // },
+        'sky': {
+            "sky-color": "#9d6b00",
+            "sky-horizon-blend": 0.5,
+            "horizon-color": "#cc009c",
+            "horizon-fog-blend": 0.5,
+            "fog-color": "#ff0000",
+            "fog-ground-blend": 0.5,
+            // 'atmosphere-blend': [
+            //     'interpolate',
+            //     ['linear'],
+            //     ['zoom'],
+            //     0, 1,
+            //     5, 1,
+            //     7, 1
+            // ]
+        },
         layers: [
             {
                 id: "background",
                 type: "background",
                 paint: {
-                    "background-color": "#001d3d" // Warna laut gelap agar atmosfer terlihat bagus
+                    // "background-color": "#001d3d" // Warna laut gelap agar atmosfer terlihat bagus
+                    "background-color": "#6bbcff" // Warna laut gelap agar atmosfer terlihat bagus
                 }
             }
         ]
     } as any;
 
-      const fnLayerMouseMove = (e: any) => {
+    const fnLayerMouseMove = (e: any) => {
         if (e.features && e.features.length > 0) {
             console.log("mousemove", e.features);
             const newId = e.features[0].id;
@@ -45,44 +76,44 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
 
             // Hanya eksekusi logika jika kita pindah ke poligon yang berbeda
             if (prev !== newId) {
-            const map = e.target;
+                const map = e.target;
 
-            // Bersihkan yang lama (jika ada)
-            if (prev) {
+                // Bersihkan yang lama (jika ada)
+                if (prev) {
+                    map.setFeatureState(
+                        { source: "my-source-id", id: prev },
+                        { hover: false }
+                    );
+                }
+
+                // Set yang baru
+                setHoveredId(newId);
                 map.setFeatureState(
-                { source: "my-source-id", id: prev },
-                { hover: false }
+                    { source: "my-source-id", id: newId },
+                    { hover: true }
                 );
-            }
-
-            // Set yang baru
-            setHoveredId(newId);
-            map.setFeatureState(
-                { source: "my-source-id", id: newId },
-                { hover: true }
-            );
             }
         }
     };
 
-   const fnLayerMouseOut = (e: any) => {
-     const oldId = hoveredId();
-    if (oldId !== null) {
-      const map = e.target;
-      map.setFeatureState(
-        { source: "my-source-id", id: oldId },
-        { hover: false }
-      );
-      setHoveredId(null);
+    const fnLayerMouseOut = (e: any) => {
+        const oldId = hoveredId();
+        if (oldId !== null) {
+            const map = e.target;
+            map.setFeatureState(
+                { source: "my-source-id", id: oldId },
+                { hover: false }
+            );
+            setHoveredId(null);
+        }
     }
-   }
 
 
     const fnRegisterListeners = (map: any) => {
         // fnHoverHighlighter(map);
     };
 
-    const fnRegisterAnimator = (map: any) => {  
+    const fnRegisterAnimator = (map: any) => {
         console.log("registering animation...", map);
         const secondsPerRevolution = 120;
         const maxRollOver = 360;
@@ -110,13 +141,13 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
             if (!isUserInteracting) {
                 const center = map.getCenter();
                 center.lng += (360 / secondsPerRevolution) / framesPerSecond;
-                
+
                 if (center.lng >= maxRollOver) center.lng -= 360;
-                
+
                 // Gunakan jumpTo agar lebih ringan daripada setCenter untuk animasi frame-by-frame
                 map.jumpTo({ center: center });
             }
-            
+
             requestAnimationFrame(animate);
         };
 
@@ -141,8 +172,33 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     };
 
     onMount(() => {
-        SJXApiService.svcGetWorldwideGeojson().then(d => {
+        const labelGeoJSON = {
+            type: "FeatureCollection",
+            features: [] as any
+        };
+        SJXApiService.svcGetWorldwideCentroid().then((d: any) => {
+            console.log("worldwide centroid", d);
+        });
+        SJXApiService.svcGetWorldwideGeojson().then((d: any) => {
             console.log("worldwide geojson", d);
+            // d.features.forEach((f: GeoJSONFeature, i: number) => {
+            //     const coord = (f.geometry as any).coordinates;
+            //     const polylabelRes = xfnPolylabel(coord, 0.000001, false);
+            //     if (isNaN(polylabelRes[0])) {
+            //         console.log("failure at polylab", f.properties.ne_id, f.properties.name_en, i, polylabelRes);
+            //     }
+            //     else {
+            //         labelGeoJSON.features.push({
+            //             "type": "Feature",
+            //             "geometry": {
+            //                 "type": "Point",
+            //                 "coordinates": polylabelRes
+            //             },
+            //             "properties": f.properties
+            //         });
+            //         console.log("polylabel", f.properties.ne_id, f.properties.name_en, i, polylabelRes, labelGeoJSON);
+            //     }
+            // });
             setSigGeojsonWorldWide(d);
         });
     });
@@ -176,9 +232,9 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                         }}
                     >
                         <Layer
-                            onclick={(e) => {console.log(e); alert("Clicked on " + e.features?.[0].properties?.name_en);}}
-                            onmousemove={(e) => {fnLayerMouseMove(e);}}
-                            onmouseout={(e) => {console.log("mouseout", e); fnLayerMouseOut(e);}}
+                            onclick={(e) => { console.log(e); alert("Clicked on " + e.features?.[0].properties?.name_en); }}
+                            onmousemove={(e) => { fnLayerMouseMove(e); }}
+                            onmouseout={(e) => { console.log("mouseout", e); fnLayerMouseOut(e); }}
                             layer={{
                                 id: "geojson-polygon-fill",
                                 type: "fill",
@@ -188,7 +244,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                                         "case",
                                         ["boolean", ["feature-state", "hover"], false],
                                         "#ffff00", // Warna Kuning saat kursor di atasnya (Highlight)
-                                        "#ff0000"  // Warna Merah default
+                                        "#2fca58"  // Warna Merah default
                                     ],
                                     "fill-opacity": [
                                         "case",
@@ -211,6 +267,12 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                                 },
                             } as any}
                         />
+                        <Layer layer={{
+                            type: "text",
+                            paint: {
+
+                            }
+                        }} />
                     </Source>
                 </Map>
             </div>
