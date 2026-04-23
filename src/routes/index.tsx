@@ -9,22 +9,22 @@ export default function Home() {
     <main>
       <h1>Example List</h1>
       <div>
-        <A href="/golden-layout">Golden Layout</A>
+        <a href="/golden-layout">Golden Layout</a>
       </div>
       <div>
-        <A href="/svar">SvarGantt {"( mounting React component in SolidJS)"}</A>
+        <a href="/svar">SvarGantt {"( mounting React component in SolidJS)"}</a>
       </div>
       <div>
-        <A href="/aggrid">Legacy AG Grid</A>
+        <a href="/aggrid">Legacy AG Grid</a>
       </div>
       <div>
-        <A href="/solid-google-maps">Solid Google Maps (With DeckGL)</A>
+        <a href="/solid-google-maps">Solid Google Maps (With DeckGL)</a>
       </div>
       <div>
-        <A href="/chart-3d">Sample 3D Chart (With Vibes)</A>
+        <a href="/chart-3d">Sample 3D Chart (With Vibes)</a>
       </div>
         <div>
-        <A href="/globe-maplibre">Globe Maplibre</A>
+        <a href="/globe-maplibre">Globe Maplibre</a>
       </div>
     </main>
   );  

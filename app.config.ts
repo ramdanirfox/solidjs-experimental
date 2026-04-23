@@ -17,7 +17,12 @@ export default defineConfig({
     // ...{ port: 8080 }, // port configurable through CLI (see package.json)
     prerender: {
       crawlLinks: true,
-      routes: ["/404", "/"]
+      routes: [
+        "/404",
+        "/", 
+        "/globe-mapblibre", 
+        "/golden-layout"
+      ]
     },
     baseURL: process.argv.includes("dev") ? APP_DEV_BASEURL : APP_DEV_BASEURL
   },
