@@ -73,6 +73,11 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         component: ComponentBase,
         rootElement: HTMLElement
     }>>({});
+    const [boundComponentsUnsuppressed, setBoundComponentsUnsuppressed] = createStore<Record<string, {
+        id: string,
+        component: ComponentBase,
+        rootElement: HTMLElement
+    }>>({});
     const [sigMemorizedContainerStyle, setSigMemorizedContainerStyle] = createSignal<Record<string, any>>({});
     const [sigMemorizedRectMap, setSigMemorizedRectMap] = createSignal(new Map());
     const [sigLayoutElement, setSigLayoutElement] = createSignal<HTMLElement>();
@@ -151,8 +156,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         const id = (container as any)._config.id;
         console.log("[GL] Unbinding Component", container, id);
         _boundComponentMap.delete(container);
+        setBoundComponentsUnsuppressed(id, undefined as any);
         if (!sigMuteDestroyCmp()) {
             setBoundComponents(id, undefined as any);
+            // setBoundComponents()
             setSigBoundComponentCounter(sigBoundComponentCounter() - 1);
         }
         console.log("[GL] Bound Cmp", boundComponents);
@@ -305,6 +312,19 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
             });
             setSigBoundComponentCounter(c => c + 1);
         }
+
+        if (boundComponentsUnsuppressed[id]) {
+            setBoundComponentsUnsuppressed(id, 'component', component);
+            setBoundComponentsUnsuppressed(id, 'rootElement', component.rootHtmlElement);
+        }
+        else {
+            setBoundComponentsUnsuppressed(id, {
+                id,
+                component: component,
+                rootElement: component.rootHtmlElement
+            });
+        }
+
         // setSigBoundComponentCounter(sigBoundComponentCounter() + 1);
         if (sigCfg().useVirtualEventBinding) {
             const componentRootElement = component.rootHtmlElement;
@@ -461,8 +481,8 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                 let adapted = fnGoldenUtilSavedLayoutAdapter(rawLayout);
                 goldenLayoutRef.loadLayout(adapted);
                 setTimeout(() => {
-                    const capturedVisibleIdAfter = Object.keys(boundComponents);
-                    console.log("Compare", sigCapturedVisibleIds(), capturedVisibleIdAfter, boundComponents);
+                    const capturedVisibleIdAfter = Object.keys(boundComponentsUnsuppressed);
+                    console.log("Compare", sigCapturedVisibleIds(), capturedVisibleIdAfter, boundComponentsUnsuppressed);
                     if (capturedVisibleIdAfter.length < sigCapturedVisibleIds().length) {
                         console.log("Something neeed to be destroyed", sigCapturedVisibleIds(), capturedVisibleIdAfter);
                         sigCapturedVisibleIds().forEach((id) => {
@@ -473,7 +493,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                         });
                     }
                     setSigMuteDestroyCmp(false);
-                }, 500);
+                }, 100);
             }
         })
         //     let state = goldenLayoutRef.saveLayout();
@@ -542,9 +562,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                 </section>
                 <For each={Object.values(boundComponents)}>
                     {(item) => {
-                        const c = item.component;
+                        const c = item && item.component;
                         return (
-                            <Show when={item.rootElement && sigLayoutElement()}>
+                            <Show when={item && item.rootElement && sigLayoutElement()}>
+                                {/* <>{Object.keys(boundComponents)}</> */}
                                 <GoldenComponentWrapper
                                     currentIndex={(c as any).state.jsxIndex}
                                     maxIndex={props.jsxComponents.length}
