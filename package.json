@@ -69,6 +69,7 @@
     "geojson-path-finder": "^2.1.0",
     "golden-layout": "^2.6.0",
     "jsgantt-improved": "^2.8.10",
+    "jspanel4": "^4.16.1",
     "ky": "^1.14.3",
     "lightweight-charts": "^5.0.7",
     "mapbox-gl": "npm:empty-npm-package@1.0.0",

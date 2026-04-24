@@ -1,12 +1,16 @@
-import { JSX, onCleanup, onMount, Show } from "solid-js";
+import { Accessor, JSX, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import { NoHydration, Portal, isServer } from "solid-js/web";
 import { useSJXContext } from "~/shared/context/SJXContext";
+import { clientOnly } from "@solidjs/start";
 
 interface IGoldenComponentWrapper {
     currentIndex: number,
     maxIndex: number,
     jsxComponents: (JSX.Element | (() => JSX.Element))[],
     state: any,
-    glContainerRef?: any
+    itemRef?: any;
+    sigMemorizedContainerStyle?: Accessor<any>;
+    sigIsPopup?: Accessor<boolean>;
 }
 
 export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
@@ -15,10 +19,13 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
     onCleanup(() => console.log("[GoldenComponentWrapper] It supposed to unload component " + props.currentIndex));
 
     const fnGlFindContentItem = () => {
-        if (props.glContainerRef) {
-            const containerGl = props.glContainerRef;
+        const c = props.itemRef.component.container;
+        // const cid = c._config.id;
+        if (c) {
+            const containerGl = c;
             const origid = containerGl._config.id;
             let contentItem: any;
+            console.log("[GoldenComponentWrapper] containerGl.parent.parent.contentItems", containerGl.parent.parent.contentItems, containerGl, origid);
             for (let i = 0; i < containerGl.parent.parent.contentItems.length; i++) {
                 const containerGlId = containerGl.parent.parent.contentItems[i].id;
                 if (containerGlId == origid) {
@@ -28,10 +35,14 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
             }
             return contentItem;
         }
+        else {
+            console.log("[GoldenComponentWrapper] glContainerRef/c is undefined");
+        }
     }
 
     const fnHandleTabClick = (e: any) => {
         const glContentItem = fnGlFindContentItem();
+        console.log("[GoldenComponentWrapper] Custom Tab Clicked", e, glContentItem);
         if (glContentItem) {
             // console.log("[GoldenComponentWrapper] Tab Clicked, contentItem found", glContentItem);
             glContentItem.tab.onTabClickDown(e);
@@ -43,22 +54,6 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
         if (glContentItem) {
             console.log("[GoldenComponentWrapper] Tab Pt Down, contentItem found", glContentItem, e);
 
-            // const target = e.currentTarget;
-
-            // target.addEventListener('gotpointercapture', (ev: any) => {
-            //     console.log("DEBUG: Pointer Capture Diterima!", {
-            //         pointerId: ev.pointerId,
-            //         pointerType: ev.pointerType
-            //     });
-            //     ev.target.releasePointerCapture(ev.pointerId);
-            // }, { once: true });
-
-            // const tabElement = glContentItem.tab.element;
-            // const rect = tabElement.getBoundingClientRect();
-
-            // const simulatedX = rect.left + (rect.width / 2);
-            // const simulatedY = rect.top + (rect.height / 2);
-
             const forwardedEvent = new PointerEvent("pointerdown", {
                 bubbles: true,
                 cancelable: true,
@@ -66,15 +61,8 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
                 isPrimary: e.isPrimary,
                 clientX: e.clientX,
                 clientY: e.clientY,
-                // clientX: simulatedX,
-                // clientY: simulatedY,
-                // button: 0,
-                // buttons: 1,
-                // view: window
-                // Properti lain yang dibutuhkan getPointerCoordinates()
             });
             glContentItem.tab.element.dispatchEvent(forwardedEvent);
-            // glContentItem.tab._dragListener.onPointerDown(e);
         }
     }
 
@@ -94,7 +82,7 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
         }
     }
 
-    const handlePointerCancel = (e: any) => {
+    const fnHandlePointerCancel = (e: any) => {
         console.warn("DEBUG: Pointer Cancel Terdeteksi!", {
             pointerId: e.pointerId,
             pointerType: e.pointerType, // mouse, touch, atau pen
@@ -103,23 +91,65 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
         });
     };
 
+    const SJXInternalCmpToolbox = () => <div class="select-none touch-none"
+        onClick={fnHandleTabClick}
+        onPointerDown={fnHandleTabPointerDown}
+        onPointerCancel={fnHandlePointerCancel}
+        onTouchStart={fnHandleTabTouchStart}>
+        Drag Here!
+    </div>
+
+    // const SJXInternalCmpClientOnlyCmp = clientOnly(() => <>
+    //     <SJXInternalCmpToolbox />
+    //     {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (() => JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
+    // </>);
+
     return (<>
-        <div class="select-none touch-none"
-            onClick={fnHandleTabClick}
-            onPointerDown={fnHandleTabPointerDown}
-            onPointerCancel={handlePointerCancel}
-            onTouchStart={fnHandleTabTouchStart}>
-            Drag Here!
-        </div>
-        <Show when={props.jsxComponents[props.currentIndex]} fallback={<>
+        <Switch fallback={<div class="overflow-auto">
             <h1>SolidGoldenView Not Found</h1>
             <p>Current Index: {props.currentIndex}</p>
             <p>Max Index: {props.maxIndex}</p>
             <p>State: {JSON.stringify(props.state)}</p>
             <p>ctxcnt: cnt={SJXctx?.ctx.increments.val()}</p>
-        </>}>
-            {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (() => JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
-        </Show>
+        </div>}>
+
+            <Match when={props.jsxComponents[props.currentIndex] && props.state.jsxPreservationMode == "static-host" && props.sigIsPopup?.()}>
+                <Portal mount={props.itemRef.rootElement}>
+                    <SJXInternalCmpToolbox />
+                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (() => JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
+                </Portal>
+            </Match>
+
+            <Match when={props.jsxComponents[props.currentIndex] && props.state.jsxPreservationMode == "static-host"}>
+                {/* <NoHydration>
+                    <h1>SolidGoldenView Iframe</h1>
+                    <p>Current Index: {props.currentIndex}</p>
+                    <p>Max Index: {props.maxIndex}</p>
+                    <p>State: {JSON.stringify(props.state)}</p>
+                    <p>ctxcnt: cnt={SJXctx?.ctx.increments.val()}</p> */}
+                {/* <Show when={!isServer} fallback={<></>}> */}
+                <div class="sjx-static-host" style={{
+                    width: props.sigMemorizedContainerStyle?.()[props.itemRef.component.container._config.id]?.width,
+                    height: props.sigMemorizedContainerStyle?.()[props.itemRef.component.container._config.id]?.height,
+                    left: props.sigMemorizedContainerStyle?.()[props.itemRef.component.container._config.id]?.left,
+                    top: props.sigMemorizedContainerStyle?.()[props.itemRef.component.container._config.id]?.top,
+                    "z-index": props.sigMemorizedContainerStyle?.()[props.itemRef.component.container._config.id]?.zIndex == "auto" ? "1" : props.sigMemorizedContainerStyle?.()[props.itemRef.component.container._config.id]?.zIndex,
+                    display: props.sigMemorizedContainerStyle?.()[props.itemRef.component.container._config.id]?.display,
+                }}>
+                    <SJXInternalCmpToolbox />
+                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (() => JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
+                </div>
+                {/* </Show> */}
+                {/* </NoHydration> */}
+            </Match>
+
+            <Match when={props.jsxComponents[props.currentIndex]}>
+                <Portal mount={props.itemRef.rootElement}>
+                    <SJXInternalCmpToolbox />
+                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (() => JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
+                </Portal>
+            </Match>
+        </Switch>
     </>
     );
 }

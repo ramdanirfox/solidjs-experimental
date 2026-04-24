@@ -28,9 +28,14 @@ interface GenericObject {
     [key: string]: any;
 }
 
+export interface IGoldenAppRootApi {
+    fnGetLayout: () => any;
+    fnLoadLayout: (rawLayout: any) => void;
+}
+
 export interface IGoldenAppRootProps {
     jsxComponents: (JSX.Element | (() => JSX.Element))[]
-    onLayoutUpdate?: (a: any) => void
+    onReady?: (api: IGoldenAppRootApi) => void
 }
 
 export default function GoldenAppRoot(props: IGoldenAppRootProps) {
@@ -71,6 +76,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
     const [sigMemorizedContainerStyle, setSigMemorizedContainerStyle] = createSignal<Record<string, any>>({});
     const [sigMemorizedRectMap, setSigMemorizedRectMap] = createSignal(new Map());
     const [sigLayoutElement, setSigLayoutElement] = createSignal<HTMLElement>();
+    const [sigIsPopup, setSigIsPopup] = createSignal(false);
+    const [sigCapturedVisibleIds, setSigCapturedVisibleIds] = createSignal<string[]>([]);
+    const [sigMuteDestroyCmp, setSigMuteDestroyCmp] = createSignal(false);
+    // const id
 
     const fnNumberToPixels = (value: number): string => {
         return value.toString(10) + 'px';
@@ -139,9 +148,14 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         } else {
             // If embedded, then component handles unbinding of component elements from content.element
         }
-        console.log("[GL] Unbinding Component", container);
+        const id = (container as any)._config.id;
+        console.log("[GL] Unbinding Component", container, id);
         _boundComponentMap.delete(container);
-        setSigBoundComponentCounter(sigBoundComponentCounter() - 1);
+        if (!sigMuteDestroyCmp()) {
+            setBoundComponents(id, undefined as any);
+            setSigBoundComponentCounter(sigBoundComponentCounter() - 1);
+        }
+        console.log("[GL] Bound Cmp", boundComponents);
     }
 
     const fnHandleUnbindComponentEventV2 = (container: ComponentContainer) => {
@@ -209,8 +223,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         rootElement.style.width = fnNumberToPixels(width);
         rootElement.style.height = fnNumberToPixels(height);
         const id = (component.container as any)._config.id
-        // console.log("Component inst", component, sigMemorizedContainerStyle());
+        console.log("[GL] Component Rect Event", id, rootElement.style.width, rootElement.style.height);
+        // setTimeout(() => {
         setSigMemorizedContainerStyle({ ...sigMemorizedContainerStyle(), [id]: { ...rootElement.style } });
+        // }, 1000 * Math.random());
     }
 
     const fnHandleContainerVirtualVisibilityChangeRequiredEvent = (container: ComponentContainer, visible: boolean) => {
@@ -231,7 +247,9 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         }
 
         const id = (component.container as any)._config.id;
-        setSigMemorizedContainerStyle({ ...sigMemorizedContainerStyle(), [id]: { ...componentRootElement.style } });
+        let memorizedStyle = sigMemorizedContainerStyle()[id] || {};
+        memorizedStyle.display = componentRootElement.style.display;
+        setSigMemorizedContainerStyle({ ...sigMemorizedContainerStyle(), [id]: { ...memorizedStyle } })
     }
 
     const fnHandleContainerVirtualZIndexChangeRequiredEvent = (container: ComponentContainer, logicalZIndex: LogicalZIndex, defaultZIndex: string) => {
@@ -247,8 +265,10 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
         componentRootElement.style.zIndex = defaultZIndex;
         const id = (component.container as any)._config.id;
+        let memorizedStyle = sigMemorizedContainerStyle()[id] || {};
+        memorizedStyle.zIndex = componentRootElement.style.zIndex;
         // console.log("Component inst", component, sigMemorizedContainerStyle());
-        setSigMemorizedContainerStyle({ ...sigMemorizedContainerStyle(), [id]: { ...componentRootElement.style } });
+        setSigMemorizedContainerStyle({ ...sigMemorizedContainerStyle(), [id]: { ...memorizedStyle } });
     }
 
     const fnTemporarilyMuteAutoPopin = () => {
@@ -358,10 +378,12 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
         // layout memorizer
         fnGoldenListenEvents("stateChanged" as any, (obj: any) => {
+            // setTimeout(() => {
+            //     let state = goldenLayoutRef.saveLayout();
+            //     let adapted = fnGoldenUtilSavedLayoutAdapter(state);
+            //     console.log("[GL Evt] State Changed", state, adapted, obj, goldenLayoutRef);
+            // }, 1000);
             // should be muted when popout occur    
-            let state = goldenLayoutRef.saveLayout();
-            let adapted = fnGoldenUtilSavedLayoutAdapter(state);
-            console.log("[GL Evt] State Changed", state, adapted, obj, goldenLayoutRef);
         });
 
         fnGoldenListenEvents("stackCreated" as any, (a, b) => {
@@ -370,6 +392,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
         // const isPopup = _goldenLayout.isSubWindow;
         const isPopup = window.location.search.includes("gl-window");
+        setSigIsPopup(isPopup);
         if (isPopup) {
             console.log("[GL] Treated as popup");
             (window).addEventListener("pagehide", (e) => { fnGoldenEmitEventHub("tabrestore", "Restore_" + window.location.search) }) // --> reliable
@@ -427,38 +450,68 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                 );
             });
         }
+
+        props.onReady?.({
+            fnGetLayout: () => {
+                return goldenLayoutRef.saveLayout();
+            },
+            fnLoadLayout: (rawLayout: any) => {
+                setSigMuteDestroyCmp(true);
+                setSigCapturedVisibleIds(Object.keys(boundComponents));
+                let adapted = fnGoldenUtilSavedLayoutAdapter(rawLayout);
+                goldenLayoutRef.loadLayout(adapted);
+                setTimeout(() => {
+                    const capturedVisibleIdAfter = Object.keys(boundComponents);
+                    console.log("Compare", sigCapturedVisibleIds(), capturedVisibleIdAfter, boundComponents);
+                    if (capturedVisibleIdAfter.length < sigCapturedVisibleIds().length) {
+                        console.log("Something neeed to be destroyed", sigCapturedVisibleIds(), capturedVisibleIdAfter);
+                        sigCapturedVisibleIds().forEach((id) => {
+                            if (!capturedVisibleIdAfter.includes(id)) {
+                                setBoundComponents(id, undefined as any);
+                                console.log("Destroyed", id, boundComponents);
+                            }
+                        });
+                    }
+                    setSigMuteDestroyCmp(false);
+                }, 500);
+            }
+        })
+        //     let state = goldenLayoutRef.saveLayout();
+        //     let adapted = fnGoldenUtilSavedLayoutAdapter(state);
+        //     console.log("[GL Evt] State Changed", state, adapted, obj, goldenLayoutRef);
+        // }, 1000);
     }
 
-    const fnCollectPortalRef = (portalEl: HTMLDivElement, cid: string) => {
-        portalRefs[cid] = portalEl;
-        onCleanup(() => {
-            delete portalRefs[cid];
-        });
-    };
+    // const fnCollectPortalRef = (portalEl: HTMLDivElement, cid: string) => {
+    //     portalRefs[cid] = portalEl;
+    //     onCleanup(() => {
+    //         delete portalRefs[cid];
+    //     });
+    // };
 
-    createRenderEffect(() => {
-        const styles = sigMemorizedContainerStyle();
+    // createRenderEffect(() => {
+    //     const styles = sigMemorizedContainerStyle();
 
-        for (const id in portalRefs) {
-            const el = portalRefs[id];
-            const style = styles[id];
+    //     for (const id in portalRefs) {
+    //         const el = portalRefs[id];
+    //         const style = styles[id];
 
-            if (el && style) {
-                Object.assign(el.style, {
-                    width: style.width,
-                    height: style.height,
-                    left: style.left,
-                    top: style.top,
-                    zIndex: style.zIndex,
-                    position: 'absolute' // Biasanya dibutuhkan jika mengatur top/left
-                });
-            }
-        }
-    });
+    //         if (el && style) {
+    //             Object.assign(el.style, {
+    //                 width: style.width,
+    //                 height: style.height,
+    //                 left: style.left,
+    //                 top: style.top,
+    //                 zIndex: style.zIndex,
+    //                 position: 'absolute' // Biasanya dibutuhkan jika mengatur top/left
+    //             });
+    //         }
+    //     }
+    // });
 
-    onMount(() => {
+    // onMount(() => {
 
-    });
+    // });
 
     return (
         <>
@@ -485,49 +538,26 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                         )
                     }}
                 </For> */}
+                <section class="layoutContainer w-full h-96" ref={fnHandleContainerInit}>
+                </section>
                 <For each={Object.values(boundComponents)}>
                     {(item) => {
                         const c = item.component;
-                        const cid = (c.container as any)._config.id;
-                        const isIframe = (c as any).state.jsxPreservationMode == "static-host";
                         return (
                             <Show when={item.rootElement && sigLayoutElement()}>
-                                <Show when={isIframe} fallback={
-                                    <Portal mount={item.rootElement}>
-                                        <GoldenComponentWrapper
-                                            currentIndex={(c as any).state.jsxIndex}
-                                            maxIndex={props.jsxComponents.length}
-                                            jsxComponents={props.jsxComponents}
-                                            state={(c as any).state}
-                                            glContainerRef={c.container}
-                                        />
-                                    </Portal>
-                                }>
-                                    {/* <Portal mount={sigLayoutElement()} ref={(el) => fnCollectPortalRef(el, cid)}> */}
-                                        <div class="sjx-static-host" style={{
-                                            width: sigMemorizedContainerStyle()[cid]?.width,
-                                            height: sigMemorizedContainerStyle()[cid]?.height,
-                                            left: sigMemorizedContainerStyle()[cid]?.left,
-                                            top: sigMemorizedContainerStyle()[cid]?.top,
-                                            "z-index": sigMemorizedContainerStyle()[cid]?.zIndex == "auto" ? "1" : sigMemorizedContainerStyle()[cid]?.zIndex,
-                                            display: sigMemorizedContainerStyle()[cid]?.display,
-                                        }}>
-                                            <GoldenComponentWrapper
-                                                currentIndex={(c as any).state.jsxIndex}
-                                                maxIndex={props.jsxComponents.length}
-                                                jsxComponents={props.jsxComponents}
-                                                state={(c as any).state}
-                                                glContainerRef={c.container}
-                                            />
-                                        </div>
-                                    {/* </Portal> */}
-                                </Show>
+                                <GoldenComponentWrapper
+                                    currentIndex={(c as any).state.jsxIndex}
+                                    maxIndex={props.jsxComponents.length}
+                                    jsxComponents={props.jsxComponents}
+                                    state={(c as any).state}
+                                    itemRef={item}
+                                    sigIsPopup={sigIsPopup}
+                                    sigMemorizedContainerStyle={sigMemorizedContainerStyle}
+                                />
                             </Show>
                         )
                     }}
                 </For>
-                <section class="layoutContainer w-full h-96" ref={fnHandleContainerInit}>
-                </section>
             </section>
         </>
     )
