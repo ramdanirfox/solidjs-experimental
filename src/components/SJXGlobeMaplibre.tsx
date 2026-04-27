@@ -5,6 +5,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import mapblibre from "maplibre-gl";
 import { GeoJSONFeature } from "maplibre-gl";
 import { xfnPolylabel } from "~/shared/utils/polylabel.util";
+import SJXUploadJSON from "~/shared/components/upload-json/SJXUploadJSON";
+import { xfnInvertMap } from "~/shared/utils/shared.util";
 
 export interface ISJXGlobeMaplibre {
 
@@ -23,8 +25,10 @@ function MapFlyer(props: MapFlyerProps) {
 
 export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     const [center, setCenter] = createSignal<[number, number]>([106.82976614124544, -6.2773016456564275]);
+    const [sigMapRef, setSigMapRef] = createSignal<mapblibre.Map>();
     const [sigGeojsonWorldWide, setSigGeojsonWorldWide] = createSignal<any>();
     const [sigGeojsonWorldWideCentroid, setSigGeojsonWorldWideCentroid] = createSignal<any>();
+    const [sigDictCountryISOA2, setSigDictCountryISOA2] = createSignal<any>();
     const [sigGlyphsProtocolModule, setSigGlyphsProtocolModule] = createSignal<any>();
     const [hoveredId, setHoveredId] = createSignal<string | number | null>(null);
 
@@ -145,6 +149,31 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
         });
     }
 
+    const fnUpdateText = () => {
+        const labelLookup = ["match", ["get", "ISO"]];
+        const dict = xfnInvertMap(sigDictCountryISOA2());
+        sigGeojsonWorldWideCentroid().features.forEach((f: any) => {
+            const p = f.properties;
+            const pid = p.ISO;
+            if (dict[pid] && labelLookup.indexOf(dict[pid]) === -1) {
+                labelLookup.push(pid, dict[pid]);
+            }
+        });
+        labelLookup.push(["get", "ISO"]);
+        console.log("Lookup", labelLookup);
+        sigMapRef()?.setLayoutProperty('geojson-text-country', 'text-field', labelLookup);
+    }
+
+    const fnDictionary = (d: any) => {
+        console.log("Dict", d);
+        setSigDictCountryISOA2(d);
+        fnUpdateText();
+    }
+
+    const fnValues = () => {
+
+    }
+
     const MapsProbe = () => {
         const keys = useMap() + "";
         // const map = useMap();
@@ -152,6 +181,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
             const sub = useMap()?.();
             console.log("Use map", sub);
             if (sub) {
+                setSigMapRef(sub);
                 // fnRegisterListeners(sub);
                 fnRegisterAnimator(sub);
                 fnRegisterLocalGlyphsProtocol(sub);
@@ -199,8 +229,12 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     return (
         <Show when={
             sigGeojsonWorldWide() &&
-            sigGeojsonWorldWideCentroid() } fallback={<div>Globeview only valid for Client Rendering</div>}>
+            sigGeojsonWorldWideCentroid()} fallback={<div>Globeview only valid for Client Rendering</div>}>
             <div class="h-96">
+                <div class="flex justify-center">
+                    <SJXUploadJSON label="Upload Dictionary" onUpload={fnDictionary}></SJXUploadJSON>
+                    <SJXUploadJSON label="Upload Map of Values" onUpload={fnDictionary}></SJXUploadJSON>
+                </div>
                 <Map
                     onload={(map: any) => {
                         console.log("MapLibre, this is not called at all", map);
@@ -217,7 +251,6 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                         ...{
                             localFontFamily: 'sans-serif'
                         } as any
-                        // localIdeographFontFamily: '"Apple LiSung", "Microsoft YaHei", "Hiragino Sans", sans-serif'
                     }}>
                     <NavigationControl options={{ showCompass: true }} />
                     <MapFlyer center={center()} />
@@ -234,8 +267,8 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                             onclick={(e) => { console.log(e); alert("Clicked on " + e.features?.[0].properties?.name_en); }}
                             onmousemove={(e) => { fnLayerMouseMove(e); }}
                             onmouseout={(e) => { console.log("mouseout", e); fnLayerMouseOut(e); }}
+                            id="geojson-polygon-fill"
                             layer={{
-                                id: "geojson-polygon-fill",
                                 type: "fill",
                                 paint: {
                                     // Menggunakan ekspresi 'case' untuk mengecek state 'hover'
@@ -257,8 +290,8 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                         />
 
                         <Layer
+                            id="geojson-polygon-outline"
                             layer={{
-                                id: "geojson-polygon-outline",
                                 type: "line",
                                 paint: {
                                     "line-color": "#ffffff",
@@ -276,16 +309,21 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                         }}
                     >
                         <Layer
+                            id="geojson-text-country"
                             layer={{
-                                id: "geojson-text-country",
                                 type: "symbol",
                                 "layout": {
                                     "text-font": ["sans-serif"],
-                                    "text-size": 24,
-                                    "text-field": ["get", "ISO"]
+                                    "text-size": 20,
+                                    "text-field": ["get", "ISO"],
+                                    "text-justify": "center",
+                                    "text-anchor": "center"
                                 },
                                 "paint": {
-                                    "text-color": "white"
+                                    "text-color": "white",
+                                    "text-halo-color": "rgba(0, 0, 0, 0.8)",
+                                    "text-halo-width": 1,
+                                    "text-halo-blur": 0
                                 }
                             } as any}
                         />

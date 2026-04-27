@@ -1,4 +1,4 @@
-export function buildRefFromArray(field: string, arrobj: any[]): any {
+export function xfnBuildRefFromArray(field: string, arrobj: any[]): any {
   let refs: any = {};
   let arrlen = arrobj.length;
   for (let i = 0; i < arrlen; i++) {
@@ -7,7 +7,7 @@ export function buildRefFromArray(field: string, arrobj: any[]): any {
   return refs;
 }
 
-export function buildArrayFromRef(asfield: string, obj: any, ignoreAsField = false): any[] {
+export function xfnBuildArrayFromRef(asfield: string, obj: any, ignoreAsField = false): any[] {
   let arr = [];
   let arrlen = obj.length;
   if (ignoreAsField) {
@@ -29,4 +29,14 @@ export function buildArrayFromRef(asfield: string, obj: any, ignoreAsField = fal
   }
 
   return arr;
+}
+
+export function xfnInvertMap(obj: any) {
+  let newObj: any = {};
+  const objkey = Object.keys(obj);
+  const objvalues: any = Object.values(obj);
+  for (let i = 0; i < objvalues.length; i++) {
+    newObj[objvalues[i]] = objkey[i];
+  }
+  return newObj;
 }
