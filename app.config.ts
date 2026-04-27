@@ -24,7 +24,10 @@ export default defineConfig({
         "/golden-layout"
       ]
     },
-    baseURL: process.argv.includes("dev") ? APP_DEV_BASEURL : APP_DEV_BASEURL
+    baseURL: process.argv.includes("dev") ? APP_DEV_BASEURL : APP_DEV_BASEURL,
+    routeRules: (!(APP_DEV_BASEURL + "") || (APP_DEV_BASEURL + "") == "/" ? {} : {
+      "/": { redirect: { to: APP_DEV_BASEURL, statusCode: 301 } }
+    })
   },
   vite: ({ router }) => ({
     clearScreen: false,

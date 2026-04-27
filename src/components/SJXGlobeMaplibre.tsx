@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, onMount, Show } from "solid-js"
 import { Layer, Map, NavigationControl, Source, useMapEffect, useMap } from "solid-maplibre";
 import { SJXApiService } from "~/shared/services/api.service";
 import "maplibre-gl/dist/maplibre-gl.css";
+import mapblibre from "maplibre-gl";
 import { GeoJSONFeature } from "maplibre-gl";
 import { xfnPolylabel } from "~/shared/utils/polylabel.util";
 
@@ -23,25 +24,19 @@ function MapFlyer(props: MapFlyerProps) {
 export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     const [center, setCenter] = createSignal<[number, number]>([106.82976614124544, -6.2773016456564275]);
     const [sigGeojsonWorldWide, setSigGeojsonWorldWide] = createSignal<any>();
+    const [sigGeojsonWorldWideCentroid, setSigGeojsonWorldWideCentroid] = createSignal<any>();
+    const [sigGlyphsProtocolModule, setSigGlyphsProtocolModule] = createSignal<any>();
     const [hoveredId, setHoveredId] = createSignal<string | number | null>(null);
+
     const noopGlobeStyle = {
         version: 8 as 8,
         sources: {},
+        glyphs: "glyphs://{fontstack}/{range}",
         projection: {
-            type: "globe",
-            // atmosphere: {
-            //     "color": "pink",
-            //     "intensity": 0.5
-            // }
+            type: "globe"
         },
-        // sky: {
-        //     "atmosphere-color": "#454545",
-        //     // "atmosphere-intensity": 0.5,
-        //     "base-color": "#001d3d", // Warna ruang angkasa
-        //     "stars-intensity": 0.8
-        // },
         'sky': {
-            "sky-color": "#9d6b00",
+            "sky-color": "#403d36",
             "sky-horizon-blend": 0.5,
             "horizon-color": "#cc009c",
             "horizon-fog-blend": 0.5,
@@ -61,7 +56,6 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                 id: "background",
                 type: "background",
                 paint: {
-                    // "background-color": "#001d3d" // Warna laut gelap agar atmosfer terlihat bagus
                     "background-color": "#6bbcff" // Warna laut gelap agar atmosfer terlihat bagus
                 }
             }
@@ -73,15 +67,11 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
             console.log("mousemove", e.features);
             const newId = e.features[0].id;
             const prev = hoveredId();
-
-            // Hanya eksekusi logika jika kita pindah ke poligon yang berbeda
             if (prev !== newId) {
                 const map = e.target;
-
-                // Bersihkan yang lama (jika ada)
                 if (prev) {
                     map.setFeatureState(
-                        { source: "my-source-id", id: prev },
+                        { source: "worldwide_lite_geo.json", id: prev },
                         { hover: false }
                     );
                 }
@@ -89,7 +79,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                 // Set yang baru
                 setHoveredId(newId);
                 map.setFeatureState(
-                    { source: "my-source-id", id: newId },
+                    { source: "worldwide_lite_geo.json", id: newId },
                     { hover: true }
                 );
             }
@@ -101,17 +91,12 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
         if (oldId !== null) {
             const map = e.target;
             map.setFeatureState(
-                { source: "my-source-id", id: oldId },
+                { source: "worldwide_lite_geo.json", id: oldId },
                 { hover: false }
             );
             setHoveredId(null);
         }
     }
-
-
-    const fnRegisterListeners = (map: any) => {
-        // fnHoverHighlighter(map);
-    };
 
     const fnRegisterAnimator = (map: any) => {
         console.log("registering animation...", map);
@@ -121,9 +106,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
 
         let isInteracting = false;
 
-        // Bergerak karena user (drag, zoom, tilt)
-
-        map.on('mouseover', (e) => {
+        map.on('mouseover', (e: any) => {
             if (e.originalEvent) isInteracting = true;
         });
 
@@ -154,6 +137,14 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
         animate();
     }
 
+    const fnRegisterLocalGlyphsProtocol = (map: any) => {
+        import("maplibre-local-glyphs" as any).then(m => {
+            console.log("Glyphs Module", m);
+            mapblibre.addProtocol("glyphs", m.default);
+            setSigGlyphsProtocolModule(m);
+        });
+    }
+
     const MapsProbe = () => {
         const keys = useMap() + "";
         // const map = useMap();
@@ -163,6 +154,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
             if (sub) {
                 // fnRegisterListeners(sub);
                 fnRegisterAnimator(sub);
+                fnRegisterLocalGlyphsProtocol(sub);
             }
         });
         // fnRegisterListeners(map);
@@ -178,6 +170,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
         };
         SJXApiService.svcGetWorldwideCentroid().then((d: any) => {
             console.log("worldwide centroid", d);
+            setSigGeojsonWorldWideCentroid(d);
         });
         SJXApiService.svcGetWorldwideGeojson().then((d: any) => {
             console.log("worldwide geojson", d);
@@ -204,7 +197,9 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     });
 
     return (
-        <Show when={sigGeojsonWorldWide()} fallback={<div>Globeview only valid for Client Rendering</div>}>
+        <Show when={
+            sigGeojsonWorldWide() &&
+            sigGeojsonWorldWideCentroid() } fallback={<div>Globeview only valid for Client Rendering</div>}>
             <div class="h-96">
                 <Map
                     onload={(map: any) => {
@@ -218,17 +213,21 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                     }}
                     options={{
                         style: noopGlobeStyle,
-                        renderWorldCopies: true
+                        renderWorldCopies: true,
+                        ...{
+                            localFontFamily: 'sans-serif'
+                        } as any
+                        // localIdeographFontFamily: '"Apple LiSung", "Microsoft YaHei", "Hiragino Sans", sans-serif'
                     }}>
                     <NavigationControl options={{ showCompass: true }} />
                     <MapFlyer center={center()} />
                     <MapsProbe />
                     <Source
-                        id="my-source-id"
+                        id="worldwide_lite_geo.json"
                         source={{
                             type: "geojson",
                             data: sigGeojsonWorldWide(),
-                            promoteId: "ne_id"
+                            promoteId: "iso_a2"
                         }}
                     >
                         <Layer
@@ -267,12 +266,29 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                                 },
                             } as any}
                         />
-                        <Layer layer={{
-                            type: "text",
-                            paint: {
-
-                            }
-                        }} />
+                    </Source>
+                    <Source
+                        id="world_countries_centroids.json"
+                        source={{
+                            type: "geojson",
+                            data: sigGeojsonWorldWideCentroid(),
+                            promoteId: "ISO"
+                        }}
+                    >
+                        <Layer
+                            layer={{
+                                id: "geojson-text-country",
+                                type: "symbol",
+                                "layout": {
+                                    "text-font": ["sans-serif"],
+                                    "text-size": 24,
+                                    "text-field": ["get", "ISO"]
+                                },
+                                "paint": {
+                                    "text-color": "white"
+                                }
+                            } as any}
+                        />
                     </Source>
                 </Map>
             </div>
