@@ -6,7 +6,8 @@ import mapblibre from "maplibre-gl";
 import { GeoJSONFeature } from "maplibre-gl";
 import { xfnPolylabel } from "~/shared/utils/polylabel.util";
 import SJXUploadJSON from "~/shared/components/upload-json/SJXUploadJSON";
-import { xfnInvertMap } from "~/shared/utils/shared.util";
+import { xfnBuildRefFromArray, xfnInvertMap } from "~/shared/utils/shared.util";
+import SharedMaplibreLayerWrapper from "~/shared/components/maplibre/mapblibre-layer-wrapper";
 
 export interface ISJXGlobeMaplibre {
 
@@ -30,6 +31,16 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     const [sigGeojsonWorldWideCentroid, setSigGeojsonWorldWideCentroid] = createSignal<any>();
     const [sigDictCountryISOA2, setSigDictCountryISOA2] = createSignal<any>();
     const [sigGlyphsProtocolModule, setSigGlyphsProtocolModule] = createSignal<any>();
+
+    let defaultPaintRule = [
+        "case",
+        ["boolean", ["feature-state", "hover"], false],
+        "#ffff00",
+        "#2fca58"
+    ];
+    const [sigPaintRules, setSigPaintRules] = createSignal<any[]>(
+        defaultPaintRule
+    );
     const [hoveredId, setHoveredId] = createSignal<string | number | null>(null);
 
     const noopGlobeStyle = {
@@ -93,7 +104,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
     const fnLayerMouseOut = (e: any) => {
         const oldId = hoveredId();
         if (oldId !== null) {
-            const map = e.target;
+            const map = e.target; 
             map.setFeatureState(
                 { source: "worldwide_lite_geo.json", id: oldId },
                 { hover: false }
@@ -170,8 +181,38 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
         fnUpdateText();
     }
 
-    const fnValues = () => {
+    const fnValuesLoaded = (d: any) => {
+        const map = sigMapRef()!;
+        let maxVal = 0;
+        sigGeojsonWorldWide().features.forEach((f: any) => {
+            const id = f.properties.iso_a2;
+            const idData = xfnInvertMap(sigDictCountryISOA2())[id];
+            const dMap = xfnBuildRefFromArray("roaming_country", d);
+            const val = dMap[idData] ? Number(dMap[idData].jml) : 0;
+            // console.log("Data", id, idData, xfnInvertMap(sigDictCountryISOA2()), dMap, dMap[idData]);
+            // const ftState = 
+            console.log("Ft state", { source: "worldwide_lite_geo.json", id: id }, { issue_count: val });
+            map.setFeatureState(
+                { source: "worldwide_lite_geo.json", id: id },
+                { issue_count: val }
+            );
+            if (val > maxVal) { maxVal = val }
+        });
 
+        const paintRule: any = [
+            ...defaultPaintRule
+        ];
+        paintRule[paintRule.length - 1] = [
+            'interpolate',
+            ['linear'],
+            ['to-number', ["feature-state", "issue_count"], 0],
+            0, '#00a58c',
+            maxVal > 5000 ? 5000 : maxVal,'#ff7700',
+            maxVal,'#c60000',
+        ];
+        setSigPaintRules(paintRule);
+        // sigMapRef()?.setPaintProperty("geojson-polygon-fill", "fill-color", paintRule);
+        console.log("Check Paint Rule", paintRule, defaultPaintRule);
     }
 
     const MapsProbe = () => {
@@ -233,7 +274,7 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
             <div class="h-96">
                 <div class="flex justify-center">
                     <SJXUploadJSON label="Upload Dictionary" onUpload={fnDictionary}></SJXUploadJSON>
-                    <SJXUploadJSON label="Upload Map of Values" onUpload={fnDictionary}></SJXUploadJSON>
+                    <SJXUploadJSON label="Upload Map of Values" onUpload={fnValuesLoaded}></SJXUploadJSON>
                 </div>
                 <Map
                     onload={(map: any) => {
@@ -263,32 +304,30 @@ export default function SJXGlobeMaplibre(props: ISJXGlobeMaplibre) {
                             promoteId: "iso_a2"
                         }}
                     >
-                        <Layer
-                            onclick={(e) => { console.log(e); alert("Clicked on " + e.features?.[0].properties?.name_en); }}
-                            onmousemove={(e) => { fnLayerMouseMove(e); }}
-                            onmouseout={(e) => { console.log("mouseout", e); fnLayerMouseOut(e); }}
-                            id="geojson-polygon-fill"
-                            layer={{
-                                type: "fill",
-                                paint: {
-                                    // Menggunakan ekspresi 'case' untuk mengecek state 'hover'
-                                    "fill-color": [
-                                        "case",
-                                        ["boolean", ["feature-state", "hover"], false],
-                                        "#ffff00", // Warna Kuning saat kursor di atasnya (Highlight)
-                                        "#2fca58"  // Warna Merah default
-                                    ],
-                                    "fill-opacity": [
-                                        "case",
-                                        ["boolean", ["feature-state", "hover"], false],
-                                        1,   // Full terang saat hover
-                                        0.7  // Semi-transparan saat normal
-                                    ],
-                                    "fill-outline-color": "#ffffff"
-                                },
-                            } as any}
-                        />
-
+                        <SharedMaplibreLayerWrapper Layer={Layer} jsxLayer={
+                            <Layer
+                                onclick={(e) => { console.log(e); alert("Clicked on " + e.features?.[0].properties?.name_en + ` 
+                                    ${ sigMapRef()?.getFeatureState({ source: 'worldwide_lite_geo.json', id: e.features?.[0].properties?.iso_a2}).issue_count}`); }}
+                                onmousemove={(e) => { fnLayerMouseMove(e); }}
+                                onmouseout={(e) => { console.log("mouseout", e); fnLayerMouseOut(e); }}
+                                id="geojson-polygon-fill"
+                                layer={{
+                                    type: "fill",
+                                    paint: {
+                                        // Menggunakan ekspresi 'case' untuk mengecek state 'hover'
+                                        "fill-color": sigPaintRules(),
+                                        "fill-opacity": [
+                                            "case",
+                                            ["boolean", ["feature-state", "hover"], false],
+                                            1,   // Full terang saat hover
+                                            0.7  // Semi-transparan saat normal
+                                        ],
+                                        "fill-outline-color": "#ffffff"
+                                    },
+                                } as any}
+                            />
+                        }>
+                        </SharedMaplibreLayerWrapper>
                         <Layer
                             id="geojson-polygon-outline"
                             layer={{
