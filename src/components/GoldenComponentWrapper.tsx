@@ -91,12 +91,38 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
         });
     };
 
-    const SJXInternalCmpToolbox = () => <div class="select-none touch-none"
-        onClick={fnHandleTabClick}
-        onPointerDown={fnHandleTabPointerDown}
-        onPointerCancel={fnHandlePointerCancel}
-        onTouchStart={fnHandleTabTouchStart}>
-        Drag Here!
+    const fnHandlePopoutClick = () => {
+        const c = props.itemRef.component.container;
+        if (c) {
+            c.parent.parent.header.handleButtonPopoutEvent();   
+        }
+    }
+
+    const fnHandleToogleMaximize = () => {
+        const c = props.itemRef.component.container;
+        if (c) {
+            c.parent.parent.header.handleButtonMaximiseToggleEvent();   
+        }
+    }
+
+    const SJXInternalCmpToolbox = () => <div class="select-none touch-none flex">
+        <div class="flex-1"
+            onClick={fnHandleTabClick}
+            onPointerDown={fnHandleTabPointerDown}
+            onPointerCancel={fnHandlePointerCancel}
+            onTouchStart={fnHandleTabTouchStart}>
+                Drag Here!
+        </div>
+        <div class="flex-1" 
+            onClick={fnHandlePopoutClick}
+            onTouchStart={fnHandlePopoutClick}>
+            Popout
+        </div>
+        <div class="flex-1" 
+            onClick={fnHandleToogleMaximize}
+            onTouchStart={fnHandleToogleMaximize}>
+            Max/Min
+        </div>
     </div>
 
     // const SJXInternalCmpClientOnlyCmp = clientOnly(() => <>
