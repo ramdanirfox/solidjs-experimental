@@ -159,6 +159,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         _boundComponentMap.delete(container);
         setBoundComponentsUnsuppressed(id, undefined as any);
         if (!sigMuteDestroyCmp()) {
+            console.log("[GL] Unbinding Logic");
             setBoundComponents(id, undefined as any);
             // setBoundComponents()
             setSigBoundComponentCounter(sigBoundComponentCounter() - 1);
@@ -369,19 +370,23 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         let adapted = fnGoldenUtilSavedLayoutAdapter(rawLayout);
         goldenLayoutRef.loadLayout(adapted);
         // setTimeout(() => {
-        const capturedVisibleIdAfter = Object.keys(boundComponentsUnsuppressed);
-        console.log("Compare", sigCapturedVisibleIds(), capturedVisibleIdAfter, boundComponentsUnsuppressed);
-        if (capturedVisibleIdAfter.length < sigCapturedVisibleIds().length) {
-            console.log("Something neeed to be destroyed", sigCapturedVisibleIds(), capturedVisibleIdAfter);
-            sigCapturedVisibleIds().forEach((id) => {
-                if (!capturedVisibleIdAfter.includes(id)) {
-                    setBoundComponents(id, undefined as any);
-                    console.log("Destroyed", id, boundComponents);
-                }
-            });
-        }
-        setSigMuteDestroyCmp(false);
-        // }, 0);
+            const capturedVisibleIdAfter = Object.keys(boundComponentsUnsuppressed);
+            const idsBefore = sigCapturedVisibleIds();
+            const idsAfter = capturedVisibleIdAfter;
+            const added = idsAfter.filter((id: string) => !idsBefore.includes(id));
+            const removed = idsBefore.filter((id: string) => !idsAfter.includes(id));
+            console.log("Compare", idsBefore, idsAfter, boundComponentsUnsuppressed);
+            if (added.length > 0 || removed.length > 0) {
+                console.log("Something neeed to be destroyed", sigCapturedVisibleIds(), capturedVisibleIdAfter);
+                sigCapturedVisibleIds().forEach((id) => {
+                    if (!capturedVisibleIdAfter.includes(id)) {
+                        setBoundComponents(id, undefined as any);
+                        console.log("Destroyed", id, boundComponents);
+                    }
+                });
+            }
+            setSigMuteDestroyCmp(false);
+        // }, 500);
     }
 
     const fnHandleContainerInit = (container: any) => {
@@ -513,7 +518,8 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         untrack(() => {
             if (sub && !sigIsPopup()) {
                 console.log("Applying layout", sub);
-                fnApiLoadLayout(sub);
+                // fnApiLoadLayout(sub);
+                goldenLayoutRef.loadLayout(sub);
             }
         });
     });

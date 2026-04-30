@@ -28,7 +28,7 @@ export const GoldenLayoutView2: Component<any> = () => {
                             "componentType": "solid view",
                             "componentState": {
                                 "jsxIndex": 1,
-                                "jsxPreservationMode": "standard"
+                                "jsxPreservationMode": "static-host"
                             }
                         }
                     ]
@@ -48,7 +48,7 @@ export const GoldenLayoutView2: Component<any> = () => {
                             "componentType": "solid view",
                             "componentState": {
                                 "jsxIndex": 4,
-                                "jsxPreservationMode": "standard"
+                                "jsxPreservationMode": "static-host"
                             }
                         }
                     ]
