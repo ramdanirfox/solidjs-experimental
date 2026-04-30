@@ -5,121 +5,169 @@ import { useSJXContext } from "~/shared/context/SJXContext";
 import "./../shared/styles/golden-layout.css";
 import "golden-layout/dist/css/goldenlayout-base.css";
 import "golden-layout/dist/css/themes/goldenlayout-light-theme.css";
+import { LayoutConfig } from "golden-layout";
 
 export const GoldenLayoutView2: Component<any> = () => {
     const SJXctx = useSJXContext();
+    const [sigLayout, setSigLayout] = createSignal<LayoutConfig>({
+        root: {
+            type: "column",
+            content: [
+                {
+                    type: "stack",
+                    content: [
+                        {
+                            "type": "component",
+                            "content": [],
+                            "size": "30%",
+                            "id": "solid",
+                            "title": "Solid",
+                            "header": {
+                                "show": "top"
+                            },
+                            "componentType": "solid view",
+                            "componentState": {
+                                "jsxIndex": 1,
+                                "jsxPreservationMode": "standard"
+                            }
+                        }
+                    ]
+                },
+                {
+                    type: "stack",
+                    content: [
+                        {
+                            "type": "component",
+                            "content": [],
+                            "size": "70%",
+                            "id": "preview_iframe",
+                            "title": "Preview Iframe",
+                            "header": {
+                                "show": "top"
+                            },
+                            "componentType": "solid view",
+                            "componentState": {
+                                "jsxIndex": 4,
+                                "jsxPreservationMode": "standard"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    });
     let glApi: IGoldenAppRootApi;
     let memorizedLayout: any = {
-    "root": {
-        "type": "row",
-        "content": [
-            {
-                "type": "stack",
-                "content": [
-                    {
-                        "type": "component",
-                        "content": [],
-                        "size": 30,
-                        "sizeUnit": "%",
-                        "minSizeUnit": "px",
-                        "id": "solid",
-                        "maximised": false,
-                        "isClosable": true,
-                        "reorderEnabled": true,
-                        "title": "Solid",
-                        "header": {
-                            "show": "top"
-                        },
-                        "componentType": "solid view",
-                        "componentState": {
-                            "jsxIndex": 1,
-                            "jsxPreservationMode": "standard"
+        "root": {
+            "type": "row",
+            "content": [
+                {
+                    "type": "stack",
+                    "content": [
+                        {
+                            "type": "component",
+                            "content": [],
+                            "size": 30,
+                            "sizeUnit": "%",
+                            "minSizeUnit": "px",
+                            "id": "solid",
+                            "maximised": false,
+                            "isClosable": true,
+                            "reorderEnabled": true,
+                            "title": "Solid",
+                            "header": {
+                                "show": "top"
+                            },
+                            "componentType": "solid view",
+                            "componentState": {
+                                "jsxIndex": 1,
+                                "jsxPreservationMode": "standard"
+                            }
                         }
-                    }
-                ],
-                "size": 46.15384615384615,
-                "sizeUnit": "%",
-                "minSizeUnit": "px",
-                "id": "solid",
-                "isClosable": true,
-                "maximised": false,
-                "activeItemIndex": 0
-            },
-            {
-                "type": "stack",
-                "content": [
-                    {
-                        "type": "component",
-                        "content": [],
-                        "size": 1,
-                        "sizeUnit": "fr",
-                        "minSizeUnit": "px",
-                        "id": "js2",
-                        "maximised": false,
-                        "isClosable": true,
-                        "reorderEnabled": true,
-                        "title": "JS2",
-                        "header": {
-                            "show": "top",
-                            "popout": "pop"
-                        },
-                        "componentType": "solid view",
-                        "componentState": {
-                            "jsxIndex": 2,
-                            "jsxPreservationMode": "standard"
+                    ],
+                    "size": 46.15384615384615,
+                    "sizeUnit": "%",
+                    "minSizeUnit": "px",
+                    "id": "solid",
+                    "isClosable": true,
+                    "maximised": false,
+                    "activeItemIndex": 0
+                },
+                {
+                    "type": "stack",
+                    "content": [
+                        {
+                            "type": "component",
+                            "content": [],
+                            "size": 1,
+                            "sizeUnit": "fr",
+                            "minSizeUnit": "px",
+                            "id": "js2",
+                            "maximised": false,
+                            "isClosable": true,
+                            "reorderEnabled": true,
+                            "title": "JS2",
+                            "header": {
+                                "show": "top",
+                                "popout": "pop"
+                            },
+                            "componentType": "solid view",
+                            "componentState": {
+                                "jsxIndex": 2,
+                                "jsxPreservationMode": "standard"
+                            }
                         }
-                    }
-                ],
-                "size": 53.84615384615385,
-                "sizeUnit": "%",
-                "minSizeUnit": "px",
-                "id": "js2",
-                "isClosable": true,
-                "maximised": false,
-                "activeItemIndex": 0
-            }
-        ],
-        "size": 1,
-        "sizeUnit": "fr",
-        "minSizeUnit": "px",
-        "id": "",
-        "isClosable": true
-    },
-    "openPopouts": [],
-    "settings": {
-        "constrainDragToContainer": true,
-        "reorderEnabled": true,
-        "popoutWholeStack": false,
-        "blockedPopoutsThrowError": true,
-        "closePopoutsOnUnload": true,
-        "responsiveMode": "none",
-        "tabOverlapAllowance": 0,
-        "reorderOnTabMenuClick": true,
-        "tabControlOffset": 10,
-        "popInOnClose": false
-    },
-    "dimensions": {
-        "borderWidth": 5,
-        "borderGrabWidth": 5,
-        "defaultMinItemHeight": 0,
-        "defaultMinItemHeightUnit": "px",
-        "defaultMinItemWidth": 10,
-        "defaultMinItemWidthUnit": "px",
-        "headerHeight": 1,
-        "dragProxyWidth": 300,
-        "dragProxyHeight": 200
-    },
-    "header": {
-        "show": "top",
-        "popout": "open in new window",
-        "dock": "dock",
-        "close": "close",
-        "maximise": "maximise",
-        "minimise": "minimise",
-        "tabDropdown": "additional tabs"
-    },
-    "resolved": true
-};
+                    ],
+                    "size": 53.84615384615385,
+                    "sizeUnit": "%",
+                    "minSizeUnit": "px",
+                    "id": "js2",
+                    "isClosable": true,
+                    "maximised": false,
+                    "activeItemIndex": 0
+                }
+            ],
+            "size": 1,
+            "sizeUnit": "fr",
+            "minSizeUnit": "px",
+            "id": "",
+            "isClosable": true
+        },
+        "openPopouts": [],
+        "settings": {
+            "constrainDragToContainer": true,
+            "reorderEnabled": true,
+            "popoutWholeStack": false,
+            "blockedPopoutsThrowError": true,
+            "closePopoutsOnUnload": true,
+            "responsiveMode": "none",
+            "tabOverlapAllowance": 0,
+            "reorderOnTabMenuClick": true,
+            "tabControlOffset": 10,
+            "popInOnClose": false
+        },
+        "dimensions": {
+            "borderWidth": 5,
+            "borderGrabWidth": 5,
+            "defaultMinItemHeight": 0,
+            "defaultMinItemHeightUnit": "px",
+            "defaultMinItemWidth": 10,
+            "defaultMinItemWidthUnit": "px",
+            "headerHeight": 1,
+            "dragProxyWidth": 300,
+            "dragProxyHeight": 200
+        },
+        "header": {
+            "show": "top",
+            "popout": "open in new window",
+            "dock": "dock",
+            "close": "close",
+            "maximise": "maximise",
+            "minimise": "minimise",
+            "tabDropdown": "additional tabs"
+        },
+        "resolved": true
+    };
 
     const fnOnReady = (api: IGoldenAppRootApi) => {
         glApi = api;
@@ -144,6 +192,7 @@ export const GoldenLayoutView2: Component<any> = () => {
             </button>
             <GoldenAppRoot
                 onReady={fnOnReady}
+                sigLayout={sigLayout}
                 jsxComponents={[
                     () => <div>Hallo Dunia</div>,
                     // () => <GoldenAppRoot jsxComponents={[

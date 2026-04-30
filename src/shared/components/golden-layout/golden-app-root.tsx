@@ -19,7 +19,7 @@ import { Layout, prefinedLayouts } from './predefined-layouts';
 import { TextComponent } from './text-component';
 import { ComponentBase } from './component-base';
 import { SolidGoldenFactory, SolidGoldenWrapperComponent } from './solidgolden-wrapper-component';
-import { createRenderEffect, createSignal, For, JSX, onCleanup, onMount, Show } from 'solid-js';
+import { Accessor, createEffect, createRenderEffect, createSignal, For, JSX, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { GoldenComponentWrapper } from '~/components/GoldenComponentWrapper';
 import { createStore } from 'solid-js/store';
@@ -34,8 +34,9 @@ export interface IGoldenAppRootApi {
 }
 
 export interface IGoldenAppRootProps {
-    jsxComponents: (JSX.Element | (() => JSX.Element))[]
-    onReady?: (api: IGoldenAppRootApi) => void
+    jsxComponents: (JSX.Element | (() => JSX.Element))[];
+    sigLayout: Accessor<LayoutConfig>;
+    onReady?: (api: IGoldenAppRootApi) => void;
 }
 
 export default function GoldenAppRoot(props: IGoldenAppRootProps) {
@@ -362,12 +363,34 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         console.log("[GL] handleBeforeResizingEvent", count);
     }
 
+    const fnApiLoadLayout = (rawLayout: any) => {
+        setSigMuteDestroyCmp(true);
+        setSigCapturedVisibleIds(Object.keys(boundComponents));
+        let adapted = fnGoldenUtilSavedLayoutAdapter(rawLayout);
+        goldenLayoutRef.loadLayout(adapted);
+        // setTimeout(() => {
+        const capturedVisibleIdAfter = Object.keys(boundComponentsUnsuppressed);
+        console.log("Compare", sigCapturedVisibleIds(), capturedVisibleIdAfter, boundComponentsUnsuppressed);
+        if (capturedVisibleIdAfter.length < sigCapturedVisibleIds().length) {
+            console.log("Something neeed to be destroyed", sigCapturedVisibleIds(), capturedVisibleIdAfter);
+            sigCapturedVisibleIds().forEach((id) => {
+                if (!capturedVisibleIdAfter.includes(id)) {
+                    setBoundComponents(id, undefined as any);
+                    console.log("Destroyed", id, boundComponents);
+                }
+            });
+        }
+        setSigMuteDestroyCmp(false);
+        // }, 0);
+    }
+
     const fnHandleContainerInit = (container: any) => {
         _layoutElement = container;
         setSigLayoutElement(container);
         console.log("Container created", container);
         const _goldenLayout = new GoldenLayout(container, _bindComponentEventListener, _fnUnbindComponentEventListener);
         goldenLayoutRef = _goldenLayout;
+        // _goldenLayout.resizeDebounceExtendedWhenPossible = false;
         _goldenLayout.resizeWithContainerAutomatically = true;
         (_goldenLayout as any).beforeResizingEvent = (count: any) => fnHandleBeforeResizingEvent(count);
         _goldenLayout.addEventListener('stackHeaderClick', (event) => fnHandleStackHeaderClick(event));
@@ -418,14 +441,14 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
             (window).addEventListener("pagehide", (e) => { fnGoldenEmitEventHub("tabrestore", "Restore_" + window.location.search) }) // --> reliable
         }
         else {
-            const layouts = prefinedLayouts.allComponents;
-            const miniRowLayout = layouts.find((layout: any) => layout.name === 'miniRow');
-            console.log("Predefined Layouts: ", layouts, "Selected miniRowLayout: ", miniRowLayout, _goldenLayout);
-            setTimeout(() => {
-                // SSR Unsafe Section
-                _goldenLayout.loadLayout(miniRowLayout!.config);
-                console.log("[GL] _boundComponentMap", _boundComponentMap);
-            }, 0);
+            // const layouts = prefinedLayouts.allComponents;
+            // const miniRowLayout = layouts.find((layout: any) => layout.name === 'miniRow');
+            // console.log("Predefined Layouts: ", layouts, "Selected miniRowLayout: ", miniRowLayout, _goldenLayout);
+            // setTimeout(() => {
+            //     // SSR Unsafe Section
+            //     _goldenLayout.loadLayout(miniRowLayout!.config);
+            //     console.log("[GL] _boundComponentMap", _boundComponentMap);
+            // }, 0);
 
             console.log("[GL] Treated as main window");
             const recentlyPopInIds = [""];
@@ -441,28 +464,28 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
 
                         }
                         else {
-                            setTimeout(() => {
-                                let idx = recentlyPopInIds.indexOf(c);
-                                let counter = 0;
-                                console.log("[GL] Popin decision", recentlyPopInIds);
-                                while (idx > -1) {
-                                    counter++;
-                                    recentlyPopInIds.splice(idx, 1);
-                                    idx = recentlyPopInIds.indexOf(c);
-                                }
-                                if (counter > 1) {
-                                    // bwPopout.popIn();
+                            // setTimeout(() => {
+                            let idx = recentlyPopInIds.indexOf(c);
+                            let counter = 0;
+                            console.log("[GL] Popin decision", recentlyPopInIds);
+                            while (idx > -1) {
+                                counter++;
+                                recentlyPopInIds.splice(idx, 1);
+                                idx = recentlyPopInIds.indexOf(c);
+                            }
+                            if (counter > 1) {
+                                // bwPopout.popIn();
+                            }
+                            else {
+                                if (!sigMuteAutoPopIn()) {
+                                    console.log("[GL] Assume popin done via forced ways (close window, change url, etc)", recentlyPopInIds, c);
+                                    bwPopout.popIn();
                                 }
                                 else {
-                                    if (!sigMuteAutoPopIn()) {
-                                        console.log("[GL] Assume popin done via forced ways (close window, change url, etc)", recentlyPopInIds, c);
-                                        bwPopout.popIn();
-                                    }
-                                    else {
-                                        console.log("[GL] Assume popin done via GL popIn element button (perform No-Op)", recentlyPopInIds, c);
-                                    }
+                                    console.log("[GL] Assume popin done via GL popIn element button (perform No-Op)", recentlyPopInIds, c);
                                 }
-                            }, 100);
+                            }
+                            // }, 100);
                         }
                         recentlyPopInIds.push(c);
                     }) as EventEmitter.Callback<"userBroadcast">,
@@ -476,24 +499,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
                 return goldenLayoutRef.saveLayout();
             },
             fnLoadLayout: (rawLayout: any) => {
-                setSigMuteDestroyCmp(true);
-                setSigCapturedVisibleIds(Object.keys(boundComponents));
-                let adapted = fnGoldenUtilSavedLayoutAdapter(rawLayout);
-                goldenLayoutRef.loadLayout(adapted);
-                setTimeout(() => {
-                    const capturedVisibleIdAfter = Object.keys(boundComponentsUnsuppressed);
-                    console.log("Compare", sigCapturedVisibleIds(), capturedVisibleIdAfter, boundComponentsUnsuppressed);
-                    if (capturedVisibleIdAfter.length < sigCapturedVisibleIds().length) {
-                        console.log("Something neeed to be destroyed", sigCapturedVisibleIds(), capturedVisibleIdAfter);
-                        sigCapturedVisibleIds().forEach((id) => {
-                            if (!capturedVisibleIdAfter.includes(id)) {
-                                setBoundComponents(id, undefined as any);
-                                console.log("Destroyed", id, boundComponents);
-                            }
-                        });
-                    }
-                    setSigMuteDestroyCmp(false);
-                }, 100);
+                fnApiLoadLayout(rawLayout);
             }
         })
         //     let state = goldenLayoutRef.saveLayout();
@@ -501,6 +507,16 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         //     console.log("[GL Evt] State Changed", state, adapted, obj, goldenLayoutRef);
         // }, 1000);
     }
+
+    createEffect(() => {
+        const sub = props.sigLayout && props.sigLayout();
+        untrack(() => {
+            if (sub && !sigIsPopup()) {
+                console.log("Applying layout", sub);
+                fnApiLoadLayout(sub);
+            }
+        });
+    });
 
     // const fnCollectPortalRef = (portalEl: HTMLDivElement, cid: string) => {
     //     portalRefs[cid] = portalEl;
