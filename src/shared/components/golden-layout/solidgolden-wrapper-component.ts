@@ -57,7 +57,7 @@ const [registeredClasses, setRegisteredClasses] = createSignal<RegisteredClasses
 
 export class SolidGoldenFactory {
     constructor() {}
-    public jsxComponents: (JSX.Element | (()=>JSX.Element))[] = [];
+    public jsxComponents: (JSX.Element | ((propsExt5: any)=>JSX.Element))[] = [];
 
     private static defaultOptions: { typeName: string } = {
         typeName: 'solidgolden',
@@ -78,7 +78,7 @@ export class SolidGoldenFactory {
         // console.log("[Factory] JSX Refs", this.jsxComponents, jsxRef);
         const newClass = class klass extends ComponentBase {
             static readonly typeName: string = options.typeName;
-            static jsxCmps: (JSX.Element | (()=>JSX.Element))[] = [];
+            static jsxCmps: (JSX.Element | ((propsExt8: any)=>JSX.Element))[] = [];
 
             private _containerClickListener = () => this.handleClickFocusEvent();
             private _containerFocusinListener = () => this.handleClickFocusEvent();
@@ -145,7 +145,7 @@ export class SolidGoldenFactory {
         setRegisteredClasses(classes);
     }
 
-    setJsxComponents(jsxComponents: (JSX.Element | (()=>JSX.Element))[]) {
+    setJsxComponents(jsxComponents: (JSX.Element | ((propsExt4: any)=>JSX.Element))[]) {
         console.log("[Factory] Set JSX", jsxComponents);
         this.jsxComponents = jsxComponents;
         Object.keys(registeredClasses()).forEach((typeName) => {

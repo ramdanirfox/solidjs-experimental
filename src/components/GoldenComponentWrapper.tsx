@@ -1,4 +1,4 @@
-import { Accessor, JSX, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import { Accessor, JSX, Match, mergeProps, onCleanup, onMount, Show, Switch } from "solid-js";
 import { NoHydration, Portal, isServer } from "solid-js/web";
 import { useSJXContext } from "~/shared/context/SJXContext";
 import { clientOnly } from "@solidjs/start";
@@ -6,7 +6,7 @@ import { clientOnly } from "@solidjs/start";
 interface IGoldenComponentWrapper {
     currentIndex: number,
     maxIndex: number,
-    jsxComponents: (JSX.Element | (() => JSX.Element))[],
+    jsxComponents: (JSX.Element | ((propsExt2: any) => JSX.Element))[],
     state: any,
     itemRef?: any;
     sigMemorizedContainerStyle?: Accessor<any>;
@@ -94,16 +94,30 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
     const fnHandlePopoutClick = () => {
         const c = props.itemRef.component.container;
         if (c) {
-            c.parent.parent.header.handleButtonPopoutEvent();   
+            c.parent.parent.header.handleButtonPopoutEvent();
         }
     }
 
     const fnHandleToogleMaximize = () => {
         const c = props.itemRef.component.container;
         if (c) {
-            c.parent.parent.header.handleButtonMaximiseToggleEvent();   
+            c.parent.parent.header.handleButtonMaximiseToggleEvent();
         }
     }
+
+    const propsExtended = mergeProps(
+        props,
+        {
+            eventHandlers: {
+                fnHandlePointerCancel,
+                fnHandlePopoutClick,
+                fnHandleTabClick,
+                fnHandleTabPointerDown,
+                fnHandleTabTouchStart,
+                fnHandleToogleMaximize
+            }
+        }
+    );
 
     const SJXInternalCmpToolbox = () => <div class="select-none touch-none flex">
         <div class="flex-1"
@@ -111,14 +125,14 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
             onPointerDown={fnHandleTabPointerDown}
             onPointerCancel={fnHandlePointerCancel}
             onTouchStart={fnHandleTabTouchStart}>
-                Drag Here!
+            Drag Here!
         </div>
-        <div class="flex-1" 
+        <div class="flex-1"
             onClick={fnHandlePopoutClick}
             onTouchStart={fnHandlePopoutClick}>
             Popout
         </div>
-        <div class="flex-1" 
+        <div class="flex-1"
             onClick={fnHandleToogleMaximize}
             onTouchStart={fnHandleToogleMaximize}>
             Max/Min
@@ -142,7 +156,7 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
             <Match when={props.jsxComponents[props.currentIndex] && props.state.jsxPreservationMode == "static-host" && props.sigIsPopup?.()}>
                 <Portal mount={props.itemRef.rootElement}>
                     <SJXInternalCmpToolbox />
-                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (() => JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
+                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as ((propsExt3: any) => JSX.Element | any))(propsExtended) : props.jsxComponents[props.currentIndex]}
                 </Portal>
             </Match>
 
@@ -163,7 +177,7 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
                     display: props.sigMemorizedContainerStyle?.()[props.itemRef.component.container._config.id]?.display,
                 }}>
                     <SJXInternalCmpToolbox />
-                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (() => JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
+                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as ((propsExt6: any) => JSX.Element | any))(propsExtended) : props.jsxComponents[props.currentIndex]}
                 </div>
                 {/* </Show> */}
                 {/* </NoHydration> */}
@@ -172,7 +186,7 @@ export const GoldenComponentWrapper = (props: IGoldenComponentWrapper) => {
             <Match when={props.jsxComponents[props.currentIndex]}>
                 <Portal mount={props.itemRef.rootElement}>
                     <SJXInternalCmpToolbox />
-                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as (() => JSX.Element | any))() : props.jsxComponents[props.currentIndex]}
+                    {typeof props.jsxComponents[props.currentIndex] == "function" ? (props.jsxComponents[props.currentIndex] as ((propsExt7: any) => JSX.Element | any))(propsExtended) : props.jsxComponents[props.currentIndex]}
                 </Portal>
             </Match>
         </Switch>

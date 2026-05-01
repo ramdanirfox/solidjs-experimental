@@ -34,7 +34,7 @@ export interface IGoldenAppRootApi {
 }
 
 export interface IGoldenAppRootProps {
-    jsxComponents: (JSX.Element | (() => JSX.Element))[];
+    jsxComponents: (JSX.Element | ((propsExt: any) => JSX.Element))[];
     sigLayout: Accessor<LayoutConfig>;
     onReady?: (api: IGoldenAppRootApi) => void;
 }
