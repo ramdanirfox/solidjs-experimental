@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "@antv/g6": "^5.0.48",
+    "@arminmajerie/dockview-solid": "^5.0.0",
     "@danneu/solid-pixi": "^0.0.2",
     "@deck.gl-community/editable-layers": "9.1.0-beta.8",
     "@deck.gl/extensions": "^9.1.14",
@@ -64,6 +65,7 @@
     "air-datepicker": "^3.6.0",
     "bagon-hooks": "^0.0.5",
     "deck.gl": "^9.1.12",
+    "dockview-core": "^6.0.0",
     "docx-preview": "^0.3.5",
     "gdal3.js": "3.0.0-beta.1",
     "geojson-path-finder": "^2.1.0",
