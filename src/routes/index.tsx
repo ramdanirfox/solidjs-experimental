@@ -3,8 +3,35 @@ import "./index.css";
 import { GoldenLayoutView } from "~/components/GoldenLayoutView";
 import { A } from "@solidjs/router";
 import { APP_DEV_BASEURL } from "~/shared/constants/app.constant";
+import { createSignal, For } from "solid-js";
 
 export default function Home() {
+  const [sigNavigation, setSigNavigation] = createSignal([
+    {
+      label: "a",
+      route: "golden-layout"
+    },
+    {
+      label: "b",
+      route: "svar"
+    },
+    {
+      label: "c",
+      route: "aggrid"
+    },
+    {
+      label: "d",
+      route: "solid-google-maps"
+    },
+    {
+      label: "e",
+      route: "chart-3d"
+    },
+    {
+      label: "f",
+      route: "globe-maplibre"
+    }
+  ])
   const BASEURL = APP_DEV_BASEURL;
   return (
     <main>
@@ -27,6 +54,15 @@ export default function Home() {
       <div>
         <a href={`${BASEURL}/globe-maplibre`}>Globe Maplibre</a>
       </div>
+      <div class="hidden">
+        <For each={sigNavigation()}>
+          {(item, sigI) => {
+            return (
+            <a href={`${item.route}`}>{item.route}</a>
+            );
+          }}
+        </For>
+      </div>
     </main>
-  );  
+  );
 }

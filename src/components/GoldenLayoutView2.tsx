@@ -199,10 +199,11 @@ export const GoldenLayoutView2: Component<any> = () => {
                     //     () => <div>Pagiku cerah!</div>,
                     //     () => <div>Matahari bersinar!</div>,
                     // ]} />,
-                    (props: any) => <div><Counter /></div>,
-                    () => <h2>Apa Kabar {SJXctx?.ctx.increments.val()}</h2>,
-                    () => <h2>Apa Kabar {SJXctx?.ctx.increments.val()}</h2>,
-                    () => <iframe width="560" height="315" src="https://www.youtube.com/embed/TclGxroYwb4?si=jmQn8M1wqDmlx8ss" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                    // (props: any) => <div><Counter /></div>,
+                    () => <iframe class="w-full h-full" src="https://www.youtube.com/embed/GrIc6_cp7hA?si=vbuWtdYcE0FP9qju" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>,
+                    () => <h2>Apa Kabar A {SJXctx?.ctx.increments.val()}</h2>,
+                    () => <h2>Apa Kabar B {SJXctx?.ctx.increments.val()}</h2>,
+                    () => <iframe class="w-full h-full" src="https://www.youtube.com/embed/TclGxroYwb4?si=jmQn8M1wqDmlx8ss" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
                 ]}
             />
         </div>
