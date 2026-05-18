@@ -29,6 +29,7 @@ interface GenericObject {
 }
 
 export interface IGoldenAppRootApi {
+    instance: GoldenLayout;
     fnGetLayout: () => any;
     fnLoadLayout: (rawLayout: any) => void;
 }
@@ -500,6 +501,7 @@ export default function GoldenAppRoot(props: IGoldenAppRootProps) {
         }
 
         props.onReady?.({
+            instance: goldenLayoutRef,
             fnGetLayout: () => {
                 return goldenLayoutRef.saveLayout();
             },

@@ -169,8 +169,14 @@ export const GoldenLayoutView2: Component<any> = () => {
         "resolved": true
     };
 
+    let elRefDrag: any;
+
     const fnOnReady = (api: IGoldenAppRootApi) => {
         glApi = api;
+        glApi.instance.newDragSource(elRefDrag, "solid view", {
+                "jsxIndex": 4,
+                "jsxPreservationMode": "static-host"
+        }, "Add view", "add_view_"+Math.random());
     }
 
     const fnGetLayout = () => {
@@ -182,8 +188,14 @@ export const GoldenLayoutView2: Component<any> = () => {
         glApi.fnLoadLayout(memorizedLayout)
     }
 
+    const fnAddLayout = () => {
+    }
+
     return <>
         <div>
+            <button class="bg-orange-500 hover:bg-orange-700 p-2 mr-2 cursor-pointer rounded-lg" ref={elRefDrag} onClick={fnAddLayout}>
+                Add Layout
+            </button>
             <button class="bg-blue-500 hover:bg-blue-700 p-2 mr-2 cursor-pointer rounded-lg" onClick={fnGetLayout}>
                 Capture Layout
             </button>
