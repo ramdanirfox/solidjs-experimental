@@ -5,6 +5,7 @@ import { createSignal, ErrorBoundary, Suspense } from "solid-js";
 import { SJXProvider } from "./shared/context/SJXContext";
 import { APP_DEV_BASEURL } from "./shared/constants/app.constant";
 import SJXRootContainer from "./app-root";
+import SJXSearchBox from "./components/SJXSearchBox";
 import "./app-root.css";
 
 export default function App() {
@@ -53,6 +54,7 @@ export default function App() {
               <SJXRootContainer
                 sigNavigateUrl={sigNavigateUrl}
                 sigNavigateCounter={sigNavigateCounter}
+                headerExtra={<SJXSearchBox />}
               >
                 {props.children}
               </SJXRootContainer>

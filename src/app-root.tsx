@@ -1,6 +1,7 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { Accessor, createEffect, createSignal, For, Show, Suspense } from "solid-js";
+import { Accessor, createEffect, createSignal, For, JSX, Show, Suspense } from "solid-js";
 import { APP_DEV_BASEURL } from "./shared/constants/app.constant";
+import { EXAMPLES } from "./shared/constants/examples";
 import "./app-root.css";
 // import "./shared/styles/animation.css"
 
@@ -8,18 +9,12 @@ interface ISJXRootContainerProps {
     children: any;
     sigNavigateUrl?: Accessor<string>;
     sigNavigateCounter?: Accessor<number>;
+    /** Slot di header (mis. kotak pencarian) — antara navigasi dan menu dev. */
+    headerExtra?: JSX.Element;
 }
 
 /** Daftar halaman contoh yang muncul di navigasi atas. */
-export const SJX_NAV_ITEMS = [
-    { href: "/xlsx-preview", label: "XLSX Preview", badge: "Baru" },
-    { href: "/golden-layout", label: "Golden Layout" },
-    { href: "/svar", label: "Svar Gantt" },
-    { href: "/aggrid", label: "AG Grid" },
-    { href: "/solid-google-maps", label: "Google Maps" },
-    { href: "/chart-3d", label: "3D Chart" },
-    { href: "/globe-maplibre", label: "Globe" },
-];
+export const SJX_NAV_ITEMS = EXAMPLES.map(e => ({ href: `/${e.route}`, label: e.short, badge: e.badge }));
 
 export default function SJXRootContainer(props: ISJXRootContainerProps) {
     const navigate = useNavigate();
@@ -71,6 +66,7 @@ export default function SJXRootContainer(props: ISJXRootContainerProps) {
                         )}
                     </For>
                 </nav>
+                {props.headerExtra}
                 <details class="sjx-dev">
                     <summary title="Alat bantu pengembang">dev</summary>
                     <div class="sjx-dev-pop">
