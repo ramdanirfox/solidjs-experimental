@@ -1,1 +1,210 @@
 @import "tailwindcss";
+
+/* ───────── App shell ───────── */
+:root {
+  --sjx-bg: #f5f7fb;
+  --sjx-surface: #ffffff;
+  --sjx-border: #e3e8f0;
+  --sjx-text: #0f172a;
+  --sjx-muted: #64748b;
+  --sjx-accent: #4f46e5;
+  --sjx-accent-2: #0ea5e9;
+  --sjx-radius: 14px;
+}
+
+.sjx-shell {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(1100px 420px at 85% -10%, rgba(79, 70, 229, .09), transparent 60%),
+    radial-gradient(900px 380px at -5% 0%, rgba(14, 165, 233, .08), transparent 55%),
+    var(--sjx-bg);
+  color: var(--sjx-text);
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.sjx-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px clamp(12px, 3vw, 28px);
+  background: rgba(255, 255, 255, .78);
+  backdrop-filter: saturate(160%) blur(12px);
+  -webkit-backdrop-filter: saturate(160%) blur(12px);
+  border-bottom: 1px solid var(--sjx-border);
+}
+
+.sjx-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 10px;
+  color: inherit;
+  font-size: 15px;
+  white-space: nowrap;
+}
+.sjx-brand:hover { background: #eef2ff; }
+.sjx-logo {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--sjx-accent), var(--sjx-accent-2));
+  box-shadow: 0 4px 12px rgba(79, 70, 229, .35);
+}
+.sjx-brand-text b { font-weight: 800; letter-spacing: -.01em; }
+
+.sjx-nav {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px;
+}
+.sjx-nav::-webkit-scrollbar { display: none; }
+.sjx-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  color: #475569;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.sjx-nav-link:hover { background: #eef2f7; color: var(--sjx-text); }
+.sjx-nav-link.active { background: #e0e7ff; color: #3730a3; font-weight: 600; }
+.sjx-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(135deg, #10b981, #059669);
+}
+
+.sjx-dev { position: relative; font-size: 12px; }
+.sjx-dev summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px dashed #cbd5e1;
+  color: var(--sjx-muted);
+  user-select: none;
+}
+.sjx-dev summary::-webkit-details-marker { display: none; }
+.sjx-dev[open] summary { background: #f1f5f9; }
+.sjx-dev-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 240px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid var(--sjx-border);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, .18);
+  color: #334155;
+}
+.sjx-dev-pop button {
+  text-align: left;
+  border: 1px solid var(--sjx-border);
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.sjx-dev-pop button:hover { background: #eef2ff; }
+.sjx-dev-pop code { font-size: 11px; word-break: break-all; }
+
+.sjx-content { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.sjx-loading { padding: 40px; text-align: center; color: var(--sjx-muted); }
+
+/* ───────── Halaman generik ───────── */
+.sjx-page {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: clamp(12px, 2vw, 24px);
+  text-align: left;
+}
+.sjx-page-fill { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
+.sjx-page-fill > .xl-root { flex: 1; min-height: 480px; }
+.sjx-page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.sjx-page-title { font-size: clamp(20px, 2.4vw, 28px); font-weight: 800; letter-spacing: -.02em; }
+.sjx-page-sub { color: var(--sjx-muted); font-size: 14px; margin-top: 2px; }
+.sjx-page-sub code { background: #eef2ff; color: #3730a3; padding: 1px 6px; border-radius: 6px; font-size: 12.5px; }
+
+/* ───────── Beranda ───────── */
+.sjx-home { width: 100%; max-width: 1180px; margin: 0 auto; padding: clamp(18px, 4vw, 48px) clamp(14px, 3vw, 28px) 60px; text-align: left; }
+.sjx-home .sjx-hero { padding: clamp(10px, 3vw, 30px) 0 clamp(18px, 3vw, 34px); }
+.sjx-home .sjx-eyebrow { display: inline-flex; gap: 8px; align-items: center; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #4338ca; background: #e0e7ff; padding: 5px 12px; border-radius: 999px; }
+.sjx-home h1.sjx-hero-title {
+  font-size: clamp(32px, 6vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -.035em;
+  font-weight: 800;
+  text-transform: none;
+  max-width: 18ch;
+  margin: 16px 0 14px;
+  background: linear-gradient(120deg, #1e1b4b, #4f46e5 45%, #0ea5e9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.sjx-home p.sjx-hero-sub { max-width: 62ch; margin: 0; color: #475569; font-size: clamp(15px, 1.6vw, 18px); line-height: 1.6; }
+.sjx-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+.sjx-cta {
+  display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 12px; font-weight: 600; font-size: 14.5px; text-decoration: none;
+  color: #fff; background: linear-gradient(135deg, #4f46e5, #6366f1); box-shadow: 0 8px 20px rgba(79, 70, 229, .32); transition: transform .15s, box-shadow .15s;
+}
+.sjx-cta:hover { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(79, 70, 229, .38); }
+.sjx-cta.ghost { color: #1e293b; background: #fff; border: 1px solid var(--sjx-border); box-shadow: none; }
+.sjx-cta.ghost:hover { background: #f8fafc; }
+
+.sjx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.sjx-card {
+  position: relative; display: flex; flex-direction: column; gap: 10px; padding: 18px; text-decoration: none; color: inherit;
+  background: var(--sjx-surface); border: 1px solid var(--sjx-border); border-radius: var(--sjx-radius); overflow: hidden;
+  transition: transform .18s, box-shadow .18s, border-color .18s;
+}
+.sjx-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--g, linear-gradient(90deg, #6366f1, #0ea5e9)); }
+.sjx-card:hover { transform: translateY(-3px); border-color: #c7d2fe; box-shadow: 0 16px 36px rgba(15, 23, 42, .1); }
+.sjx-card.featured { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 22px; padding: 22px; background: linear-gradient(120deg, #ecfdf5, #fff 55%); border-color: #bbf7d0; }
+@media (max-width: 720px) { .sjx-card.featured { flex-direction: column; align-items: flex-start; } }
+.sjx-card-ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: #fff; background: var(--g, linear-gradient(135deg, #6366f1, #0ea5e9)); flex: none; }
+.sjx-card-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.sjx-card-desc { font-size: 13.5px; color: #475569; line-height: 1.5; flex: 1; }
+.sjx-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.sjx-tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; color: #475569; }
+.sjx-card.featured .sjx-tag { background: #d1fae5; color: #065f46; }
+.sjx-section-title { margin: 34px 0 14px; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--sjx-muted); }
+
+/* ───────── Error boundary ───────── */
+.sjx-error { max-width: 760px; margin: 8vh auto; padding: 26px; background: #fff; border: 1px solid #fecaca; border-radius: 16px; box-shadow: 0 20px 50px rgba(185, 28, 28, .12); font-family: "Segoe UI", system-ui, sans-serif; }
+.sjx-error h2 { margin: 0 0 6px; color: #b91c1c; font-size: 20px; }
+.sjx-error pre { background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 12px; overflow: auto; max-height: 260px; font-size: 12px; }
+.sjx-error-actions { display: flex; gap: 8px; margin-top: 14px; }
+.sjx-error-actions button { padding: 8px 16px; border-radius: 10px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; font-weight: 600; }
+.sjx-error-actions button.primary { background: #4f46e5; color: #fff; border-color: #4f46e5; }

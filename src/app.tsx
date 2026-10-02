@@ -5,6 +5,7 @@ import { createSignal, ErrorBoundary, Suspense } from "solid-js";
 import { SJXProvider } from "./shared/context/SJXContext";
 import { APP_DEV_BASEURL } from "./shared/constants/app.constant";
 import SJXRootContainer from "./app-root";
+import "./app-root.css";
 
 export default function App() {
   const [sigNavigateCounter, setSigNavigateCounter] = createSignal(0);
@@ -31,16 +32,15 @@ export default function App() {
   return (
     <ErrorBoundary
       fallback={(error, reset) => (
-        <>
-        <div>
-          Error | Uncaught Client Exception
+        <div class="sjx-error" role="alert">
+          <h2>Terjadi kesalahan pada aplikasi</h2>
+          <p style={{ color: "#475569", margin: "0 0 12px" }}>Uncaught client exception — {error.message}</p>
+          <pre>{error.stack}</pre>
+          <div class="sjx-error-actions">
+            <button class="primary" onClick={reset}>Coba lagi</button>
+            <button onClick={() => window.location.reload()}>Muat ulang</button>
+          </div>
         </div>
-        <div>
-          <p>{error.message} {error.stack}</p>
-          <button onClick={reset}>Retry</button>
-          <button onClick={() => window.location.reload()}>Reload</button>
-        </div>
-        </>
       )}
     >
       <Router
@@ -49,7 +49,7 @@ export default function App() {
         root={props => (
           <SJXProvider count={1}>
             <MetaProvider>
-              <Title>SolidStart - with Vitest</Title>
+              <Title>SolidStart — Experimental</Title>
               <SJXRootContainer
                 sigNavigateUrl={sigNavigateUrl}
                 sigNavigateCounter={sigNavigateCounter}
