@@ -1,0 +1,1 @@
+import{e as l,T as d,s as u,y as p,a as y,u as k}from"./web-8ma4Cn-_.js";function C(e,a={}){const[n,o]=l();return!a.lazy&&m(e,o),c=>{let t,r;const[,s]=d(c,["fallback"]);if(a.lazy&&m(e,o),(t=n())&&!u.context)return t(s);const[f,i]=l(!u.context);return p(()=>i(!0)),y(()=>(t=n(),r=f(),k(()=>t&&r?t(s):c.fallback)))}}function m(e,a){e().then(n=>a(()=>n.default))}export{C as c};

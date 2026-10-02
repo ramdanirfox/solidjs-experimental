@@ -117,16 +117,86 @@ export function reorderChildren(xml: string, rootLocal: string, order: string[])
 export interface RepairReport {
   reordered: { part: string; moved: string[] }[];
   removed: string[];
+  /** Perbaikan namespace/id pada part drawing & chart. */
+  fixedXml: { part: string; detail: string }[];
   changed: boolean;
 }
 
+/**
+ * Library menulis ulang elemen "mentah" (shape/textbox pada drawing) dengan mengganti nama prefix namespace menjadi ns0, ns1, …
+ * tetapi atribut `mc:Ignorable="a14"` tidak ikut diganti → prefix yang dirujuk tidak terdefinisi → Excel menghapus seluruh part
+ * drawing ("Removed Part: /xl/drawings/drawingN.xml (Drawing shape)"), termasuk tombol makro di dalamnya.
+ */
+const KNOWN_PREFIX: Record<string, string> = {
+  "http://schemas.microsoft.com/office/drawing/2010/main": "a14",
+  "http://schemas.microsoft.com/office/drawing/2012/main": "a15",
+  "http://schemas.microsoft.com/office/drawing/2014/main": "a16",
+  "http://schemas.microsoft.com/office/drawing/2007/8/2/chart": "c14",
+  "http://schemas.microsoft.com/office/drawing/2012/chart": "c15",
+  "http://schemas.microsoft.com/office/drawing/2014/chart": "c16",
+  "http://schemas.microsoft.com/office/drawing/2015/06/chart": "c16r2",
+  "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main": "x14",
+  "http://schemas.microsoft.com/office/spreadsheetml/2010/11/main": "x15",
+  "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac": "x14ac",
+  "http://schemas.microsoft.com/office/spreadsheetml/2014/revision": "xr",
+  "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2": "xr2",
+  "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3": "xr3",
+  "http://schemas.microsoft.com/office/thememl/2012/main": "thm15",
+};
+
+export function normalizeNamespaces(xml: string): { xml: string; detail: string[] } | null {
+  if (!/xmlns:ns\d+="/.test(xml) && !/mc:Ignorable="/.test(xml)) return null;
+  const detail: string[] = [];
+  let out = xml;
+  const rename = new Map<string, string>();
+  for (const m of xml.matchAll(/xmlns:(ns\d+)="([^"]+)"/g)) {
+    const known = KNOWN_PREFIX[m[2]!];
+    if (!known || rename.has(m[1]!)) continue;
+    // jangan menimpa prefix yang sudah dipakai untuk URI lain
+    const clash = [...xml.matchAll(new RegExp('xmlns:' + known + '="([^"]+)"', "g"))].some(c => c[1] !== m[2]);
+    if (!clash) rename.set(m[1]!, known);
+  }
+  for (const [ns, known] of rename) {
+    out = out.replace(new RegExp("xmlns:" + ns + "=", "g"), "xmlns:" + known + "=");
+    out = out.replace(new RegExp("(</?|\\s)" + ns + ":", "g"), "$1" + known + ":");
+    detail.push(ns + "→" + known);
+  }
+  const before = out;
+  out = out.replace(/\s?mc:Ignorable="([^"]*)"/g, (all, list: string) => {
+    const toks = list.split(/\s+/).filter(Boolean);
+    const kept = toks.filter(t => before.includes("xmlns:" + t + "="));
+    if (kept.length === toks.length) return all;
+    detail.push("Ignorable tanpa deklarasi: " + toks.filter(t => !kept.includes(t)).join(","));
+    return kept.length ? ' mc:Ignorable="' + kept.join(" ") + '"' : "";
+  });
+  return out === xml ? null : { xml: out, detail };
+}
+
+/** Pastikan id shape unik dalam satu drawing (Excel tidak menyukai duplikat). */
+export function dedupeShapeIds(xml: string): { xml: string; changed: number } | null {
+  const re = /(<xdr:cNvPr\s[^>]*?\bid=")(\d+)(")/g;
+  const ids = [...xml.matchAll(re)].map(m => Number(m[2]));
+  if (new Set(ids).size === ids.length) return null;
+  let next = Math.max(...ids) + 1;
+  const seen = new Set<number>();
+  let changed = 0;
+  const out = xml.replace(re, (_all, a: string, id: string, c: string) => {
+    const n = Number(id);
+    if (seen.has(n)) { changed++; const v = next++; seen.add(v); return a + v + c; }
+    seen.add(n);
+    return _all;
+  });
+  return { xml: out, changed };
+}
+
 const WS_RE = /^xl\/worksheets\/[^/]+\.xml$/;
+const DRAWING_RE = /^xl\/(drawings|charts)\/[^/]+\.xml$/;
 const dec = new TextDecoder("utf-8");
 const enc = new TextEncoder();
 
 /** Bangun ulang ZIP hanya bila ada perbaikan yang diperlukan. */
 export async function repairPackage(bytes: Uint8Array): Promise<{ bytes: Uint8Array; report: RepairReport }> {
-  const report: RepairReport = { reordered: [], removed: [], changed: false };
+  const report: RepairReport = { reordered: [], removed: [], fixedXml: [], changed: false };
   const zip = await openZip(fromArrayBuffer(bytes));
   try {
     const names = zip.list();
@@ -137,6 +207,16 @@ export async function repairPackage(bytes: Uint8Array): Promise<{ bytes: Uint8Ar
       if (WS_RE.test(n)) {
         const fixed = reorderChildren(dec.decode(zip.read(n)), "worksheet", WORKSHEET_ORDER);
         if (fixed) { out.set(n, enc.encode(fixed.xml)); report.reordered.push({ part: n, moved: fixed.moved }); }
+      } else if (DRAWING_RE.test(n)) {
+        let text = dec.decode(zip.read(n));
+        const notes: string[] = [];
+        const ns = normalizeNamespaces(text);
+        if (ns) { text = ns.xml; notes.push(...ns.detail); }
+        if (n.startsWith("xl/drawings/")) {
+          const ids = dedupeShapeIds(text);
+          if (ids) { text = ids.xml; notes.push(ids.changed + " id shape duplikat diberi nomor baru"); }
+        }
+        if (notes.length) { out.set(n, enc.encode(text)); report.fixedXml.push({ part: n, detail: notes.join("; ") }); }
       } else if (n === "xl/workbook.xml") {
         const fixed = reorderChildren(dec.decode(zip.read(n)), "workbook", WORKBOOK_ORDER);
         if (fixed) { out.set(n, enc.encode(fixed.xml)); report.reordered.push({ part: n, moved: fixed.moved }); }

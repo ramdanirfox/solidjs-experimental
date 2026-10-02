@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { createSampleWorkbook } from "./xlsx-sample";
 import { XlsxBook } from "./xlsx-model";
-import { reorderChildren, WORKSHEET_ORDER } from "./xlsx-repair";
+import { reorderChildren, WORKSHEET_ORDER, normalizeNamespaces, dedupeShapeIds } from "./xlsx-repair";
 import { analyzeFormula, describeCellType } from "./xlsx-formula-check";
 import { extractRefs } from "./xlsx-formula";
 
@@ -67,3 +67,30 @@ describe("pemeriksa formula & tipe data", () => {
     expect(r[0]).toMatchObject({ r1: 1, c1: 1, r2: 3, c2: 2 });
   });
 });
+
+describe("repair drawing (shape bermakro)", () => {
+  // meniru keluaran library: prefix a14 diganti ns0, tetapi mc:Ignorable tetap "a14"
+  const broken = '<xdr:wsDr xmlns:xdr="x"><xdr:twoCellAnchor xmlns:ns0="http://schemas.microsoft.com/office/drawing/2010/main" xmlns:ns1="http://schemas.microsoft.com/office/drawing/2014/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+    + '<xdr:sp macro="[0]!Silly"><xdr:nvSpPr><xdr:cNvPr id="5" name="a"><a:extLst><a:ext uri="u"><ns1:creationId id="{1}"/></a:ext></a:extLst></xdr:cNvPr></xdr:nvSpPr>'
+    + '<a:srgbClr val="000000" mc:Ignorable="a14" ns0:legacySpreadsheetColorIndex="64"/></xdr:sp></xdr:twoCellAnchor></xdr:wsDr>';
+  it("mengembalikan prefix a14/a16 sehingga mc:Ignorable valid", () => {
+    const r = normalizeNamespaces(broken)!;
+    expect(r.xml).toContain('xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"');
+    expect(r.xml).toContain('a14:legacySpreadsheetColorIndex="64"');
+    expect(r.xml).toContain("<a16:creationId");
+    expect(r.xml).not.toMatch(/ns\d:/);
+    expect(r.xml).toContain('macro="[0]!Silly"'); // referensi makro tidak berubah
+  });
+  it("membuang token Ignorable yang prefix-nya memang tidak ada", () => {
+    const r = normalizeNamespaces('<a xmlns:mc="m"><b mc:Ignorable="zz"/></a>')!;
+    expect(r.xml).not.toContain("Ignorable");
+  });
+  it("XML yang sudah benar tidak disentuh; id shape duplikat diberi nomor baru", () => {
+    expect(normalizeNamespaces('<a xmlns:a14="u"><b mc:Ignorable="a14"/></a>')).toBeNull();
+    const d = dedupeShapeIds('<x><xdr:cNvPr id="2" name="a"/><xdr:cNvPr id="2" name="b"/><xdr:cNvPr id="7" name="c"/></x>')!;
+    expect(d.changed).toBe(1);
+    expect(d.xml).toContain('id="8" name="b"');
+    expect(dedupeShapeIds('<x><xdr:cNvPr id="2" name="a"/></x>')).toBeNull();
+  });
+});
+

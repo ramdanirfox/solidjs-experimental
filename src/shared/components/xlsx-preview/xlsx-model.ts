@@ -749,6 +749,7 @@ export class XlsxBook {
       const parts = [
         ...fixed.report.reordered.map(r => `${r.part.replace(/^xl\//, "")}: ${r.moved.join(", ")}`),
         ...fixed.report.removed.map(r => `${r} dibuang (dibangun ulang Excel)`),
+        ...fixed.report.fixedXml.map(r => `${r.part.replace(/^xl\//, "")}: ${r.detail}`),
       ];
       this.log(logEntry("info", "Simpan", `Paket disesuaikan agar dapat dibuka Excel tanpa recover (${parts.length} perbaikan)`, parts.join(String.fromCharCode(10))));
     }
