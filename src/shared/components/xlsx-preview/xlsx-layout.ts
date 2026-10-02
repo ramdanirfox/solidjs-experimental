@@ -198,3 +198,21 @@ export function measureTextPx(text: string, font: string): number {
   measureCtx.font = font;
   return measureCtx.measureText(text).width;
 }
+
+/** Kebalikan anchorRect: konversi rect (koordinat sheet ter-zoom) menjadi anchor OOXML, mempertahankan jenis anchor lama. */
+export function rectToAnchor(l: Layout, rect: PxRect, old: any): any {
+  const z = l.zoom;
+  const x = Math.max(0, rect.x), y = Math.max(0, rect.y);
+  const w = Math.max(4, rect.w), h = Math.max(4, rect.h);
+  const marker = (px: number, py: number) => {
+    const col = locate(l.colStart, px, l.maxCol), row = locate(l.rowStart, py, l.maxRow);
+    return {
+      col: col - 1, colOff: Math.max(0, Math.round(((px - l.colStart[col]!) / z) * EMU_PER_PX)),
+      row: row - 1, rowOff: Math.max(0, Math.round(((py - l.rowStart[row]!) / z) * EMU_PER_PX)),
+    };
+  };
+  const ext = { cx: Math.round((w / z) * EMU_PER_PX), cy: Math.round((h / z) * EMU_PER_PX) };
+  if (old?.kind === "absolute") return { kind: "absolute", pos: { x: Math.round((x / z) * EMU_PER_PX), y: Math.round((y / z) * EMU_PER_PX) }, ext };
+  if (old?.kind === "twoCell") return { ...old, from: marker(x, y), to: marker(x + w, y + h) };
+  return { kind: "oneCell", from: marker(x, y), ext };
+}

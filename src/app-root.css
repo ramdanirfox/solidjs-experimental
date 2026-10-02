@@ -156,6 +156,10 @@
 .sjx-page-sub { color: var(--sjx-muted); font-size: 14px; margin-top: 2px; }
 .sjx-page-sub code { background: #eef2ff; color: #3730a3; padding: 1px 6px; border-radius: 6px; font-size: 12.5px; }
 
+.sjx-switch { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; background: #fff; border: 1px solid var(--sjx-border); border-radius: 999px; font-size: 13px; cursor: pointer; user-select: none; }
+.sjx-switch code { background: #eef2ff; color: #3730a3; padding: 0 5px; border-radius: 5px; }
+.sjx-switch input { accent-color: #4f46e5; }
+
 /* ───────── Beranda ───────── */
 .sjx-home { width: 100%; max-width: 1180px; margin: 0 auto; padding: clamp(18px, 4vw, 48px) clamp(14px, 3vw, 28px) 60px; text-align: left; }
 .sjx-home .sjx-hero { padding: clamp(10px, 3vw, 30px) 0 clamp(18px, 3vw, 34px); }

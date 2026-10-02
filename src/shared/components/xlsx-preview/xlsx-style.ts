@@ -81,7 +81,7 @@ function hsl2rgb(h: number, s: number, l: number): [number, number, number] {
 
 /** Terapkan tint OOXML (-1..1) pada luminansi HSL. */
 export function applyTint(hex: string, tint: number): string {
-  if (!tint) return hex.startsWith("#") ? hex : "#" + hex;
+  if (!tint) return (hex.startsWith("#") ? hex : "#" + hex).toLowerCase();
   const [r, g, b] = hex2rgb(hex);
   const [h, s, l] = rgb2hsl(r, g, b);
   const nl = tint < 0 ? l * (1 + tint) : l * (1 - tint) + tint;

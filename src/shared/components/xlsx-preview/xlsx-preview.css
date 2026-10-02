@@ -247,3 +247,38 @@
 .xl-spin { width: 28px; height: 28px; border: 3px solid #cfe5d8; border-top-color: var(--xl-accent); border-radius: 50%; animation: xl-rot .8s linear infinite; margin: 0 auto 10px; }
 @keyframes xl-rot { to { transform: rotate(360deg); } }
 .xl-kbd { font: 11px ui-monospace, Consolas, monospace; background: #fff; border: 1px solid var(--xl-border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+
+/* editor style */
+.xl-fmtbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 10px; background: #fbfcfe; border-bottom: 1px solid var(--xl-border); }
+.xl-fmtbar .fb-font { width: 150px; height: 28px; }
+.xl-fmtbar .fb-size { width: 64px; height: 28px; padding: 0 4px; }
+.xl-fmtbar .fb-num { width: 170px; height: 28px; padding: 0 6px; }
+.xl-fmtbar .fb-code { width: 160px; height: 28px; }
+.xl-fmtbar .fb-sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--xl-border); }
+.xl-fmtbar .fb { min-width: 28px; height: 28px; padding: 0 7px; border: 1px solid transparent; border-radius: 6px; background: transparent; cursor: pointer; display: inline-grid; place-items: center; position: relative; }
+.xl-fmtbar .fb:hover:not(:disabled) { background: var(--xl-head); }
+.xl-fmtbar .fb:disabled { opacity: .4; cursor: default; }
+.xl-fmtbar .fb.on { background: var(--xl-accent-soft); border-color: #b7d9c7; color: var(--xl-accent-strong); }
+.xl-fmtbar .fb-color input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.xl-fmtbar .fb-color .fill { display: inline-block; min-width: 16px; text-align: center; border: 1px solid #cbd5e1; border-radius: 3px; line-height: 16px; }
+
+/* gambar mengambang: interaktif */
+.xl-float.editable { pointer-events: auto; cursor: move; }
+.xl-float.selected { outline: 2px solid #2563eb; outline-offset: 0; overflow: visible; z-index: 10; }
+.xl-float.selected img { box-shadow: 0 6px 18px rgba(37, 99, 235, .35); }
+.xl-img-h { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px; background: #fff; border: 2px solid #2563eb; border-radius: 3px; cursor: nwse-resize; z-index: 11; }
+
+/* layar penuh & tata letak */
+.xl-root.xl-max { position: fixed; inset: 0; z-index: 9999; height: 100vh !important; border-radius: 0; border: 0; }
+.xl-root:fullscreen { height: 100% !important; border-radius: 0; border: 0; }
+.xl-mini { position: absolute; z-index: 30; top: 8px; right: 26px; display: flex; gap: 4px; padding: 3px; background: rgba(255,255,255,.92); border: 1px solid var(--xl-border); border-radius: 9px; box-shadow: 0 6px 18px rgba(16,24,40,.15); }
+.xl-mini button { border: 0; background: transparent; padding: 4px 9px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+.xl-mini button:hover { background: var(--xl-head); }
+.xl-type { padding: 1px 8px; border-radius: 999px; background: rgba(255,255,255,.16); }
+.xl-type.warn { background: #fbbf24; color: #422006; }
+.xl-ref { position: absolute; border: 2px dashed; pointer-events: none; z-index: 4; }
+.xl-issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.xl-issues li { padding: 9px 12px; border-left: 4px solid #d97706; background: #fffbeb; border-radius: 0 8px 8px 0; font-size: 13px; }
+.xl-issues li.err { border-color: var(--xl-err); background: #fef2f2; }
+.xl-issues li .hint { margin-top: 4px; color: #166534; }
+.xl-issues li.err .hint { color: #7f1d1d; }

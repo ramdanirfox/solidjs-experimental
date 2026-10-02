@@ -5,18 +5,23 @@
  */
 import { loadWorkbook, workbookToBytes, fromArrayBuffer } from "@office-kit/xlsx/io";
 import { setFullCalcOnLoad, type Workbook, type SheetRef } from "@office-kit/xlsx/workbook";
+import { addImageAt, loadImage } from "@office-kit/xlsx/drawing";
 import {
   ensureCell, getFreezePanes, setAutoFilter, setFreezePanes, setRowDimension, getCellExtent,
-  setColumnWidth, setRowHeight, countCellsByKind,
+  setColumnWidth, setRowHeight, countCellsByKind, mergeCells, unmergeCells,
   type Worksheet,
 } from "@office-kit/xlsx/worksheet";
 import { setCellValue, makeFormula, type Cell, type CellValue } from "@office-kit/xlsx/cell";
-import { getCellDisplayText, getCellNumberFormat, setCellNumberFormat } from "@office-kit/xlsx/styles";
+import {
+  getCellAlignment, getCellBorder, getCellDisplayText, getCellNumberFormat, setBold, setCellAlignment, setCellBackgroundColor, setCellBorder, setCellNumberFormat,
+  setFontColor, setFontName, setFontSize, setItalic, setStrikethrough, setUnderline, clearCellBackground, clearCellStyle,
+} from "@office-kit/xlsx/styles";
 import { OpenXmlError, OpenXmlUnsupportedFormatError, rangeBoundaries, columnIndexFromLetter, tupleToCoordinate } from "@office-kit/xlsx/utils";
 import { Evaluator, isErr, toCellValue, type Scalar } from "./xlsx-formula";
 import { StyleResolver, type ResolvedStyle } from "./xlsx-style";
 import { CfEngine } from "./xlsx-cf";
 import { anchorCell } from "./xlsx-layout";
+import { repairPackage } from "./xlsx-repair";
 
 // ───────────────────────── log ─────────────────────────
 export type LogLevel = "ok" | "info" | "warn" | "error";
@@ -29,11 +34,34 @@ export function logEntry(level: LogLevel, area: string, message: string, detail?
 
 // ───────────────────────── tipe ─────────────────────────
 export interface CellSnap { value: CellValue; styleId: number }
-export interface EditRecord { sheet: string; row: number; col: number; before: CellSnap | null; after: CellSnap | null }
+export interface EditRecord {
+  sheet: string; row: number; col: number; before: CellSnap | null; after: CellSnap | null;
+  /** Operasi non-sel (merge, gambar): dijalankan saat undo/redo menggantikan snapshot sel. */
+  undo?: () => void;
+  redo?: () => void;
+}
 export interface Sel { r1: number; c1: number; r2: number; c2: number }
+
+export interface StylePatch {
+  clear?: boolean;
+  bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean;
+  fontName?: string; fontSize?: number;
+  /** "#rrggbb"; null = hitam/otomatis */
+  fontColor?: string | null;
+  /** "#rrggbb"; null = tanpa isi */
+  fill?: string | null;
+  h?: "general" | "left" | "center" | "right" | "justify" | "fill" | "centerContinuous" | "distributed";
+  v?: "top" | "center" | "bottom" | "justify" | "distributed";
+  wrap?: boolean;
+  indentDelta?: number;
+  numFmt?: string;
+  border?: { kind: "all" | "outer" | "none" | "top" | "bottom" | "left" | "right"; style?: string; color?: string };
+}
 
 export interface DrawingView {
   key: string;
+  /** Indeks item pada ws.drawing.items. */
+  index: number;
   kind: "picture" | "chart" | "unsupported";
   anchor: any;
   name?: string;
@@ -97,12 +125,15 @@ export class XlsxBook {
   readonly styles: StyleResolver;
   readonly cf: CfEngine;
   dirty = false;
+  /** Bytes berkas asli persis seperti dimuat (untuk "Unduh file sumber"). */
+  sourceBytes?: Uint8Array;
   log: (e: LogEntry) => void = () => {};
 
   private textCache = new Map<Worksheet, Map<number, string>>();
   private filters = new Map<Worksheet, FilterState | null>();
   private drawings = new WeakMap<Worksheet, DrawingView[]>();
   private urls: string[] = [];
+  private imageUrls = new WeakMap<Uint8Array, string>();
   private undoStack: EditRecord[][] = [];
   private redoStack: EditRecord[][] = [];
 
@@ -145,6 +176,7 @@ export class XlsxBook {
     if (!m) { m = new Map(); this.textCache.set(ws, m); }
     const hit = m.get(key);
     if (hit !== undefined) return hit;
+    if (m.size > 150000) m.clear(); // batasi memori pada sheet sangat besar
     let text: string;
     try {
       if (isF && this.ev.live) {
@@ -245,14 +277,119 @@ export class XlsxBook {
     return out;
   }
 
-  commit(records: EditRecord[]) {
+  commit(records: EditRecord[], opts?: { styleOnly?: boolean }) {
     if (!records.length) return;
     this.undoStack.push(records);
-    if (this.undoStack.length > 200) this.undoStack.shift();
+    if (this.undoStack.length > 100) this.undoStack.shift();
     this.redoStack = [];
     this.dirty = true;
-    this.ev.live = true;
+    if (!opts?.styleOnly) this.ev.live = true; // perubahan murni style tidak mengubah nilai formula
     this.invalidate();
+  }
+
+  // ───── styling sel (OOXML styles.xml) ─────
+  /**
+   * Terapkan patch style ke seluruh sel pada rentang. Style baru didaftarkan ke stylesheet (dengan dedup)
+   * dan dihitung sekali per kombinasi (styleId lama, posisi border) sehingga cepat untuk rentang besar.
+   */
+  applyStyle(ws: Worksheet, sel: Sel, patch: StylePatch): EditRecord[] & { capped?: boolean } {
+    const n = normSel(sel);
+    const area = (n.r2 - n.r1 + 1) * (n.c2 - n.c1 + 1);
+    const recs: EditRecord[] & { capped?: boolean } = [];
+    const cache = new Map<string, number>();
+    const wb = this.wb;
+    const borderMode = patch.border?.kind;
+    const compute = (orig: number, flags: number): number => {
+      const key = `${orig}|${borderMode ? flags : 0}`;
+      const hit = cache.get(key);
+      if (hit !== undefined) return hit;
+      const tmp = { row: 1, col: 1, value: null, styleId: orig } as Cell;
+      if (patch.clear) clearCellStyle(wb, tmp);
+      if (patch.bold !== undefined) setBold(wb, tmp, patch.bold);
+      if (patch.italic !== undefined) setItalic(wb, tmp, patch.italic);
+      if (patch.strike !== undefined) setStrikethrough(wb, tmp, patch.strike);
+      if (patch.underline !== undefined) setUnderline(wb, tmp, patch.underline ? "single" : "none");
+      if (patch.fontName) setFontName(wb, tmp, patch.fontName);
+      if (patch.fontSize) setFontSize(wb, tmp, patch.fontSize);
+      if (patch.fontColor) setFontColor(wb, tmp, { rgb: "FF" + patch.fontColor.replace("#", "").toUpperCase() });
+      if (patch.fontColor === null) setFontColor(wb, tmp, { rgb: "FF000000" });
+      if (patch.fill !== undefined) {
+        if (patch.fill === null) clearCellBackground(wb, tmp);
+        else setCellBackgroundColor(wb, tmp, { rgb: "FF" + patch.fill.replace("#", "").toUpperCase() });
+      }
+      if (patch.h !== undefined || patch.v !== undefined || patch.wrap !== undefined || patch.indentDelta) {
+        const a: any = getCellAlignment(wb, tmp);
+        const next: any = { ...a };
+        if (patch.h !== undefined) next.horizontal = patch.h;
+        if (patch.v !== undefined) next.vertical = patch.v;
+        if (patch.wrap !== undefined) next.wrapText = patch.wrap;
+        if (patch.indentDelta) {
+          next.indent = Math.max(0, (a.indent ?? 0) + patch.indentDelta);
+          if (next.indent > 0 && (!next.horizontal || next.horizontal === "general")) next.horizontal = "left";
+        }
+        setCellAlignment(wb, tmp, next);
+      }
+      if (patch.numFmt !== undefined) setCellNumberFormat(wb, tmp, patch.numFmt);
+      if (patch.border) {
+        const b: any = patch.border;
+        const color = { rgb: "FF" + (b.color ?? "#000000").replace("#", "").toUpperCase() };
+        const side = (style: string | undefined) => (style ? { style, color } : { style: "none" });
+        const st = b.style ?? "thin";
+        const cur: any = getCellBorder(wb, tmp);
+        let next: any = { ...cur };
+        const T = flags & 1, B = flags & 2, L = flags & 4, R = flags & 8;
+        switch (b.kind) {
+          case "none": next = { ...cur, left: side(undefined), right: side(undefined), top: side(undefined), bottom: side(undefined) }; break;
+          case "all": next = { ...cur, left: side(st), right: side(st), top: side(st), bottom: side(st) }; break;
+          case "outer": if (T) next.top = side(st); if (B) next.bottom = side(st); if (L) next.left = side(st); if (R) next.right = side(st); break;
+          case "top": if (T) next.top = side(st); break;
+          case "bottom": if (B) next.bottom = side(st); break;
+          case "left": if (L) next.left = side(st); break;
+          case "right": if (R) next.right = side(st); break;
+        }
+        setCellBorder(wb, tmp, next);
+      }
+      cache.set(key, tmp.styleId);
+      return tmp.styleId;
+    };
+    const flagsFor = (r: number, c: number) => (r === n.r1 ? 1 : 0) | (r === n.r2 ? 2 : 0) | (c === n.c1 ? 4 : 0) | (c === n.c2 ? 8 : 0);
+    const touch = (r: number, c: number, cell: Cell | undefined) => {
+      const orig = cell?.styleId ?? 0;
+      const nid = compute(orig, flagsFor(r, c));
+      if (nid === orig) return;
+      const before = this.snap(cell);
+      const target = cell ?? ensureCell(ws, r, c);
+      target.styleId = nid;
+      recs.push({ sheet: ws.title, row: r, col: c, before, after: this.snap(target) });
+    };
+    if (area <= 60000) {
+      for (let r = n.r1; r <= n.r2; r++) for (let c = n.c1; c <= n.c2; c++) touch(r, c, ws.rows.get(r)?.get(c));
+    } else {
+      // rentang sangat besar (mis. seluruh kolom): hanya sel yang sudah ada
+      recs.capped = true;
+      const rows = n.r2 - n.r1 > ws.rows.size ? [...ws.rows.keys()].filter(r => r >= n.r1 && r <= n.r2) : Array.from({ length: n.r2 - n.r1 + 1 }, (_, i) => n.r1 + i);
+      for (const r of rows) {
+        const row = ws.rows.get(r); if (!row) continue;
+        for (const [c, cell] of [...row.entries()]) if (c >= n.c1 && c <= n.c2) touch(r, c, cell);
+      }
+    }
+    return recs;
+  }
+
+  /** Format painter: salin styleId ke seluruh rentang. */
+  applyStyleId(ws: Worksheet, sel: Sel, styleId: number): EditRecord[] {
+    const n = normSel(sel);
+    const recs: EditRecord[] = [];
+    if ((n.r2 - n.r1 + 1) * (n.c2 - n.c1 + 1) > 60000) return recs;
+    for (let r = n.r1; r <= n.r2; r++) for (let c = n.c1; c <= n.c2; c++) {
+      const cell = ws.rows.get(r)?.get(c);
+      if ((cell?.styleId ?? 0) === styleId) continue;
+      const before = this.snap(cell);
+      const t = cell ?? ensureCell(ws, r, c);
+      t.styleId = styleId;
+      recs.push({ sheet: ws.title, row: r, col: c, before, after: this.snap(t) });
+    }
+    return recs;
   }
 
   get canUndo() { return this.undoStack.length > 0; }
@@ -265,6 +402,8 @@ export class XlsxBook {
     const recs = from.pop();
     if (!recs) return undefined;
     for (const rec of [...recs].reverse()) {
+      const custom = side === "before" ? rec.undo : rec.redo;
+      if (custom) { custom(); continue; }
       const ws = this.findSheet(rec.sheet);
       if (ws) this.writeSnap(ws, rec.row, rec.col, rec[side]);
     }
@@ -295,14 +434,17 @@ export class XlsxBook {
     (ws.drawing?.items ?? []).forEach((it: any, i: number) => {
       const key = `${ws.title}#${i}`;
       const content = it.content;
-      const base = { key, anchor: it.anchor, anchorCell: anchorCell(it.anchor) };
+      const base = { key, index: i, anchor: it.anchor, anchorCell: anchorCell(it.anchor) };
       if (content.kind === "picture") {
         const p = content.picture;
         const img = p.image;
         const mime = img ? IMG_MIME[img.format] : undefined;
         let url: string | undefined;
         if (img && mime) {
-          try { url = URL.createObjectURL(new Blob([img.bytes as BlobPart], { type: mime })); this.urls.push(url); } catch { /* abaikan */ }
+          url = this.imageUrls.get(img.bytes);
+          if (!url) {
+            try { url = URL.createObjectURL(new Blob([img.bytes as BlobPart], { type: mime })); this.urls.push(url); this.imageUrls.set(img.bytes, url); } catch { /* abaikan */ }
+          }
         }
         d!.push({ ...base, kind: "picture", name: p.name, descr: p.descr, url, format: img?.format, bytes: img?.bytes.length, hidden: !!p.hidden, note: img ? (mime ? undefined : `Format ${img.format.toUpperCase()} tidak dapat dirender browser`) : "Data gambar tidak ditemukan" });
       } else if (content.kind === "chart") {
@@ -352,6 +494,116 @@ export class XlsxBook {
     m = { anchors, covered, list: ws.mergedCells };
     this.mergeMaps.set(ws, m);
     return m;
+  }
+
+  invalidateMerges() { this.mergeMaps = new WeakMap(); this.invalidate(); }
+  invalidateDrawings(ws: Worksheet) { this.drawings.delete(ws); }
+
+  mergeAt(ws: Worksheet, r: number, c: number): { minRow: number; minCol: number; maxRow: number; maxCol: number } | undefined {
+    if (!ws.mergedCells?.length) return undefined;
+    const m = this.mergeIndex(ws);
+    const k = r * 16385 + c;
+    return m.covered.get(k) ?? m.anchors.get(k);
+  }
+
+  /** Perluas seleksi agar selalu mencakup seluruh merge yang beririsan (perilaku Excel). Orientasi anchor/focus dipertahankan. */
+  expandSel(ws: Worksheet, sel: Sel): Sel {
+    const list = ws.mergedCells;
+    if (!list?.length) return sel;
+    let n = normSel(sel);
+    for (let guard = 0, changed = true; changed && guard < 50; guard++) {
+      changed = false;
+      for (const g of list) {
+        if (g.maxRow < n.r1 || g.minRow > n.r2 || g.maxCol < n.c1 || g.minCol > n.c2) continue;
+        if (g.minRow < n.r1 || g.maxRow > n.r2 || g.minCol < n.c1 || g.maxCol > n.c2) {
+          n = { r1: Math.min(n.r1, g.minRow), c1: Math.min(n.c1, g.minCol), r2: Math.max(n.r2, g.maxRow), c2: Math.max(n.c2, g.maxCol) };
+          changed = true;
+        }
+      }
+    }
+    const fr = sel.r1 <= sel.r2, fc = sel.c1 <= sel.c2;
+    return { r1: fr ? n.r1 : n.r2, r2: fr ? n.r2 : n.r1, c1: fc ? n.c1 : n.c2, c2: fc ? n.c2 : n.c1 };
+  }
+
+  private rangeStr(g: { minRow: number; minCol: number; maxRow: number; maxCol: number }) {
+    return `${addr(g.minRow, g.minCol)}:${addr(g.maxRow, g.maxCol)}`;
+  }
+
+  /** Gabungkan sel pada seleksi. Nilai selain sel kiri-atas dibuang (seperti Excel). */
+  mergeSelection(ws: Worksheet, sel: Sel): { records: EditRecord[]; lost: number } | { error: string } {
+    const n = normSel(this.expandSel(ws, sel));
+    if (n.r1 === n.r2 && n.c1 === n.c2) return { error: "Pilih lebih dari satu sel untuk digabung" };
+    const inner = (ws.mergedCells ?? []).filter(g => g.minRow >= n.r1 && g.maxRow <= n.r2 && g.minCol >= n.c1 && g.maxCol <= n.c2).map(g => ({ ...g }));
+    if (inner.length === 1 && inner[0]!.minRow === n.r1 && inner[0]!.maxRow === n.r2 && inner[0]!.minCol === n.c1 && inner[0]!.maxCol === n.c2) return { error: "Rentang ini sudah digabung" };
+    const records: EditRecord[] = [];
+    let lost = 0;
+    for (const [r, row] of ws.rows) {
+      if (r < n.r1 || r > n.r2) continue;
+      for (const [c, cell] of [...row.entries()]) {
+        if (c < n.c1 || c > n.c2 || (r === n.r1 && c === n.c1) || cell.value === null) continue;
+        records.push(this.setValueRaw(ws, r, c, null)); lost++;
+      }
+    }
+    const target = this.rangeStr({ minRow: n.r1, minCol: n.c1, maxRow: n.r2, maxCol: n.c2 });
+    const apply = () => { for (const g of inner) unmergeCells(ws, this.rangeStr(g)); mergeCells(ws, target); this.invalidateMerges(); };
+    const revert = () => { unmergeCells(ws, target); for (const g of inner) mergeCells(ws, this.rangeStr(g)); this.invalidateMerges(); };
+    apply();
+    records.push({ sheet: ws.title, row: n.r1, col: n.c1, before: null, after: null, undo: revert, redo: apply });
+    return { records, lost };
+  }
+
+  unmergeSelection(ws: Worksheet, sel: Sel): { records: EditRecord[]; count: number } | { error: string } {
+    const n = normSel(sel);
+    const hit = (ws.mergedCells ?? []).filter(g => !(g.maxRow < n.r1 || g.minRow > n.r2 || g.maxCol < n.c1 || g.minCol > n.c2)).map(g => ({ ...g }));
+    if (!hit.length) return { error: "Tidak ada sel gabungan pada seleksi" };
+    const apply = () => { for (const g of hit) unmergeCells(ws, this.rangeStr(g)); this.invalidateMerges(); };
+    const revert = () => { for (const g of hit) mergeCells(ws, this.rangeStr(g)); this.invalidateMerges(); };
+    apply();
+    return { records: [{ sheet: ws.title, row: n.r1, col: n.c1, before: null, after: null, undo: revert, redo: apply }], count: hit.length };
+  }
+
+  // ───── gambar mengambang: pindah / ubah ukuran / hapus / sisip ─────
+  /** Hanya gambar (picture) yang dapat diedit; shape & grafik dipertahankan apa adanya. */
+  moveDrawing(ws: Worksheet, index: number, anchor: any): EditRecord | undefined {
+    const item: any = ws.drawing?.items[index];
+    if (!item || item.content.kind !== "picture") return undefined;
+    const old = item.anchor;
+    const oldRaw = item.raw;
+    const set = (a: any) => { item.anchor = a; item.raw = undefined; this.invalidateDrawings(ws); };
+    set(anchor);
+    return { sheet: ws.title, row: 0, col: 0, before: null, after: null, undo: () => { item.anchor = old; item.raw = oldRaw; this.invalidateDrawings(ws); }, redo: () => set(anchor) };
+  }
+
+  deleteDrawing(ws: Worksheet, index: number): EditRecord | undefined {
+    const items: any[] | undefined = ws.drawing?.items;
+    const item = items?.[index];
+    if (!items || !item || item.content.kind !== "picture") return undefined;
+    items.splice(index, 1);
+    this.invalidateDrawings(ws);
+    return {
+      sheet: ws.title, row: 0, col: 0, before: null, after: null,
+      undo: () => { items.splice(Math.min(index, items.length), 0, item); this.invalidateDrawings(ws); },
+      redo: () => { const i = items.indexOf(item); if (i >= 0) items.splice(i, 1); this.invalidateDrawings(ws); },
+    };
+  }
+
+  insertImage(ws: Worksheet, bytes: Uint8Array, row: number, col: number): { record: EditRecord; index: number; width: number; height: number } {
+    const img = loadImage(bytes);
+    let w = img.width || 240, h = img.height || 160;
+    const max = 480;
+    if (w > max) { h = (h * max) / w; w = max; }
+    const item: any = addImageAt(ws, addr(row, col), img, { widthPx: Math.max(8, Math.round(w)), heightPx: Math.max(8, Math.round(h)) });
+    const items: any[] = ws.drawing!.items;
+    const index = items.indexOf(item);
+    this.invalidateDrawings(ws);
+    return {
+      index, width: Math.round(w), height: Math.round(h),
+      record: {
+        sheet: ws.title, row, col, before: null, after: null,
+        undo: () => { const i = items.indexOf(item); if (i >= 0) items.splice(i, 1); this.invalidateDrawings(ws); },
+        redo: () => { if (!items.includes(item)) items.splice(Math.min(index, items.length), 0, item); this.invalidateDrawings(ws); },
+      },
+    };
   }
 
   // ───── autofilter ─────
@@ -490,7 +742,17 @@ export class XlsxBook {
       this.refreshFormulaCaches();
       try { setFullCalcOnLoad(this.wb, true); } catch { /* abaikan */ }
     }
-    return workbookToBytes(this.wb);
+    const raw = await workbookToBytes(this.wb);
+    // Library menulis beberapa elemen di luar urutan skema & mempertahankan calcChain usang → Excel meminta "recover".
+    const fixed = await repairPackage(raw);
+    if (fixed.report.changed) {
+      const parts = [
+        ...fixed.report.reordered.map(r => `${r.part.replace(/^xl\//, "")}: ${r.moved.join(", ")}`),
+        ...fixed.report.removed.map(r => `${r} dibuang (dibangun ulang Excel)`),
+      ];
+      this.log(logEntry("info", "Simpan", `Paket disesuaikan agar dapat dibuka Excel tanpa recover (${parts.length} perbaikan)`, parts.join(String.fromCharCode(10))));
+    }
+    return fixed.bytes;
   }
 
   get saveName(): string {
@@ -556,6 +818,27 @@ export class XlsxBook {
 
   // ───── pencarian ─────
   search(opts: SearchOptions): SearchResult {
+    const g = this.searchGen(opts);
+    let r = g.next();
+    while (!r.done) r = g.next();
+    return r.value;
+  }
+
+  /** Pencarian bertahap: berhenti sejenak tiap ±16 ribu sel agar UI tidak membeku pada sheet raksasa. */
+  async searchAsync(opts: SearchOptions, cancelled: () => boolean, progress?: (scanned: number) => void): Promise<SearchResult | undefined> {
+    const g = this.searchGen(opts);
+    let scanned = 0;
+    for (;;) {
+      const r = g.next();
+      if (r.done) return r.value;
+      scanned += 16384;
+      progress?.(scanned);
+      await new Promise(res => setTimeout(res, 0));
+      if (cancelled()) return undefined;
+    }
+  }
+
+  private *searchGen(opts: SearchOptions): Generator<void, SearchResult, void> {
     const started = performance.now();
     const results: SearchHit[] = [];
     const q = opts.query;
@@ -566,6 +849,7 @@ export class XlsxBook {
     const cols = opts.columns ? parseColumnSpec(opts.columns) : undefined;
     const limit = opts.limit ?? 3000;
     let truncated = false;
+    let scanned = 0;
     const perSheet = new Map<string, number>();
     const targets = opts.allSheets ? this.wb.sheets.filter(s => s.kind === "worksheet").map(s => (s as any).sheet as Worksheet) : opts.sheet ? [opts.sheet] : [];
     outer: for (const ws of targets) {
@@ -577,6 +861,7 @@ export class XlsxBook {
           if (cols && !cols.has(c)) continue;
           if (opts.selection && opts.sheet === ws && (c < opts.selection.c1 || c > opts.selection.c2)) continue;
           const cell = row.get(c)!;
+          if ((++scanned & 0x3fff) === 0) yield;
           if (cell.value === null) continue;
           const f: any = cell.value;
           const isF = f && typeof f === "object" && f.kind === "formula";
@@ -638,6 +923,7 @@ export async function loadBook(bytes: ArrayBuffer | Uint8Array, fileName: string
   try {
     const wb = await loadWorkbook(fromArrayBuffer(bytes));
     const book = new XlsxBook(wb, fileName, size);
+    book.sourceBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     entries.push(logEntry("ok", "Load", `Berkas "${fileName}" (${formatBytes(size)}) berhasil dibaca dalam ${(performance.now() - t0).toFixed(0)} ms`));
     entries.push(...buildLoadReport(book));
     return { book, entries };
@@ -711,6 +997,7 @@ export function buildLoadReport(book: XlsxBook): LogEntry[] {
     const ext = getCellExtent(w);
     const kinds = countCellsByKind(w);
     L("ok", `Sheet «${w.title}»`, ext ? `${ext.maxRow} baris × ${ext.maxCol} kolom; ${kinds.formula} formula, ${kinds.string} teks, ${kinds.number} angka, ${kinds.date} tanggal, ${kinds.error} error` : "Sheet kosong");
+    if (ext && ext.maxRow >= 100000) L("info", `Sheet «${w.title}»`, `Sheet besar (${ext.maxRow.toLocaleString()} baris): grid tervirtualisasi — hanya baris yang terlihat yang dirender; scroll dipetakan bila melebihi batas tinggi elemen browser`);
     const freeze = getFreezePanes(w);
     if (freeze) L("ok", `Sheet «${w.title}»`, `Freeze panes pada ${freeze}`);
     const hc = [...w.columnDimensions.values()].filter(d => d.hidden).length;
@@ -847,4 +1134,5 @@ export function sheetInfo(book: XlsxBook, ws: Worksheet): InfoGroup[] {
     },
   ];
 }
-
+
+

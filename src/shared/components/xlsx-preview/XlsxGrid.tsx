@@ -50,12 +50,23 @@ export interface XlsxGridProps {
   onZoomWheel?(delta: number): void;
   onContextMenu?(e: MouseEvent, row: number, col: number): void;
   onLink?(row: number, col: number, link: any): void;
+  /** Mode baca-saja: menonaktifkan edit sel, resize kolom/baris, dan manipulasi gambar. */
+  readonly?: Accessor<boolean>;
+  /** Mode "point": saat mengetik formula, klik/drag sel menyisipkan referensi ke formula. */
+  pointMode?: Accessor<boolean>;
+  onPoint?(phase: "start" | "move" | "end", cell?: { row: number; col: number }): void;
+  /** Rentang yang dirujuk formula yang sedang diedit (disorot berwarna). */
+  refRanges?: Accessor<{ sel: Sel; color: string }[]>;
+  selectedImage?: Accessor<string | undefined>;
+  onSelectImage?(key: string | undefined): void;
+  onImageRect?(d: DrawingView, rect: { x: number; y: number; w: number; h: number }): void;
   ref?(api: GridApi): void;
   initialScroll?: { x: number; y: number };
   onScrollChange?(x: number, y: number): void;
 }
 
 const OVERSCAN = 2;
+const MAX_SCROLL_PX = 8_000_000;
 const FONT_FALLBACK = `"Segoe UI", "Helvetica Neue", Arial, sans-serif`;
 
 export default function XlsxGrid(props: XlsxGridProps) {
@@ -81,7 +92,12 @@ export default function XlsxGrid(props: XlsxGridProps) {
     const originY = l.rowStart[l.fr + 1]!;
     const scrollW = Math.max(0, vw() - HEADER_W - frozenW);
     const scrollH = Math.max(0, vh() - HEADER_H - frozenH);
-    return { frozenW, frozenH, totalW, totalH, originX, originY, scrollW, scrollH };
+    // Sheet sangat tinggi (>~8 juta px, ±400 ribu baris) melampaui batas tinggi elemen browser (Firefox ≈17,8 juta px):
+    // posisi scrollbar dipetakan secara proporsional ke koordinat sheet.
+    const maxSy = Math.max(0, totalH - originY - scrollH);
+    const scaleY = maxSy > MAX_SCROLL_PX ? MAX_SCROLL_PX / maxSy : 1;
+    const sizerH = scaleY < 1 ? vh() + MAX_SCROLL_PX : HEADER_H + totalH;
+    return { frozenW, frozenH, totalW, totalH, originX, originY, scrollW, scrollH, scaleY, sizerH };
   });
 
   // jendela kolom/baris yang terlihat
@@ -112,15 +128,15 @@ export default function XlsxGrid(props: XlsxGridProps) {
 
   const onScroll = () => {
     setSx(scroller.scrollLeft);
-    setSy(scroller.scrollTop);
-    props.onScrollChange?.(scroller.scrollLeft, scroller.scrollTop);
+    setSy(scroller.scrollTop / geo().scaleY);
+    props.onScrollChange?.(scroller.scrollLeft, sy());
   };
 
   onMount(() => {
     const ro = new ResizeObserver(() => { setVw(scroller.clientWidth); setVh(scroller.clientHeight); });
     ro.observe(scroller);
     setVw(scroller.clientWidth); setVh(scroller.clientHeight);
-    if (props.initialScroll) { scroller.scrollLeft = props.initialScroll.x; scroller.scrollTop = props.initialScroll.y; }
+    if (props.initialScroll) { scroller.scrollLeft = props.initialScroll.x; scroller.scrollTop = props.initialScroll.y * geo().scaleY; }
     onScroll();
     props.ref?.({
       scrollTo: (r, c) => ensureVisible(r, c),
@@ -149,8 +165,8 @@ export default function XlsxGrid(props: XlsxGridProps) {
     }
     if (r > l.fr) {
       const top = l.rowStart[r]! - g.originY, bottom = l.rowStart[r + 1]! - g.originY;
-      if (top < sy()) scroller.scrollTop = top;
-      else if (bottom > sy() + g.scrollH) scroller.scrollTop = bottom - g.scrollH;
+      if (top < sy()) scroller.scrollTop = top * g.scaleY;
+      else if (bottom > sy() + g.scrollH) scroller.scrollTop = (bottom - g.scrollH) * g.scaleY;
     }
   }
 
@@ -189,6 +205,18 @@ export default function XlsxGrid(props: XlsxGridProps) {
   function onMouseDown(e: MouseEvent) {
     if (e.button !== 0 && e.button !== 2) return;
     if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
+    if (e.button === 0 && props.pointMode?.()) {
+      const hp = hit(e.clientX, e.clientY);
+      if (hp.zone === "cell") {
+        e.preventDefault(); // pertahankan fokus & caret pada editor formula
+        props.onPoint?.("start", { row: hp.row, col: hp.col });
+        const mv = (ev: MouseEvent) => { const h2 = hit(ev.clientX, ev.clientY); props.onPoint?.("move", { row: h2.row, col: h2.col }); };
+        const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); props.onPoint?.("end"); };
+        window.addEventListener("mousemove", mv);
+        window.addEventListener("mouseup", up);
+        return;
+      }
+    }
     const h = hit(e.clientX, e.clientY);
     const l = layout();
     if (props.editing()) props.onCommitEdit("none");
@@ -219,6 +247,7 @@ export default function XlsxGrid(props: XlsxGridProps) {
   }
 
   function onDblClick(e: MouseEvent) {
+    if (props.readonly?.()) return;
     if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
     const h = hit(e.clientX, e.clientY);
     if (h.zone === "cell") props.onStartEdit(h.row, h.col);
@@ -237,6 +266,7 @@ export default function XlsxGrid(props: XlsxGridProps) {
   // ───── resize kolom/baris ─────
   function startResize(kind: "col" | "row", idx: number, e: MouseEvent) {
     e.preventDefault(); e.stopPropagation();
+    if (props.readonly?.()) return;
     const l = layout();
     const start = kind === "col" ? e.clientX : e.clientY;
     const size0 = kind === "col" ? colW(l, idx) : rowH(l, idx);
@@ -398,6 +428,18 @@ export default function XlsxGrid(props: XlsxGridProps) {
       if (r1 > r2 || c1 > c2) return null;
       return { x: l().colStart[c1]!, y: l().rowStart[r1]!, w: l().colStart[c2 + 1]! - l().colStart[c1]!, h: l().rowStart[r2 + 1]! - l().rowStart[r1]! };
     });
+    const paneRefs = createMemo(() => {
+      const refs = props.refRanges?.() ?? [];
+      const rs = p.rows(), cs = p.cols();
+      if (!refs.length || !rs.length || !cs.length) return [];
+      return refs.flatMap(rf => {
+        const s = normSel(rf.sel);
+        const r1 = Math.max(s.r1, rs[0]!), r2 = Math.min(s.r2, rs[rs.length - 1]!);
+        const c1 = Math.max(s.c1, cs[0]!), c2 = Math.min(s.c2, cs[cs.length - 1]!);
+        if (r1 > r2 || c1 > c2) return [];
+        return [{ x: l().colStart[c1]!, y: l().rowStart[r1]!, w: l().colStart[c2 + 1]! - l().colStart[c1]!, h: l().rowStart[r2 + 1]! - l().rowStart[r1]!, color: rf.color }];
+      });
+    });
     const paneActive = createMemo(() => {
       const a = props.active();
       if (!p.rows().includes(a.row) || !p.cols().includes(a.col)) return null;
@@ -406,6 +448,7 @@ export default function XlsxGrid(props: XlsxGridProps) {
       return { x: l().colStart[a.col]!, y: l().rowStart[a.row]!, w: l().colStart[c2 + 1]! - l().colStart[a.col]!, h: l().rowStart[r2 + 1]! - l().rowStart[a.row]! };
     });
     const pictures = createMemo(() => {
+      props.version();
       const rs = p.rows(), cs = p.cols();
       if (!rs.length && !cs.length) return [] as DrawingView[];
       const rMin = rs[0] ?? 1, rMax = rs[rs.length - 1] ?? 0, cMin = cs[0] ?? 1, cMax = cs[cs.length - 1] ?? 0;
@@ -447,16 +490,50 @@ export default function XlsxGrid(props: XlsxGridProps) {
           <For each={pictures()}>
             {d => {
               const rect = createMemo(() => anchorRect(l(), d.anchor));
+              const [drag, setDrag] = createSignal<{ dx: number; dy: number; dw: number; dh: number } | null>(null);
+              const editable = () => d.kind === "picture" && !props.readonly?.() && !!props.onImageRect;
+              const isSel = () => props.selectedImage?.() === d.key;
+              const start = (mode: "move" | "resize", e: MouseEvent) => {
+                if (!editable() || e.button !== 0) return;
+                e.preventDefault(); e.stopPropagation();
+                if (props.editing()) props.onCommitEdit("none");
+                props.onSelectImage?.(d.key);
+                scroller.focus({ preventScroll: true });
+                const x0 = e.clientX, y0 = e.clientY;
+                let moved = false;
+                const move = (ev: MouseEvent) => {
+                  const dx = ev.clientX - x0, dy = ev.clientY - y0;
+                  if (!moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+                  moved = true;
+                  setDrag(mode === "move" ? { dx, dy, dw: 0, dh: 0 } : { dx: 0, dy: 0, dw: dx, dh: dy });
+                };
+                const up = () => {
+                  window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+                  const dr = drag(); setDrag(null);
+                  if (moved && dr) { const r = rect(); props.onImageRect?.(d, { x: r.x + dr.dx, y: r.y + dr.dy, w: r.w + dr.dw, h: r.h + dr.dh }); }
+                };
+                window.addEventListener("mousemove", move);
+                window.addEventListener("mouseup", up);
+              };
               return (
-                <div class="xl-float" classList={{ chart: d.kind !== "picture", broken: d.kind === "picture" && !d.url }} style={{ left: `${rect().x}px`, top: `${rect().y}px`, width: `${rect().w}px`, height: `${rect().h}px` }} title={d.descr || d.name || ""}>
+                <div
+                  class="xl-float"
+                  classList={{ chart: d.kind !== "picture", broken: d.kind === "picture" && !d.url, editable: editable(), selected: isSel() && editable() }}
+                  style={{ left: `${rect().x + (drag()?.dx ?? 0)}px`, top: `${rect().y + (drag()?.dy ?? 0)}px`, width: `${Math.max(4, rect().w + (drag()?.dw ?? 0))}px`, height: `${Math.max(4, rect().h + (drag()?.dh ?? 0))}px` }}
+                  title={d.descr || d.name || ""}
+                  data-nodrag
+                  onMouseDown={e => start("move", e)}
+                >
                   <Show when={d.kind === "picture" && d.url} fallback={<div class="xl-float-ph"><b>{d.kind === "chart" ? "📊 Grafik" : d.kind === "picture" ? "🖼 Gambar" : d.text ?? "◻ Objek"}</b><Show when={!d.text}><small>{d.note}</small></Show></div>}>
                     <img src={d.url} alt={d.descr || d.name || "gambar"} draggable={false} />
                   </Show>
+                  <Show when={isSel() && editable()}><i class="xl-img-h" title="Ubah ukuran" onMouseDown={e => start("resize", e)} /></Show>
                 </div>
               );
             }}
           </For>
           <Show when={paneSel()}>{s => <div class="xl-sel" style={{ left: `${s().x}px`, top: `${s().y}px`, width: `${s().w}px`, height: `${s().h}px` }} />}</Show>
+          <For each={paneRefs()}>{r => <div class="xl-ref" style={{ left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px`, "border-color": r.color, background: r.color + "22" }} />}</For>
           <Show when={paneActive()}>{s => <div class="xl-active" style={{ left: `${s().x}px`, top: `${s().y}px`, width: `${s().w}px`, height: `${s().h}px` }} />}</Show>
           {/* tombol autofilter */}
           <Show when={props.filter()}>
@@ -552,7 +629,7 @@ export default function XlsxGrid(props: XlsxGridProps) {
       onWheel={onWheel}
       onContextMenu={onCtx}
     >
-      <div class="xl-sizer" style={{ width: `${HEADER_W + g().totalW}px`, height: `${HEADER_H + g().totalH}px` }}>
+      <div class="xl-sizer" style={{ width: `${HEADER_W + g().totalW}px`, height: `${g().sizerH}px` }}>
         <div ref={stage} class="xl-stage" style={{ width: `${vw()}px`, height: `${vh()}px` }} onMouseDown={onMouseDown} onDblClick={onDblClick}>
           {/* pane */}
           <Pane name="tl" rows={frozenRows} cols={frozenCols} ox={() => 0} oy={() => 0} x={() => HEADER_W} y={() => HEADER_H} w={() => g().frozenW} h={() => g().frozenH} scrollX={false} scrollY={false} />

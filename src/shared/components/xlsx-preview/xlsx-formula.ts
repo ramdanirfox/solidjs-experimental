@@ -224,6 +224,28 @@ class Parser {
   }
 }
 
+
+/** Posisi referensi sel/rentang pada teks formula (untuk penyorotan & mode "point"). Teks dalam tanda kutip diabaikan. */
+export function extractRefs(text: string): { start: number; end: number; sheet?: string; r1: number; c1: number; r2: number; c2: number; text: string }[] {
+  const out: ReturnType<typeof extractRefs> = [];
+  const strRanges: [number, number][] = [];
+  for (const m of text.matchAll(/"(?:[^"]|"")*"/g)) strRanges.push([m.index!, m.index! + m[0].length]);
+  const re = /((?:'(?:[^']|'')+'|[\p{L}\p{N}_.]+)!)?(\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?)(?![\p{L}\p{N}_.(])/gu;
+  for (const m of text.matchAll(re)) {
+    const start = m.index!;
+    if (strRanges.some(([a, b]) => start >= a && start < b)) continue;
+    const prev = text[start - 1];
+    if (!m[1] && prev && /[\p{L}\p{N}_.]/u.test(prev)) continue;
+    const parts = m[2]!.split(":");
+    const a = parseCellPart(parts[0]!), b = parts[1] ? parseCellPart(parts[1]) : a;
+    if (!a || !b) continue;
+    const sheetRaw = m[1] ? m[1].slice(0, -1) : undefined;
+    const sheet = sheetRaw ? (sheetRaw.startsWith("'") ? sheetRaw.slice(1, -1).replace(/''/g, "'") : sheetRaw) : undefined;
+    out.push({ start, end: start + m[0].length, sheet, r1: Math.min(a.r, b.r), c1: Math.min(a.c, b.c), r2: Math.max(a.r, b.r), c2: Math.max(a.c, b.c), text: m[0] });
+  }
+  return out;
+}
+
 export function parseFormula(text: string): Node {
   const src = text.startsWith("=") ? text.slice(1) : text;
   return new Parser(tokenize(src)).parse();

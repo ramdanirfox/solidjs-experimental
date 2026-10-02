@@ -12,10 +12,11 @@ import { columnLetterFromIndex, parseSheetRange } from "@office-kit/xlsx/utils";
 import XlsxGrid, { type GridApi } from "./XlsxGrid";
 import {
   XlsxBook, addr, buildLoadReport, formatBytes, loadBook, logEntry, normSel, parseAddress, selAddr, sheetInfo, workbookInfo,
-  type FilterState, type LogEntry, type LogLevel, type SearchHit, type SearchResult, type Sel, type EditRecord,
+  type DrawingView, type FilterState, type StylePatch, type LogEntry, type LogLevel, type SearchHit, type SearchResult, type Sel, type EditRecord,
 } from "./xlsx-model";
-import { buildLayout, colW, measureTextPx, pxToColChars, pxToPt, type Layout } from "./xlsx-layout";
-import { isErr, nodeToString, SUPPORTED_FUNCTIONS, toText, type Node as FNode, type Val } from "./xlsx-formula";
+import { anchorRect, buildLayout, colW, measureTextPx, pxToColChars, pxToPt, rectToAnchor, type Layout, type PxRect } from "./xlsx-layout";
+import { extractRefs, isErr, nodeToString, SUPPORTED_FUNCTIONS, toText, type Node as FNode, type Val } from "./xlsx-formula";
+import { analyzeFormula, describeCellType, type FormulaIssue } from "./xlsx-formula-check";
 import { shiftRefs } from "./xlsx-cf";
 import { createSampleWorkbook } from "./xlsx-sample";
 import { resolveColor } from "./xlsx-style";
@@ -28,11 +29,16 @@ export interface XlsxPreviewProps {
   sample?: boolean;
   height?: string;
   class?: string;
+  /** Mode baca-saja: sembunyikan/nonaktifkan edit sel, style, merge, gambar, undo, dan simpan. Filter, freeze, cari, CSV tetap tersedia. */
+  readonly?: boolean;
 }
 
 const ICONS: Record<string, string> = {
   open: "M6 14l1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2",
-  save: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3",
+  save: "M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z M17 21v-8H7v8 M7 3v5h8",
+  download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3",
+  expand: "M15 3h6v6 M9 21H3v-6 M21 3l-7 7 M3 21l7-7",
+  shrink: "M4 14h6v6 M20 10h-6V4 M14 10l7-7 M3 21l7-7",
   csv: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h2 M8 17h2 M14 13h2 M14 17h2",
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M21 21l-4.3-4.3",
   filter: "M22 3H2l8 9.46V19l4 2v-8.54L22 3z",
@@ -47,6 +53,7 @@ const ICONS: Record<string, string> = {
   sigma: "M18 7V4H6l6 8-6 8h12v-3",
   sample: "M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8-5-3.6-5 3.6 1.9-5.8L4 8.8h6.1z",
   zoomin: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M21 21l-4.3-4.3 M11 8v6 M8 11h6",
+  palette: "M12 22a10 10 0 1 1 10-10c0 3-2 4-4 4h-2a2 2 0 0 0-1 3.7c.6.5.3 2.3-3 2.3z M7.5 10.5h.01 M12 7.5h.01 M16.5 10.5h.01",
 };
 const Ic = (p: { n: string; size?: number }) => (
   <svg width={p.size ?? 16} height={p.size ?? 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={ICONS[p.n]} /></svg>
@@ -104,11 +111,45 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   const [dialog, setDialog] = createSignal<Dialog>(null);
   const [logs, setLogs] = createSignal<LogEntry[]>([]);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
-  const [menu, setMenu] = createSignal<"csv" | "freeze" | "view" | null>(null);
+  const [menu, setMenu] = createSignal<"csv" | "freeze" | "view" | "border" | "image" | null>(null);
   const [ctx, setCtx] = createSignal<{ x: number; y: number; row: number; col: number } | null>(null);
   const [dragOver, setDragOver] = createSignal(false);
   const [nameBox, setNameBox] = createSignal<string | null>(null);
 
+  const ro = () => !!props.readonly;
+  // tata letak: panel yang dapat disembunyikan + layar penuh
+  const [showToolbar, setShowToolbar] = createSignal(true);
+  const [showFbar, setShowFbar] = createSignal(true);
+  const [showTabs, setShowTabs] = createSignal(true);
+  const [showStatus, setShowStatus] = createSignal(true);
+  const [full, setFull] = createSignal(false);
+  const [maxed, setMaxed] = createSignal(false);
+  const focusMode = () => !showToolbar() && !showFbar() && !showTabs() && !showStatus();
+  const [formulaWarn, setFormulaWarn] = createSignal<{ row: number; col: number; text: string; move: "down" | "right" | "none" | "up" | "left"; issues: FormulaIssue[] } | null>(null);
+  const [pointRange, setPointRange] = createSignal<{ start: number; end: number } | null>(null);
+  onMount(() => {
+    const onFs = () => setFull(document.fullscreenElement === rootEl);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && maxed()) setMaxed(false); };
+    document.addEventListener("fullscreenchange", onFs);
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => { document.removeEventListener("fullscreenchange", onFs); window.removeEventListener("keydown", onKey); });
+  });
+  async function toggleFull() {
+    if (document.fullscreenElement === rootEl) { await document.exitFullscreen(); return; }
+    if (maxed()) { setMaxed(false); return; }
+    try { await rootEl.requestFullscreen(); } catch { setMaxed(true); } // fallback: penuhi viewport via CSS
+  }
+  function focusView(on: boolean) { batch(() => { setShowToolbar(!on); setShowFbar(!on); setShowTabs(!on); setShowStatus(!on); }); }
+  function downloadSource() {
+    const b = book(); if (!b?.sourceBytes) return;
+    const ext = b.fileName.split(".").pop()?.toLowerCase() ?? "xlsx";
+    const mime = ext === "xlsm" || ext === "xltm" ? "application/vnd.ms-excel.sheet.macroEnabled.12" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    downloadBlob(b.fileName, new Blob([b.sourceBytes as BlobPart], { type: mime }));
+    pushLog(logEntry("ok", "Unduh", `Berkas sumber diunduh apa adanya: ${b.fileName} (${formatBytes(b.sourceBytes.length)})`));
+    toast(`Berkas sumber diunduh: ${b.fileName}`);
+  }
+  const [selImage, setSelImage] = createSignal<string | undefined>(undefined);
+  createEffect(() => { if (ro()) { setEditing(null); setFmtOpen(false); setSelImage(undefined); } });
   const bump = () => setVer(v => v + 1);
   const bumpLayout = () => batch(() => { setLver(v => v + 1); bump(); });
 
@@ -127,7 +168,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     if (!w) return buildLayout({ columnDimensions: new Map(), rowDimensions: new Map(), views: [], rows: new Map(), mergedCells: [] } as any, { zoom: 1, showHidden: false });
     const f = filterState();
     const b = book();
-    const autoHeightPx = b ? (r: number) => {
+    const maxFontPx = b ? Math.max(11, ...b.wb.styles.fonts.map(f => f.size ?? 11)) * 1.75 : 0;
+    const autoHeightPx = b && maxFontPx > 20.5 ? (r: number) => {
       const row = w.rows.get(r); if (!row) return undefined;
       let max = 0;
       for (const cell of row.values()) { if (cell.styleId === 0) continue; const px = b.styles.get(cell.styleId).sizePt * 1.75; if (px > max) max = px; }
@@ -193,6 +235,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       const wb = await createSampleWorkbook();
       const b = new XlsxBook(wb, "contoh-penjualan.xlsx", 0);
       b.refreshFormulaCaches(); // simpan hasil formula sebagai cache seperti berkas dari Excel
+      b.sourceBytes = await b.toBytes(); // "file sumber" untuk workbook contoh
       attachBook(b, [logEntry("ok", "Sample", "Workbook contoh dibangun dengan @office-kit/xlsx (tidak berasal dari berkas)")]);
       const rep = buildLoadReport(b);
       setLogs(l => [...l, ...rep]);
@@ -234,7 +277,32 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   });
 
   // ───────── seleksi & navigasi ─────────
-  const onSelect = (s: Sel, a: { row: number; col: number }) => { setSel(s); setActive(a); };
+  const onSelect = (s: Sel, a: { row: number; col: number }) => { setSelImage(undefined); setSel(s); setActive(a); };
+
+  // Seleksi selalu "menempel" pada sel gabungan: diperluas ke seluruh merge, sel aktif = sel kiri-atas merge.
+  createEffect(() => {
+    ver();
+    const b = book(), w = ws();
+    if (!b || !w || !w.mergedCells?.length) return;
+    const a = active(), s = sel();
+    const m = b.mergeAt(w, a.row, a.col);
+    if (m && (a.row !== m.minRow || a.col !== m.minCol)) setActive({ row: m.minRow, col: m.minCol });
+    const ns = b.expandSel(w, s);
+    if (ns.r1 !== s.r1 || ns.c1 !== s.c1 || ns.r2 !== s.r2 || ns.c2 !== s.c2) setSel(ns);
+  });
+
+  /** Langkah satu sel dari (row,col) dengan melompati seluruh area sel gabungan dan baris/kolom tersembunyi. */
+  function stepFrom(row: number, col: number, dr: number, dc: number) {
+    const b = book(), w = ws();
+    let r = row, c = col;
+    const m = b && w ? b.mergeAt(w, row, col) : undefined;
+    if (m) { if (dr > 0) r = m.maxRow; else if (dr < 0) r = m.minRow; if (dc > 0) c = m.maxCol; else if (dc < 0) c = m.minCol; }
+    if (dr) r = stepRow(r, dr);
+    if (dc) c = stepCol(c, dc);
+    const m2 = b && w ? b.mergeAt(w, r, c) : undefined;
+    if (m2) { r = m2.minRow; c = m2.minCol; }
+    return { r, c };
+  }
 
   const isRowHidden = (r: number) => !showHidden() && layout().hiddenRows.has(r);
   const isColHidden = (c: number) => !showHidden() && layout().hiddenCols.has(c);
@@ -258,7 +326,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     const focus = extend ? { row: s.r2, col: s.c2 } : a;
     let r = focus.row, c = focus.col;
     if (jump) { const t = jumpTarget(r, c, dr, dc); r = t.r; c = t.c; }
-    else { if (dr) r = stepRow(r, dr); if (dc) c = stepCol(c, dc); }
+    else if (extend) { if (dr) r = stepRow(r, dr); if (dc) c = stepCol(c, dc); }
+    else { const t = stepFrom(r, c, dr, dc); r = t.r; c = t.c; }
     if (extend) setSel({ r1: a.row, c1: a.col, r2: r, c2: c });
     else { setSel({ r1: r, c1: c, r2: r, c2: c }); setActive({ row: r, col: c }); }
     if (extend) gridApi?.scrollTo(r, c);
@@ -288,16 +357,22 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
 
   // ───────── edit ─────────
   function startEdit(row: number, col: number, initial?: string, src: "cell" | "bar" = "cell") {
+    if (ro()) return;
     const b = book(), w = ws(); if (!b || !w) return;
     const raw = b.rawInputText(w.rows.get(row)?.get(col));
     setEditing({ row, col, text: initial ?? raw, src });
   }
 
-  function commitEdit(move: "down" | "right" | "none" | "up" | "left" = "down") {
+  function commitEdit(move: "down" | "right" | "none" | "up" | "left" = "down", force = false) {
     const e = editing(); const b = book(), w = ws();
-    if (!e || !b || !w) { setEditing(null); return; }
-    setEditing(null);
+    if (!e || !b || !w) { setEditing(null); setPointRange(null); return; }
     const raw = b.rawInputText(w.rows.get(e.row)?.get(e.col));
+    if (!force && e.text !== raw && e.text.startsWith("=") && !ro()) {
+      // periksa tipe data / sintaks / referensi sebelum formula disimpan
+      const issues = analyzeFormula(b, w, e.row, e.col, e.text);
+      if (issues.length) { setFormulaWarn({ row: e.row, col: e.col, text: e.text, move, issues }); return; }
+    }
+    setEditing(null); setPointRange(null); setFormulaWarn(null);
     if (e.text !== raw) {
       const rec = b.setInput(w, e.row, e.col, e.text);
       b.commit([rec]);
@@ -306,26 +381,66 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     }
     if (move !== "none") {
       const dr = move === "down" ? 1 : move === "up" ? -1 : 0, dc = move === "right" ? 1 : move === "left" ? -1 : 0;
-      const r = dr ? stepRow(e.row, dr) : e.row, c = dc ? stepCol(e.col, dc) : e.col;
+      const t = stepFrom(e.row, e.col, dr, dc); const r = t.r, c = t.c;
       setSel({ r1: r, c1: c, r2: r, c2: c }); setActive({ row: r, col: c });
     }
     queueMicrotask(() => gridApi?.focus());
   }
 
-  const cancelEdit = () => { setEditing(null); queueMicrotask(() => gridApi?.focus()); };
+  const cancelEdit = () => { setEditing(null); setPointRange(null); setFormulaWarn(null); queueMicrotask(() => gridApi?.focus()); };
+
+  // ───── mode "point": klik/drag sel saat mengetik formula ─────
+  const editEl = () => rootEl.querySelector<HTMLTextAreaElement | HTMLInputElement>(editing()?.src === "bar" ? ".xl-fin" : ".xl-editor");
+  const pointMode = () => {
+    const e = editing();
+    if (!e || !e.text.startsWith("=") || ro()) return false;
+    if (pointRange()) return true;
+    const pos = editEl()?.selectionStart ?? e.text.length;
+    const before = e.text.slice(0, pos).trimEnd();
+    return before.length > 0 && /[=(,+*/^&<>;:-]$/.test(before);
+  };
+  let pointAnchor: { row: number; col: number } | undefined;
+  function setPointRef(a: { row: number; col: number }, b: { row: number; col: number }) {
+    const e = editing(), pr = pointRange(); if (!e || !pr) return;
+    const n = normSel({ r1: a.row, c1: a.col, r2: b.row, c2: b.col });
+    const ref = n.r1 === n.r2 && n.c1 === n.c2 ? addr(n.r1, n.c1) : addr(n.r1, n.c1) + ":" + addr(n.r2, n.c2);
+    const text = e.text.slice(0, pr.start) + ref + e.text.slice(pr.end);
+    const end = pr.start + ref.length;
+    setEditing({ ...e, text }); setPointRange({ start: pr.start, end });
+    queueMicrotask(() => { const el = editEl(); if (el) { el.focus(); el.setSelectionRange(end, end); } });
+  }
+  function onPoint(phase: "start" | "move" | "end", cell?: { row: number; col: number }) {
+    const e = editing(); if (!e) return;
+    if (phase === "start" && cell) {
+      const el = editEl();
+      if (!pointRange()) { const s = el?.selectionStart ?? e.text.length; setPointRange({ start: s, end: el?.selectionEnd ?? s }); }
+      pointAnchor = cell; setPointRef(cell, cell);
+    } else if (phase === "move" && cell && pointAnchor) setPointRef(pointAnchor, cell);
+    else if (phase === "end") queueMicrotask(() => editEl()?.focus());
+  }
+  const REF_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#be185d"];
+  const refRanges = createMemo(() => {
+    const e = editing();
+    const w = ws();
+    if (!e || !w || !e.text.startsWith("=")) return [];
+    return extractRefs(e.text)
+      .filter(r => !r.sheet || r.sheet.toLowerCase() === w.title.toLowerCase())
+      .map((r, i) => ({ sel: { r1: r.r1, c1: r.c1, r2: Math.min(r.r2, layout().maxRow), c2: Math.min(r.c2, layout().maxCol) }, color: REF_COLORS[i % REF_COLORS.length]! }));
+  });
 
   function applyRecords(recs: EditRecord[] | undefined) {
     if (!recs?.length) return;
     setLive(book()!.ev.live);
-    bump();
+    setSelImage(undefined);
+    bumpLayout();
     const last = recs[0]!;
-    if (last.sheet !== ws()?.title) goTo(last.row, last.col, last.sheet);
-    else goTo(last.row, last.col);
+    if (last.row > 0) goTo(last.row, last.col, last.sheet !== ws()?.title ? last.sheet : undefined);
   }
-  const doUndo = () => { commitEdit("none"); const b = book(); if (!b?.canUndo) return; applyRecords(b.undo()); };
-  const doRedo = () => { commitEdit("none"); const b = book(); if (!b?.canRedo) return; applyRecords(b.redo()); };
+  const doUndo = () => { commitEdit("none"); const b = book(); if (ro() || !b?.canUndo) return; applyRecords(b.undo()); };
+  const doRedo = () => { commitEdit("none"); const b = book(); if (ro() || !b?.canRedo) return; applyRecords(b.redo()); };
 
   function clearSelection() {
+    if (ro()) return;
     const b = book(), w = ws(); if (!b || !w) return;
     const recs = b.clearRange(w, sel());
     b.commit(recs); setLive(b.ev.live); bump();
@@ -346,11 +461,12 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       cells.push(row);
     }
     internalClip = { text, sel: n, cells };
-    if (cut) { const recs = b.clearRange(w, n); b.commit(recs); setLive(b.ev.live); bump(); }
+    if (cut && !ro()) { const recs = b.clearRange(w, n); b.commit(recs); setLive(b.ev.live); bump(); }
     return text;
   }
 
   function pasteText(text: string) {
+    if (ro()) return;
     const b = book(), w = ws(); if (!b || !w) return;
     const n = normSel(sel());
     const recs: EditRecord[] = [];
@@ -396,6 +512,11 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     const w = ws(); if (!w) return;
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key;
+    if (selImage()) {
+      if (k === "Delete" || k === "Backspace") { e.preventDefault(); deleteSelectedImage(); return; }
+      if (k === "Escape") { setSelImage(undefined); return; }
+      if (k.startsWith("Arrow") && !ro()) { e.preventDefault(); nudgeImage(k, e.shiftKey ? 10 : 1); return; }
+    }
     if (mod) {
       switch (k.toLowerCase()) {
         case "z": e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return;
@@ -433,6 +554,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
 
   // ───────── formula bar / name box ─────────
   const activeCell = createMemo(() => { ver(); const w = ws(); const a = active(); return w?.rows.get(a.row)?.get(a.col); });
+  const cellType = createMemo(() => { ver(); const b = book(), w = ws(); return b && w ? describeCellType(b, w, active().row, active().col) : undefined; });
   const barText = () => {
     const e = editing();
     if (e) return e.text;
@@ -502,17 +624,17 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   }
 
   function resizeColumn(col: number, px: number) {
-    const b = book(), w = ws(); if (!b || !w) return;
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
     b.resizeColumn(w, col, pxToColChars(px));
     bumpLayout();
   }
   function resizeRow(row: number, px: number) {
-    const b = book(), w = ws(); if (!b || !w) return;
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
     b.resizeRow(w, row, pxToPt(px));
     bumpLayout();
   }
   function autofitColumn(col: number) {
-    const b = book(), w = ws(); if (!b || !w) return;
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
     let max = 0;
     let n = 0;
     for (const [r, row] of w.rows) {
@@ -526,16 +648,119 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   }
 
   function hideSelection(kind: "rows" | "cols") {
-    const b = book(), w = ws(); if (!b || !w) return;
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
     const n = normSel(sel());
     if (kind === "rows") hideRows(w, n.r1, n.r2); else hideColumns(w, n.c1, n.c2);
     b.dirty = true; setCtx(null); bumpLayout();
   }
   function unhideAround() {
-    const b = book(), w = ws(); if (!b || !w) return;
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
     const n = normSel(sel());
     unhideRows(w, Math.max(1, n.r1 - 1), n.r2 + 1); unhideColumns(w, Math.max(1, n.c1 - 1), n.c2 + 1);
     b.dirty = true; setCtx(null); bumpLayout();
+  }
+
+  // ───────── gambar mengambang ─────────
+  let imgInput!: HTMLInputElement;
+  const selDrawing = (): DrawingView | undefined => {
+    ver();
+    const b = book(), w = ws(), k = selImage();
+    return b && w && k ? b.drawingsOf(w).find(d => d.key === k) : undefined;
+  };
+  function onImageRect(d: DrawingView, rect: PxRect) {
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
+    const rec = b.moveDrawing(w, d.index, rectToAnchor(layout(), rect, d.anchor));
+    if (!rec) return;
+    b.commit([rec], { styleOnly: true }); bumpLayout();
+  }
+  function nudgeImage(key: string, step: number) {
+    const d = selDrawing(); if (!d) return;
+    const r = anchorRect(layout(), d.anchor);
+    onImageRect(d, { ...r, x: r.x + (key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0), y: r.y + (key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0) });
+  }
+  function deleteSelectedImage() {
+    const b = book(), w = ws(), d = selDrawing(); if (!b || !w || !d || ro()) return;
+    const rec = b.deleteDrawing(w, d.index);
+    if (!rec) { toast("Hanya gambar yang dapat dihapus"); return; }
+    b.commit([rec], { styleOnly: true });
+    setSelImage(undefined); bumpLayout(); toast("Gambar dihapus (Ctrl+Z untuk urungkan)");
+    queueMicrotask(() => gridApi?.focus());
+  }
+  async function insertImageFile(f: File | undefined | null) {
+    const b = book(), w = ws(); if (!f || !b || !w || ro()) return;
+    try {
+      const r = b.insertImage(w, new Uint8Array(await f.arrayBuffer()), active().row, active().col);
+      b.commit([r.record], { styleOnly: true });
+      setSelImage(`${w.title}#${r.index}`); bumpLayout();
+      pushLog(logEntry("ok", "Gambar", `Gambar “${f.name}” disisipkan di ${addr(active().row, active().col)} (${r.width}×${r.height}px)`));
+      toast("Gambar disisipkan — seret untuk memindah, tarik sudut untuk mengubah ukuran");
+    } catch (e: any) {
+      pushLog(logEntry("error", "Gambar", `Gagal menyisipkan “${f.name}”: ${e?.message ?? e}`, "Format yang didukung: PNG, JPEG, GIF, BMP, WebP, TIFF, SVG, EMF, WMF"));
+      toast("Gambar tidak dapat disisipkan — lihat Log");
+    }
+  }
+
+  // ───────── merge ─────────
+  const canMerge = createMemo(() => { const n = normSel(sel()); return n.r1 !== n.r2 || n.c1 !== n.c2; });
+  const canUnmerge = createMemo(() => {
+    ver(); const w = ws(); if (!w?.mergedCells?.length) return false;
+    const n = normSel(sel());
+    return w.mergedCells.some(g => !(g.maxRow < n.r1 || g.minRow > n.r2 || g.maxCol < n.c1 || g.minCol > n.c2));
+  });
+  function doMerge(center: boolean) {
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
+    commitEdit("none");
+    const res = b.mergeSelection(w, sel());
+    if ("error" in res) { toast(res.error); return; }
+    b.commit(res.records, { styleOnly: true });
+    bumpLayout();
+    if (center) applyFmt({ h: "center", v: "center" });
+    toast(res.lost ? `Digabung — hanya nilai sel kiri-atas yang dipertahankan (${res.lost} sel dikosongkan)` : "Sel digabung");
+    setCtx(null);
+  }
+  function doUnmerge() {
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
+    const res = b.unmergeSelection(w, sel());
+    if ("error" in res) { toast(res.error); return; }
+    b.commit(res.records, { styleOnly: true });
+    bumpLayout(); toast(`${res.count} gabungan dipisahkan`); setCtx(null);
+  }
+
+  // ───────── editor style ─────────
+  const [fmtOpen, setFmtOpen] = createSignal(false);
+  const [painter, setPainter] = createSignal<number | null>(null);
+  const curStyle = createMemo(() => { ver(); lver(); const b = book(), w = ws(); return b && w ? b.styleOf(w, activeCell()) : undefined; });
+  const NUM_FORMATS: [string, string][] = [
+    ["General", "General"], ["Angka  0", "0"], ["Angka  0.00", "0.00"], ["Ribuan  #,##0", "#,##0"], ["Ribuan  #,##0.00", "#,##0.00"],
+    ["Rupiah", '"Rp" #,##0'], ["Persen  0%", "0%"], ["Persen  0.00%", "0.00%"], ["Tanggal  yyyy-mm-dd", "yyyy-mm-dd"],
+    ["Tanggal  dd mmm yyyy", "dd mmm yyyy"], ["Jam  hh:mm", "hh:mm"], ["Ilmiah  0.00E+00", "0.00E+00"], ["Teks  @", "@"],
+  ];
+  const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72];
+  const FONTS = ["Calibri", "Arial", "Segoe UI", "Times New Roman", "Courier New", "Verdana", "Tahoma", "Georgia", "Consolas", "Cambria", "Trebuchet MS", "Comic Sans MS"];
+  const hex = (c?: string) => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : undefined);
+
+  function applyFmt(patch: StylePatch) {
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
+    commitEdit("none");
+    setMenu(null);
+    try {
+      const recs = b.applyStyle(w, sel(), patch);
+      if (!recs.length) { toast("Tidak ada perubahan style"); return; }
+      b.commit(recs, { styleOnly: true });
+      bumpLayout();
+      if (recs.capped) toast(`Rentang besar: style hanya diterapkan ke ${recs.length.toLocaleString()} sel yang sudah berisi`);
+    } catch (e: any) {
+      pushLog(logEntry("error", "Style", `Gagal menerapkan style: ${e?.message ?? e}`, e?.stack));
+      setPanel("log"); toast("Gagal menerapkan style — lihat Log");
+    }
+    queueMicrotask(() => gridApi?.focus());
+  }
+
+  function pastePainter() {
+    const b = book(), w = ws(), id = painter(); if (!b || !w || id === null || ro()) return;
+    const recs = b.applyStyleId(w, sel(), id);
+    b.commit(recs, { styleOnly: true }); bumpLayout();
+    toast(recs.length ? `Format ditempel ke ${recs.length} sel` : "Format sudah sama / rentang terlalu besar");
   }
 
   // ───────── pencarian ─────────
@@ -561,15 +786,19 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     queueMicrotask(() => { findInput?.focus(); findInput?.select(); });
   }
 
-  function runSearch() {
+  let searchToken = 0;
+  const [searching, setSearching] = createSignal(false);
+  async function runSearch() {
     const b = book(), w = ws();
-    if (!b || !w || !q()) { setRes(null); setCurHit(-1); return; }
-    const r = b.search({
+    const token = ++searchToken;
+    if (!b || !w || !q()) { setRes(null); setCurHit(-1); setSearching(false); return; }
+    setSearching(true);
+    const r = await b.searchAsync({
       query: q(), sheet: w, allSheets: scope() === "book", selection: scope() === "sel" ? normSel(sel()) : undefined,
       matchCase: fCase(), wholeCell: fWhole(), regex: fRegex(), inFormulas: fFormula(), columns: fCols() || undefined,
-    });
-    batch(() => { setRes(r); setCurHit(r.hits.length ? 0 : -1); setHitLimit(300); });
-    if (r.hits.length) { const h = r.hits[0]!; if (scope() !== "book" || h.sheet === ws()?.title) { /* biarkan pengguna menekan Enter untuk melompat */ } }
+    }, () => token !== searchToken);
+    if (token !== searchToken || !r) return; // pencarian lebih baru sudah berjalan
+    batch(() => { setRes(r); setCurHit(r.hits.length ? 0 : -1); setHitLimit(300); setSearching(false); });
   }
   createEffect(on([q, scope, fCase, fWhole, fRegex, fFormula, fCols, sheetIdx, ver], () => {
     clearTimeout(searchTimer);
@@ -666,7 +895,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   }
 
   function applyEvalToCell() {
-    const b = book(), w = ws(); if (!b || !w) return;
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
     const rec = b.setInput(w, active().row, active().col, evalText());
     b.commit([rec]); setLive(b.ev.live); bump(); setDialog(null); toast(`Ditulis ke ${addr(active().row, active().col)}`);
   }
@@ -774,6 +1003,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     <div
       ref={rootEl}
       class={`xl-root ${props.class ?? ""}`}
+      classList={{ "xl-max": maxed() }}
       style={{ height: props.height ?? "78vh" }}
       onCopy={e => onCopyEvt(e)}
       onCut={e => onCopyEvt(e, true)}
@@ -782,19 +1012,23 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false); }}
       onDrop={onDrop}
     >
+      <input ref={imgInput} type="file" hidden accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml,image/tiff" onChange={e => { void insertImageFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
       <input ref={fileInput} type="file" hidden accept=".xlsx,.xlsm,.xltx,.xltm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" onChange={e => { void openFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
 
       {/* toolbar */}
+      <Show when={showToolbar()}>
       <div class="xl-toolbar">
         <div class="xl-title" title={book()?.fileName}>
           <i>X</i>
           <span>{book()?.fileName ?? "XLSX Preview"}</span>
           <Show when={book()?.isMacro}><span class="xl-tag" title="Workbook mengandung makro VBA (tidak dieksekusi)">XLSM · makro</span></Show>
+          <Show when={ro()}><span class="xl-tag" title="Mode baca-saja">Hanya baca</span></Show>
         </div>
         <div class="xl-group">
           <Btn icon="open" label="Buka" title="Buka berkas Excel lokal (.xlsx / .xlsm)" onClick={() => fileInput.click()} />
           <Btn icon="sample" title="Muat workbook contoh" onClick={() => void openSample()} />
-          <Btn icon="save" label="Simpan" primary={!!book()?.dirty} dot={!!book()?.dirty} disabled={!book()} title="Unduh perubahan sebagai .xlsx/.xlsm (Ctrl+S)" onClick={() => void saveXlsx()} />
+          <Btn icon="download" label="File sumber" disabled={!book()?.sourceBytes} title="Unduh berkas sumber persis seperti dibuka (tanpa perubahan)" onClick={downloadSource} />
+          <Show when={!ro()}><Btn icon="save" label="Simpan perubahan" primary={!!book()?.dirty} dot={!!book()?.dirty} disabled={!book()} title="Unduh hasil perubahan sebagai .xlsx/.xlsm baru (Ctrl+S)" onClick={() => void saveXlsx()} /></Show>
           <div class="xl-menu-wrap">
             <Btn icon="csv" label="CSV" disabled={!ws()} title="Unduh sheet sebagai CSV" onClick={() => setMenu(m => (m === "csv" ? null : "csv"))} />
             <Show when={menu() === "csv"}>
@@ -808,10 +1042,10 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
           </div>
         </div>
         <div class="xl-group">
-          <Btn icon="undo" title="Urungkan (Ctrl+Z)" disabled={!book()?.canUndo} onClick={doUndo} />
-          <Btn icon="redo" title="Ulangi (Ctrl+Y)" disabled={!book()?.canRedo} onClick={doRedo} />
+          <Btn icon="undo" title="Urungkan (Ctrl+Z)" disabled={ro() || !book()?.canUndo} onClick={doUndo} />
+          <Btn icon="redo" title="Ulangi (Ctrl+Y)" disabled={ro() || !book()?.canRedo} onClick={doRedo} />
           <Btn title="Salin seleksi (Ctrl+C)" label="Salin" disabled={!ws()} onClick={() => void copyViaButton()} />
-          <Btn title="Tempel (Ctrl+V)" label="Tempel" disabled={!ws()} onClick={() => void pasteViaButton()} />
+          <Btn title="Tempel (Ctrl+V)" label="Tempel" disabled={!ws() || ro()} onClick={() => void pasteViaButton()} />
         </div>
         <div class="xl-group">
           <Btn icon="search" label="Cari" on={panel() === "find"} disabled={!book()} title="Cari (Ctrl+F)" onClick={() => (panel() === "find" ? setPanel(null) : openFind())} />
@@ -837,16 +1071,39 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                 <label><input type="checkbox" checked={showFormulas()} onChange={e => setShowFormulas(e.currentTarget.checked)} /> Tampilkan rumus (bukan hasil)</label>
                 <label><input type="checkbox" checked={showHidden()} onChange={e => { setShowHidden(e.currentTarget.checked); bumpLayout(); }} /> Tampilkan baris/kolom/sheet tersembunyi</label>
                 <label><input type="checkbox" checked={live()} onChange={toggleLive} /> Hitung ulang formula (mesin evaluasi)</label>
+                <hr />
+                <label><input type="checkbox" checked={showToolbar()} onChange={e => setShowToolbar(e.currentTarget.checked)} /> Toolbar</label>
+                <label><input type="checkbox" checked={showFbar()} onChange={e => setShowFbar(e.currentTarget.checked)} /> Bar formula</label>
+                <label><input type="checkbox" checked={showTabs()} onChange={e => setShowTabs(e.currentTarget.checked)} /> Tab sheet</label>
+                <label><input type="checkbox" checked={showStatus()} onChange={e => setShowStatus(e.currentTarget.checked)} /> Status bar</label>
+                <label><input type="checkbox" checked={panel() !== null} onChange={e => setPanel(e.currentTarget.checked ? "info" : null)} /> Panel samping (Cari / Info / Log)</label>
+                <hr />
+                <button onClick={() => { focusView(!focusMode()); setMenu(null); }}>{focusMode() ? "Keluar mode fokus" : "Mode fokus (sembunyikan semua bar)"}</button>
+                <button onClick={() => { setMenu(null); void toggleFull(); }}>{full() || maxed() ? "Keluar layar penuh" : "Layar penuh"}</button>
               </div>
             </Show>
           </div>
         </div>
         <div class="xl-group">
+          <Show when={!ro()}>
+            <Btn icon="palette" label="Gaya" on={fmtOpen()} disabled={!ws()} title="Editor style sel (font, warna, border, format angka)" onClick={() => setFmtOpen(v => !v)} />
+            <div class="xl-menu-wrap">
+              <Btn icon="sample" label="Gambar" on={!!selImage()} disabled={!ws()} title="Sisipkan / hapus gambar mengambang" onClick={() => setMenu(m => (m === "image" ? null : "image"))} />
+              <Show when={menu() === "image"}>
+                <div class="xl-menu">
+                  <button onClick={() => { setMenu(null); imgInput.click(); }}>Sisipkan gambar… <small>di {addr(active().row, active().col)}</small></button>
+                  <button disabled={!selDrawing()} onClick={() => { setMenu(null); deleteSelectedImage(); }}>Hapus gambar terpilih <small>Del</small></button>
+                  <hr /><small style={{ padding: "2px 10px", display: "block", "white-space": "normal" }}>Klik gambar untuk memilih, seret untuk memindah, tarik sudut kanan-bawah untuk ukuran, panah untuk geser halus.</small>
+                </div>
+              </Show>
+            </div>
+          </Show>
           <Btn icon="sigma" label="Evaluasi" disabled={!ws()} title="Evaluasi formula (langkah demi langkah)" onClick={openEval} />
           <Btn icon="bug" label="Debug sel" disabled={!ws()} title="Informasi debug sel terpilih" onClick={() => setDialog("debug")} />
         </div>
         <span class="xl-spacer" />
         <div class="xl-group">
+          <Btn icon={full() || maxed() ? "shrink" : "expand"} title="Layar penuh (Esc untuk keluar)" on={full() || maxed()} onClick={() => void toggleFull()} />
           <Btn icon="info" label="Info" on={panel() === "info"} disabled={!book()} title="Informasi workbook & worksheet" onClick={() => setPanel(p => (p === "info" ? null : "info"))} />
           <Btn icon="log" label="Log" on={panel() === "log"} title="Log pembacaan (berhasil / gagal / makro)" onClick={() => setPanel(p => (p === "log" ? null : "log"))}>
             <Show when={countLevel("error") > 0}><span class="badge">{countLevel("error")}</span></Show>
@@ -855,7 +1112,71 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
         </div>
       </div>
 
+      </Show>
+
+      {/* editor style */}
+      <Show when={showToolbar() && fmtOpen() && ws()}>
+        <div class="xl-fmtbar">
+          <datalist id="xl-fonts"><For each={FONTS}>{f => <option value={f} />}</For></datalist>
+          <input class="xl-input fb-font" list="xl-fonts" value={curStyle()?.fontName ?? "Calibri"} title="Jenis font" onChange={e => e.currentTarget.value && applyFmt({ fontName: e.currentTarget.value })} />
+          <select class="xl-select fb-size" title="Ukuran font (pt)" value={String(curStyle()?.sizePt ?? 11)} onChange={e => applyFmt({ fontSize: +e.currentTarget.value })}>
+            <For each={[...new Set([...FONT_SIZES, curStyle()?.sizePt ?? 11])].sort((a, b) => a - b)}>{n => <option value={String(n)}>{n}</option>}</For>
+          </select>
+          <span class="fb-sep" />
+          <button class="fb" classList={{ on: !!curStyle()?.bold }} title="Tebal" onClick={() => applyFmt({ bold: !curStyle()?.bold })}><b>B</b></button>
+          <button class="fb" classList={{ on: !!curStyle()?.italic }} title="Miring" onClick={() => applyFmt({ italic: !curStyle()?.italic })}><i>I</i></button>
+          <button class="fb" classList={{ on: curStyle()?.underline !== "none" && !!curStyle() }} title="Garis bawah" onClick={() => applyFmt({ underline: curStyle()?.underline === "none" })}><u>U</u></button>
+          <button class="fb" classList={{ on: !!curStyle()?.strike }} title="Coret" onClick={() => applyFmt({ strike: !curStyle()?.strike })}><s>S</s></button>
+          <span class="fb-sep" />
+          <label class="fb fb-color" title="Warna teks"><span style={{ "border-bottom": `3px solid ${hex(curStyle()?.color) ?? "#000000"}` }}>A</span><input type="color" value={hex(curStyle()?.color) ?? "#000000"} onChange={e => applyFmt({ fontColor: e.currentTarget.value })} /></label>
+          <label class="fb fb-color" title="Warna isi sel"><span class="fill" style={{ background: hex(curStyle()?.bg) ?? "transparent" }}>▨</span><input type="color" value={hex(curStyle()?.bg) ?? "#ffff00"} onChange={e => applyFmt({ fill: e.currentTarget.value })} /></label>
+          <button class="fb" title="Hapus warna isi" onClick={() => applyFmt({ fill: null })}>∅</button>
+          <div class="xl-menu-wrap">
+            <button class="fb" title="Border" onClick={() => setMenu(m => (m === "border" ? null : "border"))}>▦ ▾</button>
+            <Show when={menu() === "border"}>
+              <div class="xl-menu">
+                <button onClick={() => applyFmt({ border: { kind: "all" } })}>Semua border</button>
+                <button onClick={() => applyFmt({ border: { kind: "outer" } })}>Border luar</button>
+                <button onClick={() => applyFmt({ border: { kind: "outer", style: "medium" } })}>Border luar tebal</button>
+                <button onClick={() => applyFmt({ border: { kind: "top" } })}>Border atas</button>
+                <button onClick={() => applyFmt({ border: { kind: "bottom" } })}>Border bawah</button>
+                <button onClick={() => applyFmt({ border: { kind: "bottom", style: "double" } })}>Border bawah ganda</button>
+                <button onClick={() => applyFmt({ border: { kind: "left" } })}>Border kiri</button>
+                <button onClick={() => applyFmt({ border: { kind: "right" } })}>Border kanan</button>
+                <hr />
+                <button onClick={() => applyFmt({ border: { kind: "none" } })}>Tanpa border</button>
+              </div>
+            </Show>
+          </div>
+          <span class="fb-sep" />
+          <button class="fb" classList={{ on: curStyle()?.h === "left" }} title="Rata kiri" onClick={() => applyFmt({ h: "left" })}>⯇</button>
+          <button class="fb" classList={{ on: curStyle()?.h === "center" }} title="Rata tengah" onClick={() => applyFmt({ h: "center" })}>≡</button>
+          <button class="fb" classList={{ on: curStyle()?.h === "right" }} title="Rata kanan" onClick={() => applyFmt({ h: "right" })}>⯈</button>
+          <button class="fb" classList={{ on: curStyle()?.v === "top" }} title="Rata atas" onClick={() => applyFmt({ v: "top" })}>⤒</button>
+          <button class="fb" classList={{ on: curStyle()?.v === "center" }} title="Tengah vertikal" onClick={() => applyFmt({ v: "center" })}>↕</button>
+          <button class="fb" classList={{ on: curStyle()?.v === "bottom" }} title="Rata bawah" onClick={() => applyFmt({ v: "bottom" })}>⤓</button>
+          <button class="fb" classList={{ on: !!curStyle()?.wrap }} title="Bungkus teks" onClick={() => applyFmt({ wrap: !curStyle()?.wrap })}>⏎</button>
+          <button class="fb" title="Kurangi indentasi" onClick={() => applyFmt({ indentDelta: -1 })}>⇤</button>
+          <button class="fb" title="Tambah indentasi" onClick={() => applyFmt({ indentDelta: 1 })}>⇥</button>
+          <span class="fb-sep" />
+          <button class="fb" disabled={!canMerge()} title="Gabungkan sel pada seleksi" onClick={() => doMerge(false)}>⊞ Gabung</button>
+          <button class="fb" disabled={!canMerge()} title="Gabungkan dan tengahkan" onClick={() => doMerge(true)}>Gabung &amp; tengah</button>
+          <button class="fb" disabled={!canUnmerge()} title="Pisahkan sel gabungan" onClick={doUnmerge}>⊟ Pisah</button>
+          <span class="fb-sep" />
+          <select class="xl-select fb-num" title="Format angka" value="" onChange={e => { if (e.currentTarget.value) applyFmt({ numFmt: e.currentTarget.value }); e.currentTarget.value = ""; }}>
+            <option value="">Format: {curStyle()?.numFmt ?? "General"}</option>
+            <For each={NUM_FORMATS}>{([l, c]) => <option value={c}>{l}</option>}</For>
+          </select>
+          <input class="xl-input fb-code" placeholder="kode format kustom ↵" title="Kode number format OOXML, mis. 0.0&quot; kg&quot;" onKeyDown={e => { if (e.key === "Enter" && e.currentTarget.value) { applyFmt({ numFmt: e.currentTarget.value }); e.currentTarget.value = ""; } }} />
+          <span class="fb-sep" />
+          <button class="fb" title="Salin format sel aktif (format painter)" onClick={() => { setPainter(activeCell()?.styleId ?? 0); toast("Format disalin — pilih sel tujuan lalu klik Tempel format"); }}>🖌</button>
+          <button class="fb" disabled={painter() === null} title="Tempel format ke seleksi" onClick={pastePainter}>⎘</button>
+          <button class="fb" title="Hapus semua format pada seleksi" onClick={() => applyFmt({ clear: true })}>Reset</button>
+        </div>
+      </Show>
+
       {/* formula bar */}
+      <Show when={showFbar()}>
       <div class="xl-fbar">
         <input
           class="xl-namebox" value={nameText()} spellcheck={false} title="Name box — ketik alamat (B2:C5) atau nama terdefinisi lalu Enter"
@@ -865,11 +1186,21 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
         />
         <button class="xl-fx" title="Evaluasi formula" onClick={openEval} disabled={!ws()}>fx</button>
         <input
-          class="xl-fin" value={barText()} spellcheck={false} disabled={!ws()} placeholder="Nilai atau formula sel aktif"
-          onInput={e => { const a = active(); const cur = editing(); if (!cur) setEditing({ row: a.row, col: a.col, text: e.currentTarget.value, src: "bar" }); else setEditing({ ...cur, text: e.currentTarget.value }); }}
+          class="xl-fin" value={barText()} spellcheck={false} disabled={!ws()} readOnly={ro()} placeholder="Nilai atau formula sel aktif"
+          onInput={e => { setPointRange(null); const a = active(); const cur = editing(); if (!cur) setEditing({ row: a.row, col: a.col, text: e.currentTarget.value, src: "bar" }); else setEditing({ ...cur, text: e.currentTarget.value }); }}
           onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commitEdit("down"); } else if (e.key === "Escape") { cancelEdit(); } }}
         />
       </div>
+
+      </Show>
+
+      <Show when={!showToolbar()}>
+        <div class="xl-mini">
+          <button title="Tampilkan toolbar" onClick={() => setShowToolbar(true)}>☰ Toolbar</button>
+          <button title="Layar penuh" onClick={() => void toggleFull()}>{full() || maxed() ? "⤡" : "⤢"}</button>
+          <Show when={focusMode()}><button title="Tampilkan semua bar" onClick={() => focusView(false)}>Reset</button></Show>
+        </div>
+      </Show>
 
       {/* grid + panel */}
       <div class="xl-main">
@@ -903,7 +1234,10 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                 currentHit={curHitKey}
                 editing={() => { const e = editing(); return e && e.src === "cell" ? e : null; }}
                 onStartEdit={(r, c, i) => startEdit(r, c, i)}
-                onEditText={t => setEditing(e => (e ? { ...e, text: t } : e))}
+                onEditText={t => { setPointRange(null); setEditing(e => (e ? { ...e, text: t } : e)); }}
+                pointMode={pointMode}
+                onPoint={onPoint}
+                refRanges={refRanges}
                 onCommitEdit={commitEdit}
                 onCancelEdit={cancelEdit}
                 onKeyDown={onGridKey}
@@ -912,6 +1246,10 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                 onAutofitColumn={autofitColumn}
                 onOpenFilter={openFilterPopup}
                 filter={filterState}
+                readonly={ro}
+                selectedImage={selImage}
+                onSelectImage={setSelImage}
+                onImageRect={onImageRect}
                 onZoomWheel={d => setZoom(z => Math.min(3, Math.max(0.4, +(z + d).toFixed(2))))}
                 onContextMenu={(e, r, c) => setCtx({ x: e.clientX, y: e.clientY, row: r, col: c })}
                 onLink={openLink}
@@ -987,7 +1325,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                     </>
                   )}
                 </Show>
-                <Show when={!res() && q()}><p style={{ color: "var(--xl-muted)" }}>Mencari…</p></Show>
+                <Show when={searching()}><p style={{ color: "var(--xl-muted)" }}>Memindai sheet… (tidak memblokir UI)</p></Show>
                 <Show when={!q()}>
                   <p style={{ color: "var(--xl-muted)", "margin-top": "14px" }}>
                     Ketik kata kunci. Pilih <b>Seluruh workbook</b> untuk mencari antar worksheet; hasil menampilkan jumlah, sheet, dan alamat sel. <span class="xl-kbd">F3</span> / <span class="xl-kbd">Shift+F3</span> untuk berpindah.
@@ -1049,6 +1387,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       </div>
 
       {/* sheet tabs */}
+      <Show when={showTabs()}>
       <div class="xl-tabs">
         <For each={tabs()}>
           {({ i, s }) => (
@@ -1062,10 +1401,16 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
         </For>
       </div>
 
+      </Show>
+
       {/* status bar */}
+      <Show when={showStatus()}>
       <div class="xl-status">
         <span><b>{editing() ? "Edit" : busy() ? "Sibuk" : "Siap"}</b></span>
         <span class="mono">{selAddr(sel())}</span>
+        <Show when={cellType()}>
+          {t => <span class="xl-type" classList={{ warn: !!t().warn }} title={(t().detail ?? "") + (t().warn ? " — periksa tipe data sel ini" : "")}>Tipe: <b>{t().label}</b>{t().detail ? " · " + t().detail : ""}{t().warn ? " ⚠" : ""}</span>}
+        </Show>
         <Show when={selStats()}>
           {s => <span title={`${s().rows} baris × ${s().cols} kolom`}>{s().rows}R × {s().cols}K</span>}
         </Show>
@@ -1096,6 +1441,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
           {" "}<b>{Math.round(zoom() * 100)}%</b>
         </span>
       </div>
+
+      </Show>
 
       {/* popup filter */}
       <Show when={fp()}>
@@ -1132,19 +1479,25 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
         {c => (
           <div class="xl-ctx" style={{ left: `${Math.min(c().x, window.innerWidth - 240)}px`, top: `${Math.min(c().y, window.innerHeight - 300)}px` }}>
             <button onClick={() => { void copyViaButton(); setCtx(null); }}>Salin<small>Ctrl+C</small></button>
-            <button onClick={() => { const t = copySel(true); void navigator.clipboard?.writeText(t); setCtx(null); }}>Potong<small>Ctrl+X</small></button>
-            <button onClick={() => { void pasteViaButton(); setCtx(null); }}>Tempel<small>Ctrl+V</small></button>
-            <button onClick={() => { clearSelection(); setCtx(null); }}>Kosongkan isi<small>Del</small></button>
+            <button disabled={ro()} onClick={() => { const t = copySel(true); void navigator.clipboard?.writeText(t); setCtx(null); }}>Potong<small>Ctrl+X</small></button>
+            <button disabled={ro()} onClick={() => { void pasteViaButton(); setCtx(null); }}>Tempel<small>Ctrl+V</small></button>
+            <button disabled={ro()} onClick={() => { clearSelection(); setCtx(null); }}>Kosongkan isi<small>Del</small></button>
             <hr />
-            <button onClick={() => { startEdit(c().row, c().col); setCtx(null); }}>Edit sel<small>F2</small></button>
+            <button disabled={ro()} onClick={() => { startEdit(c().row, c().col); setCtx(null); }}>Edit sel<small>F2</small></button>
+            <Show when={!ro()}>
+              <button disabled={!canMerge()} onClick={() => doMerge(false)}>Gabungkan sel</button>
+              <button disabled={!canUnmerge()} onClick={doUnmerge}>Pisahkan sel gabungan</button>
+              <button onClick={() => { setCtx(null); imgInput.click(); }}>Sisipkan gambar di sini…</button>
+              <Show when={selDrawing()}><button onClick={() => { setCtx(null); deleteSelectedImage(); }}>Hapus gambar terpilih</button></Show>
+            </Show>
             <button onClick={() => { setDialog("debug"); setCtx(null); }}>Debug sel {addr(c().row, c().col)}</button>
             <button onClick={() => { openEval(); setCtx(null); }}>Evaluasi formula…</button>
             <button onClick={() => { setQ(book()?.textAt(ws()!, c().row, c().col) ?? ""); openFind(); setCtx(null); }}>Cari nilai sel ini</button>
             <hr />
             <button onClick={() => { doFreeze("cell"); setCtx(null); }}>Bekukan hingga {addr(active().row, active().col)}</button>
-            <button onClick={() => hideSelection("rows")}>Sembunyikan baris</button>
-            <button onClick={() => hideSelection("cols")}>Sembunyikan kolom</button>
-            <button onClick={unhideAround}>Tampilkan yang tersembunyi di sekitar</button>
+            <button disabled={ro()} onClick={() => hideSelection("rows")}>Sembunyikan baris</button>
+            <button disabled={ro()} onClick={() => hideSelection("cols")}>Sembunyikan kolom</button>
+            <button disabled={ro()} onClick={unhideAround}>Tampilkan yang tersembunyi di sekitar</button>
           </div>
         )}
       </Show>
@@ -1158,7 +1511,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
               <textarea class="xl-textarea" value={evalText()} spellcheck={false} onInput={e => setEvalText(e.currentTarget.value)} onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runEval(); }} />
               <div class="xl-row-inline">
                 <button class="xl-btn primary" onClick={() => runEval()}>Evaluasi <span class="xl-kbd" style={{ color: "#111" }}>Ctrl+Enter</span></button>
-                <button class="xl-btn" onClick={applyEvalToCell}>Tulis ke sel aktif</button>
+                <Show when={!ro()}><button class="xl-btn" onClick={applyEvalToCell}>Tulis ke sel aktif</button></Show>
                 <span style={{ color: "var(--xl-muted)" }}>Referensi relatif dihitung dari sel aktif.</span>
               </div>
               <Show when={evalOut()}>
@@ -1204,6 +1557,37 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
             </div>
           </div>
         )}
+      </Show>
+
+      <Show when={formulaWarn()}>
+        {fw => {
+          const blocking = () => fw().issues.some(i => i.blocking);
+          return (
+            <div class="xl-overlay">
+              <div class="xl-dialog" style={{ width: "min(640px, 100%)" }}>
+                <header><h3>{blocking() ? "✖ Formula tidak dapat disimpan" : "⚠ Periksa formula sebelum disimpan"} — {addr(fw().row, fw().col)}</h3></header>
+                <div class="body">
+                  <div class="xl-code" style={{ "max-height": "90px", "margin-bottom": "12px" }}>{fw().text}</div>
+                  <ul class="xl-issues">
+                    <For each={fw().issues}>
+                      {i => (
+                        <li classList={{ err: i.level === "error" }}>
+                          <b>{i.level === "error" ? "✖" : "⚠"} {i.title}</b>
+                          <div>{i.detail}</div>
+                          <div class="hint">Saran: {i.hint}</div>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </div>
+                <footer>
+                  <button class="xl-btn primary" ref={el => queueMicrotask(() => el.focus())} onClick={() => { setFormulaWarn(null); queueMicrotask(() => { const el = editEl(); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } }); }}>Kembali edit</button>
+                  <Show when={!blocking()}><button class="xl-btn" onClick={() => { const w = fw(); setFormulaWarn(null); commitEdit(w.move, true); }}>Simpan apa adanya</button></Show>
+                </footer>
+              </div>
+            </div>
+          );
+        }}
       </Show>
 
       <Show when={dragOver()}><div class="xl-drop">Lepaskan berkas .xlsx / .xlsm di sini</div></Show>
