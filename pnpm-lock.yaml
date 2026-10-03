@@ -44,9 +44,15 @@ importers:
       '@gomdle/solid-gsi':
         specifier: ^0.1.4
         version: 0.1.4(solid-js@1.9.7)
+      '@maxgraph/core':
+        specifier: ^0.24.0
+        version: 0.24.0
       '@office-kit/docx':
         specifier: ^0.1.1
         version: 0.1.1
+      '@office-kit/pptx':
+        specifier: ^0.21.0
+        version: 0.21.0
       '@office-kit/xlsx':
         specifier: ^0.23.4
         version: 0.23.4
@@ -1462,6 +1468,9 @@ packages:
   '@math.gl/web-mercator@4.1.0':
     resolution: {integrity: sha512-HZo3vO5GCMkXJThxRJ5/QYUYRr3XumfT8CzNNCwoJfinxy5NtKUd7dusNTXn7yJ40UoB8FMIwkVwNlqaiRZZAw==}
 
+  '@maxgraph/core@0.24.0':
+    resolution: {integrity: sha512-OgzCL86pTEa/8MpxbIX44S+xk0qAfmlAu0yZhQ9RFaEB8E5M2rJlPHNWeFpsD/ybWb5J5oPmZYszIcvzG/Kg4g==}
+
   '@mdx-js/react@3.1.0':
     resolution: {integrity: sha512-QjHtSaoameoalGnKDT3FoIl4+9RwyTmo9ZJGBdLOks/YOiWHoRDI3PUwEzOE7kEmGcV3AFcp9K6dYu9rEuKLAQ==}
     peerDependencies:
@@ -1579,6 +1588,10 @@ packages:
   '@office-kit/docx@0.1.1':
     resolution: {integrity: sha512-ZzFJ0danc30XLtShhjsJi4bUu7TM9UhHFB0QfU3eHUaRLm9mXzP0mOlg/QsdlXpOsupSk23qsLJEwNwAzK3D/Q==}
     engines: {node: '>=20'}
+
+  '@office-kit/pptx@0.21.0':
+    resolution: {integrity: sha512-m3E+DUw4KmnK1IMh87huvm84DUISjS4nxRZsGq4mJvVoqHmkqloZcZcxbFncwC8eLfpyHyHGk5x8OjN0LXcmLA==}
+    engines: {node: '>=22.18.0'}
 
   '@office-kit/xlsx@0.23.4':
     resolution: {integrity: sha512-/C7gfdkPQcZOUiTvbjB3aPvmMEp4eJ1BWcSHoNjIhfUJh9AVdQ2qjY+ZcGa3k2tzoP3MYE8pORai0JgUBcOLzA==}
@@ -8735,6 +8748,8 @@ snapshots:
     dependencies:
       '@math.gl/core': 4.1.0
 
+  '@maxgraph/core@0.24.0': {}
+
   '@mdx-js/react@3.1.0(@types/react@18.3.1)(react@18.3.1)':
     dependencies:
       '@types/mdx': 2.0.13
@@ -8912,6 +8927,10 @@ snapshots:
       '@octokit/openapi-types': 22.2.0
 
   '@office-kit/docx@0.1.1':
+    dependencies:
+      fflate: 0.8.3
+
+  '@office-kit/pptx@0.21.0':
     dependencies:
       fflate: 0.8.3
 

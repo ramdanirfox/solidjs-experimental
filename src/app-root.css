@@ -150,7 +150,7 @@
   text-align: left;
 }
 .sjx-page-fill { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
-.sjx-page-fill > .xl-root, .sjx-page-fill > .dxe-root { flex: 1; min-height: 480px; }
+.sjx-page-fill > .xl-root, .sjx-page-fill > .dxe-root, .sjx-page-fill > .pxe-root { flex: 1; min-height: 480px; }
 .sjx-page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .sjx-page-title { font-size: clamp(20px, 2.4vw, 28px); font-weight: 800; letter-spacing: -.02em; }
 .sjx-page-sub { color: var(--sjx-muted); font-size: 14px; margin-top: 2px; }

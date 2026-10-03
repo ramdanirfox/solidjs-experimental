@@ -1,0 +1,176 @@
+/** Internasionalisasi antarmuka editor PPTX (en & id). Placeholder: `{nama}`. Kunci tak ditemukan → en → kunci itu sendiri. */
+import type { Accessor } from "solid-js";
+
+export type Lang = "en" | "id";
+export type Dict = Record<string, string>;
+
+const en: Dict = {
+  "busy.loading": "Loading…", "busy.opening": "Opening presentation…", "busy.sample": "Building sample presentation…",
+  "confirm.discard": "Discard unsaved changes and open another presentation?",
+  "drop.hint": "Drop a .pptx file or picture here",
+  "prompt.title": "Click to add title", "prompt.subtitle": "Click to add subtitle", "prompt.body": "Click to add text", "prompt.default": "Click to add text",
+  // buttons
+  "b.open": "Open", "b.openTip": "Open a local PowerPoint file (.pptx / .pptm)", "b.sample": "Load sample presentation", "b.save": "Save", "b.saveTip": "Download the presentation with your changes",
+  "b.export": "Download", "b.undo": "Undo", "b.redo": "Redo", "b.history": "Undo history", "b.find": "Find", "b.info": "Presentation information", "b.log": "Read log", "b.ole": "Embedded objects & macros", "b.debug": "Debug information",
+  "b.language": "Language", "b.close": "Close", "b.cancel": "Cancel", "b.apply": "Apply", "b.copy": "Copy", "b.download": "Download", "b.refresh": "Refresh", "b.source": "Original file",
+  "b.painter": "Format painter", "b.painterTip": "Copy the fill, outline and text format of the selected shape, then click another shape (Esc cancels)",
+  "b.paste": "Paste", "b.duplicate": "Duplicate", "b.newSlide": "New slide", "b.layout": "Layout", "b.dupSlide": "Duplicate slide", "b.delSlide": "Delete slide",
+  "b.font": "Font", "b.size": "Font size", "b.sizeUp": "Increase font size", "b.sizeDown": "Decrease font size", "b.bold": "Bold", "b.italic": "Italic", "b.underline": "Underline", "b.strike": "Strikethrough", "b.color": "Text color",
+  "b.bullets": "Bulleted list", "b.numbers": "Numbered list", "b.outdent": "Decrease level", "b.indent": "Increase level", "b.alignL": "Align left", "b.alignC": "Center", "b.alignR": "Align right", "b.alignJ": "Justify", "b.lineSpacing": "Line spacing",
+  "b.anchorTop": "Align text to top", "b.anchorMid": "Align text to middle", "b.anchorBot": "Align text to bottom",
+  "b.fill": "Fill color", "b.noFill": "No fill", "b.outline": "Outline color", "b.outlineW": "Outline width", "b.dash": "Outline style", "b.shadow": "Shadow",
+  "b.textbox": "Text box", "b.shapes": "Shapes", "b.line": "Line", "b.arrowLine": "Arrow", "b.picture": "Picture", "b.table": "Table", "b.chart": "Chart", "b.link": "Link", "b.unlink": "Remove link", "b.align": "Align", "b.present": "Slideshow",
+  // groups & tabs
+  "g.clipboard": "Clipboard", "g.slides": "Slides", "g.font": "Font", "g.paragraph": "Paragraph", "g.drawing": "Drawing", "g.insert": "Insert", "g.size": "Position & size", "g.transform": "Transform", "g.arrange": "Arrange", "g.properties": "Properties",
+  "g.rowsCols": "Rows & columns", "g.merge": "Merge", "g.cell": "Cell", "g.table": "Table", "g.chart": "Chart", "g.picture": "Picture", "g.crop": "Crop", "g.adjust": "Adjust", "g.slide": "Slide", "g.background": "Background",
+  "g.transition": "Transition", "g.show": "Show", "g.zoom": "Zoom", "g.window": "Window",
+  "tab.home": "Home", "tab.insert": "Insert", "tab.format": "Shape", "tab.table": "Table", "tab.chart": "Chart", "tab.picture": "Picture", "tab.slide": "Slide", "tab.view": "View",
+  // shape / picture
+  "p.width": "W", "p.height": "H", "p.lock": "Lock aspect ratio (also applies to dragging corner handles; Shift inverts)", "p.locked": "Locked", "p.free": "Free", "p.rotateCW": "Rotate right 90°", "p.flipH": "Flip horizontally", "p.flipV": "Flip vertically",
+  "p.name": "Name", "p.alt": "Alt text", "p.hidden": "Hide shape", "p.animation": "Entrance animation", "p.noAnim": "No animation", "p.delete": "Delete", "p.replace": "Replace picture", "p.resetCrop": "Reset picture",
+  "p.crop.left": "L", "p.crop.top": "T", "p.crop.right": "R", "p.crop.bottom": "B", "p.brightness": "Brightness", "p.contrast": "Contrast", "p.opacity": "Opacity",
+  "a.front": "Bring to front", "a.back": "Send to back", "a.forward": "Bring forward", "a.backward": "Send backward", "a.group": "Group", "a.ungroup": "Ungroup",
+  "al.left": "Align left", "al.center": "Align center", "al.right": "Align right", "al.top": "Align top", "al.middle": "Align middle", "al.bottom": "Align bottom", "al.hdist": "Distribute horizontally", "al.vdist": "Distribute vertically",
+  // table / chart
+  "t.rowAbove": "Row above", "t.rowBelow": "Row below", "t.colLeft": "Column left", "t.colRight": "Column right", "t.delRow": "Delete row", "t.delCol": "Delete column", "t.delTable": "Delete table",
+  "t.mergeRight": "Merge right", "t.mergeDown": "Merge down", "t.cellPos": "Cell R{r}C{c}", "t.pickCell": "Click a cell first", "t.shade": "Cell fill", "t.noShade": "No fill", "t.borders": "Borders", "t.bordersTip": "Apply a thin border to the selected cell",
+  "t.headerRow": "Header row", "t.banded": "Banded rows", "t.firstCol": "First column", "t.colW": "Col. width (cm)", "t.rowH": "Row height (cm)",
+  "c.column": "Column", "c.bar": "Bar", "c.line": "Line", "c.area": "Area", "c.pie": "Pie", "c.doughnut": "Doughnut", "c.scatter": "Scatter", "c.radar": "Radar", "c.kind": "Chart type", "c.title": "Chart title", "c.note": "Data editing is not available in this demo.",
+  // slide
+  "s.hideSlide": "Hide slide", "s.moveUp": "Move slide up", "s.moveDown": "Move slide down", "s.bgColor": "Background color", "s.bgImage": "Background picture", "s.bgClear": "Reset background",
+  "s.transition": "Transition effect", "s.noTransition": "No transition", "s.speed": "Speed", "s.applyAll": "Apply to all",
+  "s.slide": "Slide {i} of {n}", "s.multi": "{n} shapes selected", "s.cell": "Cell R{r}C{c} ({rows}×{cols})", "s.merged": "merged cell", "s.editing": "editing text", "s.history": "undo {i}/{n} (max {max})", "s.historyTip": "Position in the undo history",
+  // view
+  "v.zoomIn": "Zoom in", "v.zoomOut": "Zoom out", "v.fit": "Fit", "v.grid": "Grid", "v.snap": "Snap guides", "v.thumbs": "Slide panel", "v.notes": "Notes", "v.dark": "Dark mode",
+  "v.hideToolbar": "Hide toolbar", "v.showToolbar": "Show toolbar", "v.fullscreen": "Full screen", "v.exitFs": "Exit full screen",
+  // menus
+  "m.pptx": "PowerPoint (.pptx) with changes", "m.txt": "Text outline (.txt)", "m.source": "Original file (unchanged)", "m.new": "New blank presentation", "m.pickTable": "Pick table size",
+  // painter & tool chips
+  "painter.copied": "Format copied:", "painter.hint": "click a shape to apply — Esc cancels",
+  "pk.fill": "fill", "pk.stroke": "outline", "pk.font": "font", "pk.size": "size", "pk.bold": "bold", "pk.italic": "italic", "pk.color": "color", "pk.align": "align",
+  "tool.draw": "Drawing mode", "tool.hint": "drag on the slide to draw, or click to place — Esc cancels",
+  // panels
+  "panel.find": "Find & replace", "panel.info": "Presentation information", "panel.log": "Read log", "panel.ole": "Embedded objects & macros", "panel.history": "Undo history",
+  "find.placeholder": "Find in slides and notes…", "find.prev": "Previous", "find.next": "Next", "find.case": "Match case", "find.word": "Whole word", "find.regex": "Regular expression",
+  "find.replaceWith": "Replace with…", "find.replaceOne": "Replace the current match", "find.replaceAll": "Replace all", "find.badRegex": "Invalid expression", "find.count": "matches", "find.truncated": "limited to the first 3,000",
+  "find.more": "Show {n} more", "find.slide": "slide {n}",
+  "hist.max": "Max records", "hist.count": "{n} recorded changes · position {i}",
+  "log.all": "All", "log.ok": "Read", "log.warn": "Limited", "log.error": "Errors",
+  "info.file": "File", "info.name": "Name", "info.size": "Size", "info.parts": "Package parts", "info.modified": "Unsaved changes", "info.yes": "Yes", "info.no": "No",
+  "info.stats": "Statistics", "info.slides": "Slides", "info.hidden": "hidden", "info.shapes": "Shapes", "info.size16": "Slide size", "info.layouts": "Layouts", "info.theme": "Theme", "info.comments": "Comments",
+  "info.props": "Properties", "info.applyProps": "Apply properties", "info.validation": "Package validation", "info.valid": "No problems found", "info.partsList": "Package contents",
+  "prop.title": "Title", "prop.creator": "Author", "prop.subject": "Subject", "prop.keywords": "Keywords", "prop.description": "Description", "prop.category": "Category",
+  "ole.help": "Embedded objects and macro projects found in the package. Objects are never executed.", "ole.none": "No embedded objects found.", "ole.detail": "Details", "ole.kind": "Detected as", "ole.embedded": "Embedded file",
+  "ole.dlRaw": "Download object", "ole.dlNative": "Extract embedded file", "ole.zipNote": "This object is an Office Open XML package (zip). Download it and open it with the matching application.",
+  "ole.structure": "Compound file structure (click a stream to preview)", "ole.noStream": "Stream could not be read.", "ole.macros": "VBA macro project", "ole.macroNote": "Macros are listed for inspection only. They are never run and are preserved untouched when saving.",
+  "ole.readVba": "Read macro modules", "ole.noSource": "(source could not be decoded)",
+  "notes.label": "Notes", "notes.placeholder": "Click to add speaker notes",
+  // tags & dialogs
+  "tag.readonly": "Read-only", "tag.readonlyTip": "Read-only mode: editing is disabled", "tag.macro": "macro", "tag.macroTip": "Presentation contains a VBA project (never executed, kept intact)", "tag.modifiedTip": "Unsaved changes",
+  "dlg.debug": "Debug information", "dlg.debugHelp": "Snapshot of the presentation, history and the selected shape (resolved properties + raw XML).", "dlg.link": "Hyperlink", "dlg.linkNote": "Applies to the whole shape. Ctrl+click opens a link on the slide.",
+  // errors
+  "err.empty": "The file is empty", "err.legacy-ppt": "Binary .ppt (PowerPoint 97–2003) is not supported", "err.encrypted": "This presentation is password-protected (encrypted)", "err.not-zip": "This is not a .pptx (OPC/ZIP) file",
+  "err.parse": "The presentation could not be read", "err.fetch": "The presentation could not be downloaded", "err.hint": "Save it as .pptx from PowerPoint (File → Save As) or remove the password, then open it again.", "err.cfb": "Container contents ({kind})",
+  // toast
+  "toast.saved": "Downloaded “{name}”", "toast.saveFail": "Could not build the file — see the log", "toast.copied": "{n} shape(s) copied", "toast.replaced": "{n} replaced", "toast.propsSaved": "Properties updated", "toast.imgFail": "Could not insert “{name}”", "toast.opFail": "The operation failed — see the log",
+  // history labels
+  "hist.open": "Opened", "hist.undo": "Undo", "hist.redo": "Redo", "hist.move": "Move", "hist.resize": "Resize", "hist.rotate": "Rotate / flip", "hist.insert": "Insert", "hist.fill": "Fill", "hist.stroke": "Outline", "hist.effect": "Effect",
+  "hist.image": "Picture", "hist.props": "Properties", "hist.link": "Hyperlink", "hist.anim": "Animation", "hist.format": "Text format", "hist.align": "Alignment", "hist.list": "List", "hist.indent": "Level", "hist.spacing": "Spacing", "hist.text": "Edit text",
+  "hist.arrange": "Arrange", "hist.group": "Group", "hist.delete": "Delete", "hist.paste": "Paste", "hist.slide": "Slides", "hist.layout": "Layout", "hist.background": "Background", "hist.notes": "Notes", "hist.transition": "Transition",
+  "hist.chart": "Chart", "hist.table": "Table", "hist.painter": "Format painter", "hist.replace": "Replace",
+  // log
+  "log.loaded": "Opened “{name}” ({size} bytes).", "log.summary": "{slides} slides, {shapes} shapes, {layouts} layouts, {parts} package parts.", "log.kinds": "Shapes: {shape} text/auto shapes, {picture} pictures, {group} groups, {frame} frames, {connector} connectors.",
+  "log.hidden": "{n} hidden slide(s).", "log.sections": "{n} section(s) found.", "log.theme": "Theme “{name}” read (colors and fonts applied).", "log.charts": "{n} chart(s) drawn from their data (approximate styling).",
+  "log.diagrams": "{n} SmartArt diagram(s) are not rendered (placeholder).", "log.ole": "{n} embedded object part(s) found — see the objects panel.", "log.media": "{n} audio/video part(s) are listed but not played.",
+  "log.macro": "VBA macro project found. Macros are NOT executed or edited; they are listed in the objects panel and preserved when saving.", "log.comments": "{n} comment(s) read (listed in Presentation information).",
+  "log.animations": "Animations present: only simple entrance effects can be edited; they are not played in the slideshow.", "log.notes": "{n} slide(s) have speaker notes.", "log.custom": "Custom XML / tags are preserved but ignored.", "log.masters": "{n} slide masters found.",
+  "log.custom-geom": "{n} custom-geometry shape(s) drawn from their path data.", "log.frames": "{n} graphic frame(s) of unsupported type are shown as placeholders.", "log.tiff": "{n} TIFF picture(s) cannot be shown by the browser (placeholder).",
+  "log.validation": "Package check: {msg}", "log.validateFail": "Package validation failed: {msg}",
+  "log.preset": "Shape “{prst}” has no drawing — a rectangle is shown instead.", "log.imgFormat": "Picture format {fmt} cannot be shown by the browser.", "log.frame": "Graphic frame “{name}” is shown as a placeholder.",
+  "log.shapeFail": "Shape “{name}” could not be drawn: {msg}", "log.layoutFail": "Layout shapes could not be drawn: {msg}", "log.opFail": "Operation “{op}” failed: {msg}", "log.imgInsertFail": "Could not insert the picture: {msg}",
+  "log.saveFail": "Could not build the .pptx: {msg}", "log.oleFail": "Could not read object {part}: {msg}",
+};
+
+const id: Dict = {
+  "busy.loading": "Memuat…", "busy.opening": "Membuka presentasi…", "busy.sample": "Membuat presentasi contoh…",
+  "confirm.discard": "Buang perubahan yang belum disimpan dan buka presentasi lain?",
+  "drop.hint": "Lepas berkas .pptx atau gambar di sini",
+  "prompt.title": "Klik untuk menambah judul", "prompt.subtitle": "Klik untuk menambah subjudul", "prompt.body": "Klik untuk menambah teks", "prompt.default": "Klik untuk menambah teks",
+  "b.open": "Buka", "b.openTip": "Buka berkas PowerPoint lokal (.pptx / .pptm)", "b.sample": "Muat presentasi contoh", "b.save": "Simpan", "b.saveTip": "Unduh presentasi beserta perubahan",
+  "b.export": "Unduh", "b.undo": "Urungkan", "b.redo": "Ulangi", "b.history": "Riwayat undo", "b.find": "Cari", "b.info": "Informasi presentasi", "b.log": "Log pembacaan", "b.ole": "Objek tertanam & makro", "b.debug": "Informasi debug",
+  "b.language": "Bahasa", "b.close": "Tutup", "b.cancel": "Batal", "b.apply": "Terapkan", "b.copy": "Salin", "b.download": "Unduh", "b.refresh": "Segarkan", "b.source": "Berkas asli",
+  "b.painter": "Format painter", "b.painterTip": "Salin isi, garis tepi, dan format teks bentuk terpilih, lalu klik bentuk lain (Esc membatalkan)",
+  "b.paste": "Tempel", "b.duplicate": "Duplikat", "b.newSlide": "Slide baru", "b.layout": "Tata letak", "b.dupSlide": "Duplikat slide", "b.delSlide": "Hapus slide",
+  "b.font": "Font", "b.size": "Ukuran font", "b.sizeUp": "Perbesar font", "b.sizeDown": "Perkecil font", "b.bold": "Tebal", "b.italic": "Miring", "b.underline": "Garis bawah", "b.strike": "Coret", "b.color": "Warna teks",
+  "b.bullets": "Daftar berbutir", "b.numbers": "Daftar bernomor", "b.outdent": "Kurangi level", "b.indent": "Tambah level", "b.alignL": "Rata kiri", "b.alignC": "Tengah", "b.alignR": "Rata kanan", "b.alignJ": "Rata kiri-kanan", "b.lineSpacing": "Spasi baris",
+  "b.anchorTop": "Teks rata atas", "b.anchorMid": "Teks rata tengah", "b.anchorBot": "Teks rata bawah",
+  "b.fill": "Warna isi", "b.noFill": "Tanpa isi", "b.outline": "Warna garis tepi", "b.outlineW": "Tebal garis tepi", "b.dash": "Gaya garis tepi", "b.shadow": "Bayangan",
+  "b.textbox": "Kotak teks", "b.shapes": "Bentuk", "b.line": "Garis", "b.arrowLine": "Panah", "b.picture": "Gambar", "b.table": "Tabel", "b.chart": "Grafik", "b.link": "Tautan", "b.unlink": "Hapus tautan", "b.align": "Rata", "b.present": "Slideshow",
+  "g.clipboard": "Papan klip", "g.slides": "Slide", "g.font": "Font", "g.paragraph": "Paragraf", "g.drawing": "Gambar", "g.insert": "Sisipkan", "g.size": "Posisi & ukuran", "g.transform": "Transformasi", "g.arrange": "Susun", "g.properties": "Properti",
+  "g.rowsCols": "Baris & kolom", "g.merge": "Gabung", "g.cell": "Sel", "g.table": "Tabel", "g.chart": "Grafik", "g.picture": "Gambar", "g.crop": "Potong", "g.adjust": "Penyesuaian", "g.slide": "Slide", "g.background": "Latar",
+  "g.transition": "Transisi", "g.show": "Tampilkan", "g.zoom": "Zoom", "g.window": "Jendela",
+  "tab.home": "Beranda", "tab.insert": "Sisip", "tab.format": "Bentuk", "tab.table": "Tabel", "tab.chart": "Grafik", "tab.picture": "Gambar", "tab.slide": "Slide", "tab.view": "Tampilan",
+  "p.width": "L", "p.height": "T", "p.lock": "Kunci rasio aspek (juga saat menyeret gagang sudut; Shift membalik)", "p.locked": "Terkunci", "p.free": "Bebas", "p.rotateCW": "Putar kanan 90°", "p.flipH": "Balik horizontal", "p.flipV": "Balik vertikal",
+  "p.name": "Nama", "p.alt": "Teks alternatif", "p.hidden": "Sembunyikan bentuk", "p.animation": "Animasi masuk", "p.noAnim": "Tanpa animasi", "p.delete": "Hapus", "p.replace": "Ganti gambar", "p.resetCrop": "Reset gambar",
+  "p.crop.left": "Ki", "p.crop.top": "At", "p.crop.right": "Ka", "p.crop.bottom": "Bw", "p.brightness": "Kecerahan", "p.contrast": "Kontras", "p.opacity": "Opasitas",
+  "a.front": "Bawa ke depan", "a.back": "Kirim ke belakang", "a.forward": "Maju satu lapis", "a.backward": "Mundur satu lapis", "a.group": "Grup", "a.ungroup": "Pisah grup",
+  "al.left": "Rata kiri", "al.center": "Rata tengah", "al.right": "Rata kanan", "al.top": "Rata atas", "al.middle": "Rata tengah vertikal", "al.bottom": "Rata bawah", "al.hdist": "Sebar horizontal", "al.vdist": "Sebar vertikal",
+  "t.rowAbove": "Baris di atas", "t.rowBelow": "Baris di bawah", "t.colLeft": "Kolom di kiri", "t.colRight": "Kolom di kanan", "t.delRow": "Hapus baris", "t.delCol": "Hapus kolom", "t.delTable": "Hapus tabel",
+  "t.mergeRight": "Gabung ke kanan", "t.mergeDown": "Gabung ke bawah", "t.cellPos": "Sel B{r}K{c}", "t.pickCell": "Klik sebuah sel dahulu", "t.shade": "Isi sel", "t.noShade": "Tanpa isi", "t.borders": "Border", "t.bordersTip": "Beri border tipis pada sel terpilih",
+  "t.headerRow": "Baris header", "t.banded": "Baris berselang-seling", "t.firstCol": "Kolom pertama", "t.colW": "Lebar kol. (cm)", "t.rowH": "Tinggi baris (cm)",
+  "c.column": "Kolom", "c.bar": "Batang", "c.line": "Garis", "c.area": "Area", "c.pie": "Pai", "c.doughnut": "Donat", "c.scatter": "Sebar", "c.radar": "Radar", "c.kind": "Jenis grafik", "c.title": "Judul grafik", "c.note": "Penyuntingan data belum tersedia pada demo ini.",
+  "s.hideSlide": "Sembunyikan slide", "s.moveUp": "Geser slide ke atas", "s.moveDown": "Geser slide ke bawah", "s.bgColor": "Warna latar", "s.bgImage": "Gambar latar", "s.bgClear": "Reset latar",
+  "s.transition": "Efek transisi", "s.noTransition": "Tanpa transisi", "s.speed": "Kecepatan", "s.applyAll": "Terapkan ke semua",
+  "s.slide": "Slide {i} dari {n}", "s.multi": "{n} bentuk terpilih", "s.cell": "Sel B{r}K{c} ({rows}×{cols})", "s.merged": "sel gabungan", "s.editing": "mengedit teks", "s.history": "undo {i}/{n} (maks {max})", "s.historyTip": "Posisi dalam riwayat undo",
+  "v.zoomIn": "Perbesar", "v.zoomOut": "Perkecil", "v.fit": "Pas", "v.grid": "Kisi", "v.snap": "Garis pandu", "v.thumbs": "Panel slide", "v.notes": "Catatan", "v.dark": "Mode gelap",
+  "v.hideToolbar": "Sembunyikan toolbar", "v.showToolbar": "Tampilkan toolbar", "v.fullscreen": "Layar penuh", "v.exitFs": "Keluar layar penuh",
+  "m.pptx": "PowerPoint (.pptx) dengan perubahan", "m.txt": "Kerangka teks (.txt)", "m.source": "Berkas asli (tanpa perubahan)", "m.new": "Presentasi kosong baru", "m.pickTable": "Pilih ukuran tabel",
+  "painter.copied": "Format tersalin:", "painter.hint": "klik sebuah bentuk untuk menerapkan — Esc membatalkan",
+  "pk.fill": "isi", "pk.stroke": "garis tepi", "pk.font": "font", "pk.size": "ukuran", "pk.bold": "tebal", "pk.italic": "miring", "pk.color": "warna", "pk.align": "rata",
+  "tool.draw": "Mode menggambar", "tool.hint": "seret pada slide untuk menggambar, atau klik untuk menaruh — Esc membatalkan",
+  "panel.find": "Cari & ganti", "panel.info": "Informasi presentasi", "panel.log": "Log pembacaan", "panel.ole": "Objek tertanam & makro", "panel.history": "Riwayat undo",
+  "find.placeholder": "Cari di slide dan catatan…", "find.prev": "Sebelumnya", "find.next": "Berikutnya", "find.case": "Cocokkan huruf besar/kecil", "find.word": "Kata utuh", "find.regex": "Ekspresi reguler",
+  "find.replaceWith": "Ganti dengan…", "find.replaceOne": "Ganti kecocokan saat ini", "find.replaceAll": "Ganti semua", "find.badRegex": "Ekspresi tidak valid", "find.count": "kecocokan", "find.truncated": "dibatasi 3.000 pertama",
+  "find.more": "Tampilkan {n} lagi", "find.slide": "slide {n}",
+  "hist.max": "Maks. catatan", "hist.count": "{n} perubahan tercatat · posisi {i}",
+  "log.all": "Semua", "log.ok": "Terbaca", "log.warn": "Terbatas", "log.error": "Kesalahan",
+  "info.file": "Berkas", "info.name": "Nama", "info.size": "Ukuran", "info.parts": "Bagian paket", "info.modified": "Perubahan belum disimpan", "info.yes": "Ya", "info.no": "Tidak",
+  "info.stats": "Statistik", "info.slides": "Slide", "info.hidden": "tersembunyi", "info.shapes": "Bentuk", "info.size16": "Ukuran slide", "info.layouts": "Tata letak", "info.theme": "Tema", "info.comments": "Komentar",
+  "info.props": "Properti", "info.applyProps": "Terapkan properti", "info.validation": "Validasi paket", "info.valid": "Tidak ada masalah", "info.partsList": "Isi paket",
+  "prop.title": "Judul", "prop.creator": "Penulis", "prop.subject": "Subjek", "prop.keywords": "Kata kunci", "prop.description": "Deskripsi", "prop.category": "Kategori",
+  "ole.help": "Objek tertanam dan proyek makro yang ditemukan dalam paket. Objek tidak pernah dieksekusi.", "ole.none": "Tidak ada objek tertanam.", "ole.detail": "Detail", "ole.kind": "Dikenali sebagai", "ole.embedded": "Berkas tertanam",
+  "ole.dlRaw": "Unduh objek", "ole.dlNative": "Ekstrak berkas tertanam", "ole.zipNote": "Objek ini adalah paket Office Open XML (zip). Unduh dan buka dengan aplikasi yang sesuai.",
+  "ole.structure": "Struktur compound file (klik stream untuk pratinjau)", "ole.noStream": "Stream tidak dapat dibaca.", "ole.macros": "Proyek makro VBA", "ole.macroNote": "Makro hanya ditampilkan untuk diperiksa. Tidak pernah dijalankan dan dipertahankan utuh saat disimpan.",
+  "ole.readVba": "Baca modul makro", "ole.noSource": "(kode sumber tidak dapat didekode)",
+  "notes.label": "Catatan", "notes.placeholder": "Klik untuk menambah catatan pembicara",
+  "tag.readonly": "Baca-saja", "tag.readonlyTip": "Mode baca-saja: penyuntingan dinonaktifkan", "tag.macro": "makro", "tag.macroTip": "Presentasi memuat proyek VBA (tidak dieksekusi, dipertahankan utuh)", "tag.modifiedTip": "Perubahan belum disimpan",
+  "dlg.debug": "Informasi debug", "dlg.debugHelp": "Cuplikan presentasi, riwayat, dan bentuk terpilih (properti terselesaikan + XML mentah).", "dlg.link": "Hyperlink", "dlg.linkNote": "Berlaku untuk seluruh bentuk. Ctrl+klik membuka tautan di slide.",
+  "err.empty": "Berkas kosong", "err.legacy-ppt": "Format .ppt biner (PowerPoint 97–2003) tidak didukung", "err.encrypted": "Presentasi ini diproteksi password (terenkripsi)", "err.not-zip": "Ini bukan berkas .pptx (OPC/ZIP)",
+  "err.parse": "Presentasi tidak dapat dibaca", "err.fetch": "Presentasi tidak dapat diunduh", "err.hint": "Simpan sebagai .pptx dari PowerPoint (File → Save As) atau hapus password, lalu buka kembali.", "err.cfb": "Isi kontainer ({kind})",
+  "toast.saved": "“{name}” diunduh", "toast.saveFail": "Berkas tidak dapat dibuat — lihat log", "toast.copied": "{n} bentuk disalin", "toast.replaced": "{n} diganti", "toast.propsSaved": "Properti diperbarui", "toast.imgFail": "Gagal menyisipkan “{name}”", "toast.opFail": "Operasi gagal — lihat log",
+  "hist.open": "Dibuka", "hist.undo": "Urungkan", "hist.redo": "Ulangi", "hist.move": "Pindah", "hist.resize": "Ubah ukuran", "hist.rotate": "Putar / balik", "hist.insert": "Sisip", "hist.fill": "Isi", "hist.stroke": "Garis tepi", "hist.effect": "Efek",
+  "hist.image": "Gambar", "hist.props": "Properti", "hist.link": "Hyperlink", "hist.anim": "Animasi", "hist.format": "Format teks", "hist.align": "Perataan", "hist.list": "Daftar", "hist.indent": "Level", "hist.spacing": "Spasi", "hist.text": "Edit teks",
+  "hist.arrange": "Susun", "hist.group": "Grup", "hist.delete": "Hapus", "hist.paste": "Tempel", "hist.slide": "Slide", "hist.layout": "Tata letak", "hist.background": "Latar", "hist.notes": "Catatan", "hist.transition": "Transisi",
+  "hist.chart": "Grafik", "hist.table": "Tabel", "hist.painter": "Format painter", "hist.replace": "Ganti",
+  "log.loaded": "Membuka “{name}” ({size} byte).", "log.summary": "{slides} slide, {shapes} bentuk, {layouts} tata letak, {parts} bagian paket.", "log.kinds": "Bentuk: {shape} teks/bentuk otomatis, {picture} gambar, {group} grup, {frame} bingkai, {connector} konektor.",
+  "log.hidden": "{n} slide tersembunyi.", "log.sections": "{n} section ditemukan.", "log.theme": "Tema “{name}” terbaca (warna dan font diterapkan).", "log.charts": "{n} grafik digambar dari datanya (gaya perkiraan).",
+  "log.diagrams": "{n} diagram SmartArt tidak dirender (placeholder).", "log.ole": "{n} bagian objek tertanam ditemukan — lihat panel objek.", "log.media": "{n} bagian audio/video didaftarkan tetapi tidak diputar.",
+  "log.macro": "Proyek makro VBA ditemukan. Makro TIDAK dieksekusi atau diubah; ditampilkan di panel objek dan dipertahankan saat menyimpan.", "log.comments": "{n} komentar terbaca (daftar di Informasi presentasi).",
+  "log.animations": "Animasi ada: hanya efek masuk sederhana yang dapat diedit; tidak diputar pada slideshow.", "log.notes": "{n} slide memiliki catatan pembicara.", "log.custom": "XML kustom / tag dipertahankan tetapi diabaikan.", "log.masters": "{n} slide master ditemukan.",
+  "log.custom-geom": "{n} bentuk geometri kustom digambar dari data path-nya.", "log.frames": "{n} bingkai grafis bertipe tidak didukung ditampilkan sebagai placeholder.", "log.tiff": "{n} gambar TIFF tidak dapat ditampilkan browser (placeholder).",
+  "log.validation": "Pemeriksaan paket: {msg}", "log.validateFail": "Validasi paket gagal: {msg}",
+  "log.preset": "Bentuk “{prst}” belum memiliki gambar — ditampilkan sebagai persegi panjang.", "log.imgFormat": "Format gambar {fmt} tidak dapat ditampilkan browser.", "log.frame": "Bingkai grafis “{name}” ditampilkan sebagai placeholder.",
+  "log.shapeFail": "Bentuk “{name}” tidak dapat digambar: {msg}", "log.layoutFail": "Bentuk tata letak tidak dapat digambar: {msg}", "log.opFail": "Operasi “{op}” gagal: {msg}", "log.imgInsertFail": "Gagal menyisipkan gambar: {msg}",
+  "log.saveFail": "Gagal membuat .pptx: {msg}", "log.oleFail": "Gagal membaca objek {part}: {msg}",
+};
+
+export const DICTS: Record<Lang, Dict> = { en, id };
+
+export function translate(lang: Lang, key: string, params?: Record<string, string | number>): string {
+  const raw = DICTS[lang][key] ?? DICTS.en[key] ?? key;
+  return params ? raw.replace(/\{(\w+)\}/g, (_m, k: string) => (params[k] !== undefined ? String(params[k]) : `{${k}}`)) : raw;
+}
+
+export function createI18n(lang: Accessor<Lang>) {
+  return { t: (key: string, params?: Record<string, string | number>) => translate(lang(), key, params) };
+}
