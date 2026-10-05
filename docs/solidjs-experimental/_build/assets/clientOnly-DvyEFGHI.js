@@ -1,1 +1,0 @@
-import{e as l,U as d,s as u,w as p,a as k,u as x}from"./web-C02gwYou.js";function C(e,a={}){const[n,o]=l();return!a.lazy&&m(e,o),c=>{let t,r;const[,s]=d(c,["fallback"]);if(a.lazy&&m(e,o),(t=n())&&!u.context)return t(s);const[f,i]=l(!u.context);return p(()=>i(!0)),k(()=>(t=n(),r=f(),x(()=>t&&r?t(s):c.fallback)))}}function m(e,a){e().then(n=>a(()=>n.default))}export{C as c};

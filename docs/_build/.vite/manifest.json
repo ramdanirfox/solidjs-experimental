@@ -25,10 +25,6 @@
     "file": "assets/app.constant-DCfKD7jM.js",
     "name": "app.constant"
   },
-  "_browser-D8jSj2eA.js": {
-    "file": "assets/browser-D8jSj2eA.js",
-    "name": "browser"
-  },
   "_clientOnly-DvyEFGHI.js": {
     "file": "assets/clientOnly-DvyEFGHI.js",
     "name": "clientOnly",
@@ -36,13 +32,13 @@
       "_web-C02gwYou.js"
     ]
   },
-  "_docx-util-BRwwb_uw.js": {
-    "file": "assets/docx-util-BRwwb_uw.js",
-    "name": "docx-util",
-    "isDynamicEntry": true,
-    "imports": [
-      "__commonjsHelpers-D6-XlEtG.js"
-    ]
+  "_docx-util-BLG5rZyk.js": {
+    "file": "assets/docx-util-BLG5rZyk.js",
+    "name": "docx-util"
+  },
+  "_events-DneH-7M4.js": {
+    "file": "assets/events-DneH-7M4.js",
+    "name": "events"
   },
   "_examples-B23c9E4A.js": {
     "file": "assets/examples-B23c9E4A.js",
@@ -104,6 +100,22 @@
   "_preload-helper-CgER5ffx.js": {
     "file": "assets/preload-helper-CgER5ffx.js",
     "name": "preload-helper"
+  },
+  "_ruler-kit-BoNOuQNg.js": {
+    "file": "assets/ruler-kit-BoNOuQNg.js",
+    "name": "ruler-kit",
+    "isDynamicEntry": true,
+    "imports": [
+      "_preload-helper-CgER5ffx.js",
+      "__commonjsHelpers-D6-XlEtG.js"
+    ],
+    "css": [
+      "assets/ruler-kit-Db4Q8f1_.css"
+    ]
+  },
+  "_ruler-kit-Db4Q8f1_.css": {
+    "file": "assets/ruler-kit-Db4Q8f1_.css",
+    "src": "_ruler-kit-Db4Q8f1_.css"
   },
   "_store-Do5jbINm.js": {
     "file": "assets/store-Do5jbINm.js",
@@ -172,22 +184,23 @@
     ]
   },
   "src/components/SJXDocxEditor.tsx": {
-    "file": "assets/SJXDocxEditor-DkXCkjJ1.js",
+    "file": "assets/SJXDocxEditor-0aOudZP6.js",
     "name": "SJXDocxEditor",
     "src": "src/components/SJXDocxEditor.tsx",
     "isDynamicEntry": true,
     "imports": [
       "_preload-helper-CgER5ffx.js",
       "_web-C02gwYou.js",
-      "_browser-D8jSj2eA.js",
-      "_docx-util-BRwwb_uw.js",
+      "_ruler-kit-BoNOuQNg.js",
+      "_docx-util-BLG5rZyk.js",
+      "_events-DneH-7M4.js",
       "__commonjsHelpers-D6-XlEtG.js"
     ],
     "dynamicImports": [
-      "_docx-util-BRwwb_uw.js"
+      "_ruler-kit-BoNOuQNg.js"
     ],
     "css": [
-      "assets/SJXDocxEditor-s1Mlzj_t.css"
+      "assets/SJXDocxEditor-DZOFOF1v.css"
     ]
   },
   "src/components/SJXGlobeMaplibre.tsx": {
@@ -208,47 +221,52 @@
     ]
   },
   "src/components/SJXMaxgraphEditor.tsx": {
-    "file": "assets/SJXMaxgraphEditor-CZdqtO5Y.js",
+    "file": "assets/SJXMaxgraphEditor-B7FsSwH2.js",
     "name": "SJXMaxgraphEditor",
     "src": "src/components/SJXMaxgraphEditor.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_web-C02gwYou.js"
+      "_web-C02gwYou.js",
+      "_events-DneH-7M4.js"
     ],
     "css": [
-      "assets/SJXMaxgraphEditor-BJThTJWz.css"
+      "assets/SJXMaxgraphEditor-DZYMHryk.css"
     ]
   },
   "src/components/SJXPptxEditor.tsx": {
-    "file": "assets/SJXPptxEditor-nkzgtPH7.js",
+    "file": "assets/SJXPptxEditor-DJJUIyEM.js",
     "name": "SJXPptxEditor",
     "src": "src/components/SJXPptxEditor.tsx",
     "isDynamicEntry": true,
     "imports": [
       "_web-C02gwYou.js",
       "_preload-helper-CgER5ffx.js",
-      "_browser-D8jSj2eA.js",
-      "_docx-util-BRwwb_uw.js",
+      "_ruler-kit-BoNOuQNg.js",
+      "_docx-util-BLG5rZyk.js",
+      "_events-DneH-7M4.js",
       "__commonjsHelpers-D6-XlEtG.js"
     ],
     "dynamicImports": [
-      "_docx-util-BRwwb_uw.js"
+      "_ruler-kit-BoNOuQNg.js"
     ],
     "css": [
-      "assets/SJXPptxEditor-CXGN3MBJ.css"
+      "assets/SJXPptxEditor-CZSR_gf4.css"
     ]
   },
   "src/components/SJXXlsxPreview.tsx": {
-    "file": "assets/SJXXlsxPreview-CCxlExfE.js",
+    "file": "assets/SJXXlsxPreview-Byyg8UeS.js",
     "name": "SJXXlsxPreview",
     "src": "src/components/SJXXlsxPreview.tsx",
     "isDynamicEntry": true,
     "imports": [
       "_web-C02gwYou.js",
-      "_browser-D8jSj2eA.js"
+      "_ruler-kit-BoNOuQNg.js",
+      "_events-DneH-7M4.js",
+      "_preload-helper-CgER5ffx.js",
+      "__commonjsHelpers-D6-XlEtG.js"
     ],
     "css": [
-      "assets/SJXXlsxPreview-CKYfB2F1.css"
+      "assets/SJXXlsxPreview-CFN_J05C.css"
     ]
   },
   "src/routes/aggrid.tsx?pick=default&pick=$css": {
@@ -284,7 +302,7 @@
     ]
   },
   "src/routes/docx-editor.tsx?pick=default&pick=$css": {
-    "file": "assets/docx-editor-f_dMcsj2.js",
+    "file": "assets/docx-editor-Cw9Y0xGE.js",
     "name": "docx-editor",
     "src": "src/routes/docx-editor.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -369,7 +387,7 @@
     ]
   },
   "src/routes/maxgraph-editor.tsx?pick=default&pick=$css": {
-    "file": "assets/maxgraph-editor-VqoMbZBu.js",
+    "file": "assets/maxgraph-editor-D4Tk7JHs.js",
     "name": "maxgraph-editor",
     "src": "src/routes/maxgraph-editor.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -385,7 +403,7 @@
     ]
   },
   "src/routes/pptx-editor.tsx?pick=default&pick=$css": {
-    "file": "assets/pptx-editor-zHy4qjHa.js",
+    "file": "assets/pptx-editor-9z9QMhlM.js",
     "name": "pptx-editor",
     "src": "src/routes/pptx-editor.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -435,7 +453,7 @@
     ]
   },
   "src/routes/xlsx-preview.tsx?pick=default&pick=$css": {
-    "file": "assets/xlsx-preview-0Ii8Xo1T.js",
+    "file": "assets/xlsx-preview-CrtMmab_.js",
     "name": "xlsx-preview",
     "src": "src/routes/xlsx-preview.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -451,7 +469,7 @@
     ]
   },
   "virtual:$vinxi/handler/client": {
-    "file": "assets/client-DpBnnLWZ.js",
+    "file": "assets/client-Zc5USxnT.js",
     "name": "client",
     "src": "virtual:$vinxi/handler/client",
     "isEntry": true,
