@@ -221,3 +221,9 @@ textarea.pxe-txt { height: auto; padding: 6px; font-family: ui-monospace, Consol
 .px-r[data-href] { cursor: pointer; }
 .px-slide .px-text[contenteditable="true"] { user-select: text; }
 .px-slide td[contenteditable="true"] { user-select: text; outline: calc(2px / var(--z, 1)) solid #2f7bf6; outline-offset: -1px; }
+
+/* penggaris (RulerKit) */
+.pxe-rkframe { flex: 1; min-height: 0; }
+.pxe-rkframe > .rk-body > .pxe-host { flex: 1 1 auto; }
+.px-ole { overflow: hidden; }
+.px-ole-badge { position: absolute; right: 4px; bottom: 4px; padding: 0 5px; border-radius: 4px; font: 600 10px/16px system-ui, sans-serif; background: rgba(15, 23, 42, 0.75); color: #fff; pointer-events: none; }

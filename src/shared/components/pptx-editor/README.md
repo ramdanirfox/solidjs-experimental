@@ -58,3 +58,50 @@ Props (`PptxEditorProps`): `src?: string`, `data?: Uint8Array | ArrayBuffer`, `f
 - Gaya tabel dan grafik digambar sebagai perkiraan (bukan salinan piksel-sempurna dari PowerPoint). Transisi hanya berupa fade pada slideshow.
 - Format `.ppt` biner dan berkas terenkripsi tidak didukung (daftar isi kontainer ditampilkan). Data grafik belum dapat disunting di antarmuka.
 - Library memberi fill/stroke `inherit` pada bentuk baru; editor mengisinya secara eksplisit saat menyisipkan bentuk.
+
+## Event, API, dan perintah (pemrograman)
+
+Editor memancarkan event bertipe lewat **bus**, prop `onEvent`, dan **CustomEvent DOM** `pptx-editor:<tipe>` (bubbles) pada elemen akar; semuanya membawa payload yang sama.
+
+```tsx
+<PptxEditor onReady={api => {
+  api.on("change", ({ label, modified }) => …);
+  api.on("ole:inserted", info => …);
+  api.ruler.setVisible(true);
+}} />
+// dari luar tanpa referensi ke API:
+el.addEventListener("pptx-editor:change", e => (e as CustomEvent).detail);
+await dispatchCommand(el, "pptx-editor", "getBytes");
+```
+
+- Event umum: `ready` (editor siap — dokumen mungkin belum selesai dimuat), `load` (`fileName`, `size`, `source`), `load-error`, `change`, `save`, `export`, `zoom`, `panel`, `readonly`, `error`, `destroy`, `locale`, `history`, `selection`, `slide`, `find`, `tool`.
+- Event OLE: `ole:inserted`, `ole:updated`, `ole:open` (klik ganda objek), `ole:error` (`action`: insert | update | resize). Event penggaris: `ruler:visible|unit|guide-add|guide-move|guide-remove|measure|measure-mode`.
+- `api.events` = bus (`on/once/off/onAny/emit/wait/registerCommand/run/history`); prop `bus` memakai bus milik aplikasi (tidak dibersihkan saat editor dilepas); `api.run("<perintah>", …)` menjalankan perintah bernama (`api.events.commands()` untuk daftar).
+- Galat di handler tidak merusak editor.
+
+## Objek OLE: sisip & perbarui
+
+`api.ole.insert(file, opts?)` menyisipkan **berkas apa pun** sebagai objek OLE; `api.ole.update(id, file)` mengganti isinya; `api.ole.list()`, `api.ole.getBytes(id)`, `api.ole.resize(id, w, h)`.
+`file` = `File`/`Blob` atau `{ name, data }`. Cara penyimpanan mengikuti Office (`prepareOle`, `office-shared/ole-embed.ts`):
+
+| Berkas | Disimpan sebagai | ProgID |
+| --- | --- | --- |
+| `.xlsx/.xlsm/.docx/.docm/.pptx/.pptm` (ZIP asli) | paket OOXML tertanam (relasi `package`) | `Excel.Sheet.12`, `Word.Document.12`, `PowerPoint.Show.12`, … |
+| Compound File biner (`.bin`, `.xls`, `.doc`) | apa adanya (relasi `oleObject`) | dari `\x01CompObj`, bila ada |
+| Lainnya | objek `Package` (`\x01Ole10Native` dalam CFB, seperti *Insert → Object → From file*) | `Package` |
+
+Pratinjau (ikon + nama berkas, PNG) dibuat otomatis (`opts.preview` untuk milik sendiri). Galat (berkas kosong, id tidak ada, mode `readonly`, dst.) memancarkan `ole:error` dan masuk Log; API mengembalikan `undefined`/`false`, tidak melempar.
+UI: tombol **Objek…** dan panel **OLE** (daftar objek, *Ganti isi…*). Isi tertanam tidak pernah dieksekusi.
+Catatan verifikasi: struktur paket diperiksa dengan buka-ulang lewat library + uji well-formed XML + validasi library; **belum dibuka di aplikasi Office sungguhan** pada pengembangan ini.
+
+## Penggaris, garis bantu, dan alat ukur
+
+Prop `ruler` / `rulerUnit` (default tersembunyi, `cm`) atau `api.ruler`. Penggaris menampilkan `cm / mm / in / pt / px` (klik sudut untuk berganti), **garis bantu** dibuat dengan menyeret dari penggaris
+(untuk perataan; bentuk yang dipindah / diubah ukurannya menempel ke guide bersama snapping bawaan (tepi/tengah slide dan bentuk lain)), dan **alat ukur** (tombol *Ukur*, seret di area kerja untuk jarak/Δx/Δy/sudut; Shift = kunci sumbu, Esc = hapus). Lihat `editor-kit/README.md` untuk API lengkap.
+Satuan dokumen = px slide (1280×720); angka nol = pojok kiri-atas slide.
+
+### Detail OLE di PPTX
+
+`@office-kit/pptx` belum punya API OLE, jadi `pptx-ole.ts` mengubah paket langsung: part `/ppt/embeddings/*`, gambar `/ppt/media/oleprev*.png`, relasi slide, dan `<p:graphicFrame>` + `<p:oleObj>` (bentuk yang sama dengan python-pptx) — lalu `PptxDeck.mutatePackage` memuat ulang model dan mencatat satu langkah riwayat.
+Id objek = `"<indeks slide>:<shapeId>"` (mis. `"0:12"`). **Objek buatan PowerPoint** dibungkus `mc:AlternateContent` sehingga library tidak menampilkannya sebagai shape; editor memindai XML slide sendiri: objek itu **terbaca, tampil (kotak statis, ikon pratinjau), dan dapat diganti isinya**
+(pembungkus dilepas dan cabang VML dibuang agar pratinjau baru yang dipakai), tetapi belum dapat dipindah/diubah ukurannya lewat kanvas. Bingkai hasil sisip bersifat shape biasa: dapat dipilih, dipindah, diubah ukuran, dan di-undo.

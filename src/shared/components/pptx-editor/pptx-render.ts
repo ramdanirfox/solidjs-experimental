@@ -7,6 +7,7 @@ import * as P from "@office-kit/pptx";
 import type { PresentationData, SlideData, SlideShapeData, ReadTextFormat, TableCellData } from "@office-kit/pptx";
 import { customPath, presetPath } from "./pptx-geom";
 import { chartSvg } from "./pptx-chart";
+import { oleFramePreview, readOleFrame, scanSlideOle, type RawOleFrame } from "./pptx-ole";
 
 export const PX = 9525;
 export const emuPx = (e: number) => e / PX;
@@ -297,6 +298,33 @@ function renderText(ctx: RenderCtx, shape: SlideShapeData, box: HTMLElement, w: 
 const MIME: Record<string, string> = { png: "image/png", jpeg: "image/jpeg", gif: "image/gif", bmp: "image/bmp", tiff: "image/tiff", webp: "image/webp", svg: "image/svg+xml" };
 export const imgMime = (f: string) => MIME[f] ?? "image/png";
 
+/** Bingkai OLE: tampilkan gambar pratinjau + lencana. Mengembalikan false bila shape bukan objek OLE. */
+function renderOleFrame(ctx: RenderCtx, shape: SlideShapeData, box: HTMLElement): boolean {
+  let info: ReturnType<typeof readOleFrame> = null;
+  try { info = readOleFrame(shape); } catch { return false; }
+  if (!info) return false;
+  box.classList.add("px-ole");
+  box.dataset.progId = info.progId;
+  const pv = oleFramePreview(ctx.pres, P.getShapeSlide(shape), info);
+  if (pv) {
+    const img = el(ctx, "img");
+    img.draggable = false;
+    img.src = ctx.imgUrl(pv.bytes, pv.format);
+    img.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:fill";
+    box.appendChild(img);
+  } else {
+    const ph = el(ctx, "div", "px-ph");
+    ph.textContent = `📎 ${info.progId || "OLE"}`;
+    box.appendChild(ph);
+    issue(ctx, "log.olePreview", { name: P.getShapeName(shape) });
+  }
+  const badge = el(ctx, "span", "px-ole-badge");
+  badge.textContent = "OLE";
+  box.appendChild(badge);
+  box.title = `OLE: ${info.progId || "?"}${info.linked ? " (link)" : ""}`;
+  return true;
+}
+
 function renderPicture(ctx: RenderCtx, shape: SlideShapeData, box: HTMLElement, w: number, h: number) {
   const bytes = P.getShapeImageBytes(shape);
   const fmt = P.getShapeImageFormat(shape) ?? "png";
@@ -436,7 +464,7 @@ export function renderShape(ctx: RenderCtx, shape: SlideShapeData, parent: HTMLE
         if (spec) c.innerHTML = chartSvg(spec, Math.max(40, rc.w), Math.max(40, rc.h), paletteOf(ctx));
         else c.textContent = "📊";
         box.appendChild(c);
-      } else {
+      } else if (!renderOleFrame(ctx, shape, box)) {
         const ph = el(ctx, "div", "px-ph");
         ph.textContent = `◻ ${P.getShapeName(shape)}`;
         box.appendChild(ph);
@@ -513,7 +541,36 @@ export function renderSlide(ctx: RenderCtx, slide: SlideData): HTMLElement {
   root.appendChild(under);
   const layer = el(ctx, "div", "px-layer px-shapes");
   for (const s of topShapes(slide)) renderShape(ctx, s, layer, identity, true, true);
+  // objek OLE buatan PowerPoint dibungkus mc:AlternateContent dan tidak dikenal library sebagai shape → kotak statis (dapat diganti isinya, belum dapat dipindah)
+  try {
+    for (const f of scanSlideOle(slide)) if (!f.direct) renderStaticOle(ctx, slide, f, layer);
+  } catch (e) { issue(ctx, "log.shapeFail", { name: "OLE", msg: e instanceof Error ? e.message : String(e) }); }
   root.appendChild(layer);
   return root;
+}
+
+function renderStaticOle(ctx: RenderCtx, slide: SlideData, f: RawOleFrame, parent: HTMLElement) {
+  const box = el(ctx, "div", "px-shape px-ole px-ole-static");
+  box.dataset.oleId = String(f.id);
+  box.dataset.progId = f.progId;
+  box.style.cssText = `position:absolute;left:${r2(emuPx(f.bounds.x))}px;top:${r2(emuPx(f.bounds.y))}px;width:${r2(emuPx(f.bounds.w))}px;height:${r2(emuPx(f.bounds.h))}px`;
+  const pv = oleFramePreview(ctx.pres, slide, f);
+  if (pv) {
+    const img = el(ctx, "img");
+    img.draggable = false;
+    img.src = ctx.imgUrl(pv.bytes, pv.format);
+    img.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:fill";
+    box.appendChild(img);
+  } else {
+    const ph = el(ctx, "div", "px-ph");
+    ph.textContent = `📎 ${f.progId || "OLE"}`;
+    box.appendChild(ph);
+    issue(ctx, "log.olePreview", { name: f.name || `Object ${f.id}` });
+  }
+  const badge = el(ctx, "span", "px-ole-badge");
+  badge.textContent = "OLE";
+  box.appendChild(badge);
+  box.title = `OLE: ${f.progId || "?"}${f.linked ? " (link)" : ""}`;
+  parent.appendChild(box);
 }
 

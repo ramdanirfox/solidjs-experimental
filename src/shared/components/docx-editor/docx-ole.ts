@@ -5,6 +5,7 @@ import { plainText, flatText } from "./docx-text";
 import { describeProgId, isCfb, isZip, readCfb, type OleObject } from "../office-shared/ole-core";
 
 export * from "../office-shared/ole-core";
+export * from "./docx-ole-edit";
 
 // ───────── daftar objek OLE pada dokumen ─────────
 
@@ -39,7 +40,7 @@ export function listOle(book: DocxBook): OleObject[] {
   }
   // embedding yang tidak ditemukan referensinya di body (mis. header/footer) tetap dicantumkan
   for (const n of names) {
-    if (!n.startsWith("/word/embeddings/") || used.has(n)) continue;
+    if (!n.startsWith("/word/embeddings/") || used.has(n) || [...book.oleTracked.values()].includes(n)) continue;
     const data = book.part(n)?.data;
     const format: OleObject["format"] = !data ? "missing" : isCfb(data) ? "cfb" : isZip(data) ? "zip" : "other";
     out.push({ index: ++idx, part: n, relType: "other", linked: false, size: data?.length ?? 0, format, paragraph: 0, snippet: "", description: "OLE", fileName: n.split("/").pop() ?? "" });

@@ -1,0 +1,55 @@
+/* Penggaris, guide, dan alat ukur (RulerKit). Variabel warna dapat ditimpa oleh editor, mis. `.dark .rk-frame { --rk-bg: … }`. */
+.rk-frame {
+  --rk-t: 20px;
+  --rk-bg: #f8fafc;
+  --rk-fg: #475569;
+  --rk-line: #94a3b8;
+  --rk-region: #e2e8f0;
+  --rk-accent: #2563eb;
+  display: grid;
+  grid-template-columns: 0 minmax(0, 1fr);
+  grid-template-rows: 0 minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+.rk-frame.rk-on { grid-template-columns: var(--rk-t) minmax(0, 1fr); grid-template-rows: var(--rk-t) minmax(0, 1fr); }
+.dark .rk-frame, .rk-frame.dark { --rk-bg: #1e293b; --rk-fg: #cbd5e1; --rk-line: #64748b; --rk-region: #334155; --rk-accent: #60a5fa; }
+
+.rk-frame > .rk-body { grid-column: 2; grid-row: 2; position: relative; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.rk-frame > .rk-body > :not(.rk-layer) { flex: 1 1 auto; min-height: 0; }
+
+.rk-corner, .rk-ruler { display: none; }
+.rk-frame.rk-on .rk-corner, .rk-frame.rk-on .rk-ruler { display: block; }
+.rk-corner {
+  grid-column: 1; grid-row: 1; padding: 0; border: 0; border-right: 1px solid var(--rk-line); border-bottom: 1px solid var(--rk-line);
+  background: var(--rk-bg); color: var(--rk-fg); cursor: pointer; font-size: 9px; line-height: 1;
+}
+.rk-corner::after { content: "⌗"; font-size: 12px; }
+.rk-corner:hover { background: var(--rk-region); }
+.rk-ruler { position: relative; background: var(--rk-bg); overflow: hidden; user-select: none; touch-action: none; }
+.rk-ruler.rk-h { grid-column: 2; grid-row: 1; cursor: row-resize; }
+.rk-ruler.rk-v { grid-column: 1; grid-row: 2; cursor: col-resize; }
+.rk-cv { display: block; position: absolute; inset: 0; }
+.rk-cursor { position: absolute; display: none; background: var(--rk-accent); pointer-events: none; }
+.rk-h .rk-cursor { top: 0; bottom: 0; width: 1px; }
+.rk-v .rk-cursor { left: 0; right: 0; height: 1px; }
+
+.rk-layer { position: absolute; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
+.rk-layer[hidden] { display: none; }
+.rk-layer.rk-measuring { pointer-events: auto; cursor: crosshair; }
+.rk-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.rk-layer.rk-measuring .rk-svg { pointer-events: auto; }
+.rk-mline { stroke: var(--rk-accent); stroke-width: 1.5; stroke-dasharray: 5 3; visibility: hidden; }
+.rk-mlabel, .rk-tip {
+  position: absolute; padding: 2px 6px; border-radius: 4px; font: 11px/1.4 system-ui, sans-serif; white-space: nowrap;
+  background: var(--rk-accent); color: #fff; pointer-events: none; box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+}
+.rk-mlabel[hidden], .rk-tip[hidden] { display: none; }
+.rk-guide { position: absolute; pointer-events: auto; background: var(--rk-accent); opacity: 0.75; }
+.rk-guide::before { content: ""; position: absolute; }
+.rk-gx { top: 0; bottom: 0; width: 1px; cursor: col-resize; }
+.rk-gx::before { top: 0; bottom: 0; left: -4px; right: -4px; }
+.rk-gy { left: 0; right: 0; height: 1px; cursor: row-resize; }
+.rk-gy::before { left: 0; right: 0; top: -4px; bottom: -4px; }
+.rk-guide:hover { opacity: 1; }

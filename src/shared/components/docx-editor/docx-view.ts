@@ -23,6 +23,8 @@ import * as T from "./docx-table";
 import { cloneDrawing, maxDocPrId, readDrawing, replaceBlip, setAlt, setCrop, setLockAspect, setPosition, setRotation, setSize, setWrapMode, sniffImageSize, type ImgInfo, type WrapMode } from "./docx-image";
 import { findAll, replaceHits, type Hit, type SearchOpts, type SearchResult } from "./docx-search";
 import { mergeR, readP, readR, type RProps } from "./docx-style";
+import { createOleRun, findOleObject, oleSize, setOleSize, updateOleObject, type DocxOleRef } from "./docx-ole-edit";
+import type { PreparedOle } from "../office-shared/ole-embed";
 
 export interface SelInfo {
   has: boolean;
@@ -108,6 +110,8 @@ export class DocxView {
   private imgDrag: { mode: "resize" | "move"; handle: string; sx: number; sy: number; w0: number; h0: number; l0: number; t0: number; ratio: number; el: HTMLElement; drawing: XEl } | null = null;
   findHits: Hit[] = [];
   findCur = -1;
+  /** Kait snapping: terima rect klien gambar yang diseret, kembalikan koreksi (px dokumen, tanpa zoom). Diisi editor dari penggaris. */
+  snapGuides?: (rect: DOMRect) => { dx: number; dy: number };
 
   constructor(public host: HTMLElement, public hooks: ViewHooks) {
     host.classList.add("dx-scroll");
@@ -957,7 +961,7 @@ export class DocxView {
     const note = t.closest<HTMLElement>(".dx-fnref[data-note]");
     if (note) { this.scrollToNote(note.dataset.note!); return; }
     const img = t.closest<HTMLElement>(".dx-img");
-    if (img && !img.closest(".dx-hdr,.dx-ftr")) { this.selectImageEl(img); return; }
+    if (img) { this.selectImageEl(img); return; }
     if (this.imgSel) this.clearImageSel();
   }
   private onDblClick(e: MouseEvent) {
@@ -987,7 +991,7 @@ export class DocxView {
     if (!this.book) return;
     const t = e.target as HTMLElement;
     const img = t.closest<HTMLElement>(".dx-img");
-    if (img && !img.closest(".dx-hdr,.dx-ftr")) { e.preventDefault(); if (this.imgSel?.el !== img) this.selectImageEl(img); this.hooks.context(e.clientX, e.clientY, "image"); return; }
+    if (img) { e.preventDefault(); if (this.imgSel?.el !== img) this.selectImageEl(img); this.hooks.context(e.clientX, e.clientY, "image"); return; }
     const c = this.cellAt(t);
     if (c) {
       if (!this.cellSel) { const pt = this.pointOf(window.getSelection()?.anchorNode ?? null, 0); if (!pt) { const p = ps0(c.tc, this.book); if (p) this.setCaret(p, 0); } }
@@ -1408,7 +1412,16 @@ export class DocxView {
   private imgDragMove(e: MouseEvent) {
     const d = this.imgDrag!;
     const dx = (e.clientX - d.sx) / this.zoom, dy = (e.clientY - d.sy) / this.zoom;
-    if (d.mode === "move") { d.el.style.left = `${d.l0 + dx}px`; d.el.style.top = `${d.t0 + dy}px`; this.updateOverlay(); return; }
+    if (d.mode === "move") {
+      let l = d.l0 + dx, t = d.t0 + dy;
+      d.el.style.left = `${l}px`; d.el.style.top = `${t}px`;
+      if (this.snapGuides && !e.altKey) { // menempel ke garis bantu penggaris (Alt = tanpa snap)
+        const sn = this.snapGuides(d.el.getBoundingClientRect());
+        if (sn.dx || sn.dy) { l += sn.dx; t += sn.dy; d.el.style.left = `${l}px`; d.el.style.top = `${t}px`; }
+      }
+      this.updateOverlay();
+      return;
+    }
     const h = d.handle;
     let w = d.w0, hh = d.h0;
     if (h.includes("e")) w = d.w0 + dx; if (h.includes("w")) w = d.w0 - dx;
@@ -1436,6 +1449,8 @@ export class DocxView {
         const x = fr.px0 + (parseFloat(d.el.style.left) || 0), y = fr.py0 + (parseFloat(d.el.style.top) || 0);
         const relH = info.posH?.rel ?? "page", relV = info.posV?.rel ?? "page";
         setPosition(d.drawing, (x - fr.baseX(relH)[0]) * 9525, (y - fr.baseY(relV)[0]) * 9525, relH, relV);
+        const hfm = this.hfOf(d.el);
+        if (hfm) this.book!.touchHF(hfm);
         this.commit("hist.imgMove");
         this.paginator.layoutAnchors();
       }
@@ -1449,7 +1464,21 @@ export class DocxView {
     this.afterImageChange("hist.imgResize");
   }
 
+  /** relId header/footer tempat elemen berada (undefined bila di body). */
+  private hfOf(el: HTMLElement): string | undefined { return el.closest<HTMLElement>("[data-hf]")?.dataset.hf; }
+
+  /** Perubahan pada gambar di header/footer: simpan ke pohon header, gambar ulang semua halaman, pilih ulang gambar. */
+  private afterHFImageChange(label: string, relId: string, reselect: boolean) {
+    const drawing = this.imgSel?.drawing;
+    this.book!.touchHF(relId);
+    this.commit(label);
+    this.paginate();
+    this.selectImageEl(reselect && drawing ? this.reg.domOf.get(drawing) : null);
+  }
+
   private afterImageChange(label: string, reselect = true) {
+    const hf = this.imgSel ? this.hfOf(this.imgSel.el) : undefined;
+    if (hf) { this.afterHFImageChange(label, hf, reselect); return; }
     const s = this.imgSel;
     const p = s ? this.reg.elOf.get(this.drawingParaEl(s.el) ?? s.el) : undefined;
     const drawing = s?.drawing;
@@ -1521,8 +1550,10 @@ export class DocxView {
     if (!p) return;
     const u = units(p).find(x => x.piece === s.drawing || descendAll(x.piece, "drawing").includes(s.drawing));
     if (!u) return;
+    const hf = this.hfOf(s.el);
     deleteRange(p, u.start, u.end);
     normalize(p);
+    if (hf) { this.afterHFImageChange("hist.imgDelete", hf, false); return; }
     this.imgSel = null;
     this.rerenderPara(p);
     this.setCaret(p, u.start);
@@ -1573,6 +1604,75 @@ export class DocxView {
       this.hooks.toast("toast.imgFail", { name: file.name });
     }
   }
+  // ───────── objek OLE ─────────
+
+  /** Sisipkan objek OLE di kursor (mengganti seleksi bila ada). */
+  insertOle(prep: PreparedOle, size?: { wPx: number; hPx: number }): (DocxOleRef & { paragraph: number }) | undefined {
+    const book = this.book;
+    if (!book || this.readonly) return undefined;
+    const s = this.selPoints();
+    const ps = [...book.paragraphs()];
+    let pt: Point | null = s ? { p: s.a.p, off: s.a.off } : ps.length ? { p: ps[ps.length - 1].p, off: flatLength(ps[ps.length - 1].p) } : null;
+    if (!pt) return undefined;
+    if (s && !s.collapsed) { const d = this.deleteSelection(); if (d) pt = d; }
+    const sec = this.sectionOfPara(pt.p);
+    const maxW = sec ? ((sec.w - sec.ml - sec.mr) * 96) / 1440 : MAX_IMG_W;
+    const w = Math.min(size?.wPx ?? prep.previewWidth, maxW), h = (size?.hPx ?? prep.previewHeight) * (w / (size?.wPx ?? prep.previewWidth));
+    const { run, ref } = createOleRun(book, prep, { wPx: w, hPx: h });
+    insertRunAt(pt.p, pt.off, run);
+    this.rerenderPara(pt.p);
+    this.commit("hist.oleInsert");
+    this.schedulePaginate(30);
+    return { ...ref, paragraph: [...book.paragraphs()].findIndex(x => x.p === pt!.p) + 1 };
+  }
+
+  /** Ganti isi objek OLE `relId`. Mengembalikan referensi baru (relId berubah agar undo tetap benar). */
+  updateOle(relId: string, prep: PreparedOle, opts: { keepPreview?: boolean } = {}): ReturnType<typeof updateOleObject> | undefined {
+    const book = this.book;
+    if (!book || this.readonly) return undefined;
+    const found = findOleObject(book, relId);
+    if (!found) return undefined;
+    const res = updateOleObject(book, relId, prep, opts);
+    this.rerenderPara(found.p);
+    this.commit("hist.oleUpdate");
+    this.schedulePaginate(30);
+    return res;
+  }
+
+  /** Ubah ukuran tampilan objek OLE (px CSS). */
+  resizeOle(relId: string, wPx: number, hPx: number): boolean {
+    const book = this.book;
+    if (!book || this.readonly || !(wPx > 4) || !(hPx > 4)) return false;
+    const found = findOleObject(book, relId);
+    if (!found || !setOleSize(book, relId, wPx, hPx)) return false;
+    this.rerenderPara(found.p);
+    this.commit("hist.oleSize");
+    this.schedulePaginate(30);
+    return true;
+  }
+  oleDisplaySize(relId: string) { return this.book ? oleSize(this.book, relId) : undefined; }
+
+  /** Halaman yang paling dekat dengan pusat area gulir beserta ukuran & margin (px dokumen) — dasar penggaris. */
+  pageGeometry(): { el: HTMLElement; width: number; height: number; ml: number; mr: number; mt: number; mb: number; no: number } | null {
+    const pages = [...this.pagesEl.querySelectorAll<HTMLElement>(".dx-page")];
+    if (!pages.length) return null;
+    const sr = this.host.getBoundingClientRect(); // area gulir yang terlihat (bukan stage: tingginya seluruh dokumen)
+    const mid = sr.top + sr.height / 2;
+    let best = pages[0], bd = Infinity;
+    for (const p of pages) {
+      const r = p.getBoundingClientRect();
+      const d = mid >= r.top && mid <= r.bottom ? 0 : Math.min(Math.abs(r.top - mid), Math.abs(r.bottom - mid));
+      if (d < bd) { bd = d; best = p; }
+    }
+    const secs = this.book?.sections();
+    const sec = secs?.[Math.min(Number(best.dataset.sec ?? 0), (secs?.length ?? 1) - 1)];
+    const k = 96 / 1440;
+    return {
+      el: best, width: best.offsetWidth, height: best.offsetHeight, no: Number(best.dataset.no ?? 0),
+      ml: sec ? (sec.ml + sec.gutter) * k : 96, mr: sec ? sec.mr * k : 96, mt: sec ? sec.mt * k : 96, mb: sec ? sec.mb * k : 96,
+    };
+  }
+
   async imgReplace(file: File) {
     const s = this.imgSel; const book = this.book;
     if (!s || !book || this.readonly) return;

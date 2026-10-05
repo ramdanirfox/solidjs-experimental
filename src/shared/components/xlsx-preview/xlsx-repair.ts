@@ -54,7 +54,7 @@ function readTag(xml: string, i: number): Tag {
 interface Child { name: string; text: string }
 
 /** Pecah anak langsung elemen akar. Mengembalikan null bila struktur tidak dikenali. */
-function splitRoot(xml: string, rootLocal: string): { head: string; children: Child[]; tail: string } | null {
+export function splitRoot(xml: string, rootLocal: string): { head: string; children: Child[]; tail: string } | null {
   let i = 0;
   let rootEnd = -1;
   while (i < xml.length) {

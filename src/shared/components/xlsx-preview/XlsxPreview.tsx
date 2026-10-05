@@ -20,7 +20,61 @@ import { analyzeFormula, describeCellType, type FormulaIssue } from "./xlsx-form
 import { shiftRefs } from "./xlsx-cf";
 import { createSampleWorkbook } from "./xlsx-sample";
 import { resolveColor } from "./xlsx-style";
+import { createEventBus, type EditorEventBus } from "../editor-kit/events";
+import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
+import { RulerKit, type RulerEventMap } from "../editor-kit/ruler-kit";
+import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
+import { prepareOle } from "../office-shared/ole-embed";
+import type { OleAnchor, XlsxOleObject } from "./xlsx-ole";
 import "./xlsx-preview.css";
+
+/** Event yang dipancarkan XLSX Preview (bus: `api.events`; DOM: CustomEvent `xlsx-preview:<tipe>` pada elemen akar). */
+export interface XlsxPreviewEventMap extends Omit<OfficeCommonEvents, "locale">, OfficeOleEvents, RulerEventMap {
+  ready: { api: XlsxPreviewApi };
+  /** Isi/format workbook berubah (kasar: dipicu setiap perubahan model; cek `modified`). */
+  "cell-edit": { sheet: string; row: number; col: number; address: string; text: string };
+  selection: { sheet: string; range: string; active: string };
+  sheet: { index: number; name: string };
+  find: { query: string; count: number };
+}
+
+/** Handle imperatif yang diberikan lewat `onReady`. */
+export interface XlsxPreviewApi {
+  readonly events: EditorEventBus<XlsxPreviewEventMap>;
+  on: EditorEventBus<XlsxPreviewEventMap>["on"];
+  off: EditorEventBus<XlsxPreviewEventMap>["off"];
+  once: EditorEventBus<XlsxPreviewEventMap>["once"];
+  /** Jalankan perintah bernama (sama dengan CustomEvent `xlsx-preview:command`). */
+  run<T = unknown>(command: string, ...args: unknown[]): Promise<T>;
+  getBook(): XlsxBook | undefined;
+  load(input: Uint8Array | ArrayBuffer | File, fileName?: string): Promise<void>;
+  /** Workbook hasil edit (bytes), termasuk objek OLE yang disisipkan/diperbarui. */
+  getBytes(): Promise<Uint8Array | undefined>;
+  getSheets(): { index: number; name: string; kind: string }[];
+  setSheet(indexOrName: number | string): void;
+  getSelection(): { sheet: string; range: string; active: string };
+  select(range: string): void;
+  /** Teks tampilan sel ("A1" atau "Sheet!A1") + masukan mentah (rumus). */
+  getCell(address: string): { text: string; raw: string } | undefined;
+  /** Isi sel dengan teks masukan (mis. "12", "=SUM(A1:A3)"). */
+  setCell(address: string, text: string): boolean;
+  undo(): void;
+  redo(): void;
+  getZoom(): number;
+  setZoom(z: number): void;
+  /** Penggaris (px dokumen, 96 dpi), garis bantu — gambar yang dipindah menempel ke garis bantu — dan alat ukur. */
+  readonly ruler: RulerKit;
+  readonly ole: {
+    list(sheet?: string): XlsxOleObject[];
+    /** Sisipkan berkas apa pun sebagai objek OLE di sel aktif (atau `opts.cell`, mis. "C5"). */
+    insert(file: FileInput, opts?: OleInsertOptions & { cell?: string }): Promise<OleEventInfo | undefined>;
+    /** Ganti isi objek OLE `id` (id tetap). Berlaku untuk objek dari berkas maupun sisipan. */
+    update(id: string, file: FileInput, opts?: OleInsertOptions): Promise<OleEventInfo | undefined>;
+    getBytes(id: string): Promise<Uint8Array | undefined>;
+    /** Ubah ukuran (hanya objek yang disisipkan pada sesi ini). */
+    resize(id: string, wPx: number, hPx: number): boolean;
+  };
+}
 
 export interface XlsxPreviewProps {
   /** URL berkas .xlsx/.xlsm yang dimuat di awal. */
@@ -31,6 +85,18 @@ export interface XlsxPreviewProps {
   class?: string;
   /** Mode baca-saja: sembunyikan/nonaktifkan edit sel, style, merge, gambar, undo, dan simpan. Filter, freeze, cari, CSV tetap tersedia. */
   readonly?: boolean;
+  /** Bytes workbook yang dimuat di awal (alternatif `src`). */
+  data?: Uint8Array | ArrayBuffer;
+  fileName?: string;
+  /** Bus event milik aplikasi (opsional). Tanpa ini editor membuat bus sendiri; selalu tersedia lewat `api.events`. */
+  bus?: EditorEventBus<XlsxPreviewEventMap>;
+  /** Menerima SETIAP event editor. */
+  onEvent?: <K extends keyof XlsxPreviewEventMap>(type: K, payload: XlsxPreviewEventMap[K], api: XlsxPreviewApi) => void;
+  onReady?: (api: XlsxPreviewApi) => void;
+  /** Tampilkan penggaris di awal (default false). */
+  ruler?: boolean;
+  /** Satuan penggaris. Default "cm". */
+  rulerUnit?: RulerUnit;
 }
 
 const ICONS: Record<string, string> = {
@@ -54,12 +120,14 @@ const ICONS: Record<string, string> = {
   sample: "M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8-5-3.6-5 3.6 1.9-5.8L4 8.8h6.1z",
   zoomin: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M21 21l-4.3-4.3 M11 8v6 M8 11h6",
   palette: "M12 22a10 10 0 1 1 10-10c0 3-2 4-4 4h-2a2 2 0 0 0-1 3.7c.6.5.3 2.3-3 2.3z M7.5 10.5h.01 M12 7.5h.01 M16.5 10.5h.01",
+  ruler: "M3 17L17 3l4 4L7 21z M7 13l2 2 M10 10l2 2 M13 7l2 2", measure: "M2 12h20 M2 8v8 M22 8v8 M7 10v4 M12 9v6 M17 10v4",
+  object: "M4 4h10l6 6v10H4z M14 4v6h6 M8 14h8 M8 17h5",
 };
 const Ic = (p: { n: string; size?: number }) => (
   <svg width={p.size ?? 16} height={p.size ?? 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={ICONS[p.n]} /></svg>
 );
 
-type Panel = "find" | "info" | "log" | null;
+type Panel = "find" | "info" | "log" | "ole" | null;
 type Dialog = "debug" | "eval" | null;
 
 function downloadBlob(name: string, blob: Blob) {
@@ -92,6 +160,24 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   let rootEl!: HTMLDivElement;
   let fileInput!: HTMLInputElement;
   let gridApi: GridApi | undefined;
+  let frameEl!: HTMLDivElement;
+  let oleInput!: HTMLInputElement;
+  let oleUpdInput!: HTMLInputElement;
+  let oleTarget: string | null = null;
+  let ruler: RulerKit | undefined;
+  let api: XlsxPreviewApi | undefined;
+  let loadSource: XlsxPreviewEventMap["load"]["source"] = "api";
+  const ownBus = !props.bus;
+  const bus: EditorEventBus<XlsxPreviewEventMap> = props.bus ?? createEventBus<XlsxPreviewEventMap>({ source: "xlsx-preview", domPrefix: "xlsx-preview" });
+  const emit = <K extends keyof XlsxPreviewEventMap>(type: K, payload: XlsxPreviewEventMap[K]) => {
+    bus.emit(type, payload);
+    if (api) { try { props.onEvent?.(type, payload, api); } catch (e) { console.error("[xlsx-preview] onEvent", e); } }
+  };
+  const [rulerOn, setRulerOn] = createSignal(!!props.ruler);
+  const [rulerUnit, setRulerUnit] = createSignal<RulerUnit>(props.rulerUnit ?? "cm");
+  const [measuring, setMeasuring] = createSignal(false);
+  const [guideCount, setGuideCount] = createSignal(0);
+  const [measureText, setMeasureText] = createSignal("");
 
   // ───────── state inti ─────────
   const [book, setBook] = createSignal<XlsxBook | undefined>(undefined);
@@ -186,6 +272,9 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
 
   function attachBook(b: XlsxBook, entries: LogEntry[]) {
     book()?.dispose();
+    ruler?.clearGuides();
+    emit("load", { fileName: b.fileName, size: b.sourceBytes?.length ?? b.byteSize, source: loadSource });
+    loadSource = "api";
     batch(() => {
       b.log = e => { if (!untrack(logs).some(x => x.message === e.message)) pushLog(e); };
       setBook(b);
@@ -225,12 +314,17 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     try {
       const out = await loadBook(bytes, name);
       if (out.book) { attachBook(out.book, out.entries); toast(`“${name}” dimuat`); }
-      else { setLogs(l => [...l, ...out.entries]); setPanel("log"); toast("Gagal membaca berkas — lihat Log"); }
+      else {
+        setLogs(l => [...l, ...out.entries]); setPanel("log"); toast("Gagal membaca berkas — lihat Log");
+        const err = out.entries.find(e => e.level === "error");
+        emit("load-error", { message: err?.message ?? "Gagal membaca berkas", code: "parse", fileName: name });
+      }
     } finally { setBusy(null); }
   }
 
   async function openSample() {
     setBusy("Membuat contoh…");
+    loadSource = "sample";
     try {
       const wb = await createSampleWorkbook();
       const b = new XlsxBook(wb, "contoh-penjualan.xlsx", 0);
@@ -259,11 +353,13 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
 
   async function openFile(f: File | undefined | null) {
     if (!f) return;
+    loadSource = "file";
     await loadBytes(await f.arrayBuffer(), f.name);
   }
 
   onMount(() => {
-    if (props.src) void openUrl(props.src);
+    if (props.data) { loadSource = "data"; void loadBytes(props.data instanceof Uint8Array ? props.data : new Uint8Array(props.data), props.fileName ?? "workbook.xlsx"); }
+    else if (props.src) { loadSource = "src"; void openUrl(props.src); }
     else if (props.sample !== false) void openSample();
     else setBusy(null);
     const close = (e: MouseEvent) => {
@@ -669,6 +765,11 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   };
   function onImageRect(d: DrawingView, rect: PxRect) {
     const b = book(), w = ws(); if (!b || !w || ro()) return;
+    if (ruler?.isVisible() && ruler.getGuides().length) { // menempel ke garis bantu penggaris (koordinat dokumen = sheet / zoom)
+      const z = layout().zoom || 1;
+      const sn = ruler.snap({ x: rect.x / z, y: rect.y / z, w: rect.w / z, h: rect.h / z });
+      rect = { ...rect, x: (sn.x ?? rect.x / z) * z, y: (sn.y ?? rect.y / z) * z };
+    }
     const rec = b.moveDrawing(w, d.index, rectToAnchor(layout(), rect, d.anchor));
     if (!rec) return;
     b.commit([rec], { styleOnly: true }); bumpLayout();
@@ -699,6 +800,197 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       toast("Gambar tidak dapat disisipkan — lihat Log");
     }
   }
+
+  // ───────── objek OLE: sisip & perbarui (API + UI) ─────────
+  const oleItems = createMemo<XlsxOleObject[]>(() => { ver(); return book()?.oleList() ?? []; });
+  const [oleSelId, setOleSelId] = createSignal<string | null>(null);
+  const oleLog = (level: "ok" | "info" | "warn" | "error", msg: string, detail?: string) => pushLog(logEntry(level, "OLE", msg, detail));
+  const oleFail = (action: "insert" | "update" | "resize", e: unknown, fileName?: string) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    oleLog("error", `OLE ${action} gagal${fileName ? ` (“${fileName}”)` : ""}: ${msg}`);
+    toast(`OLE gagal: ${msg}`);
+    emit("ole:error", { action, message: msg, fileName });
+    emit("error", { scope: "ole", error: e });
+  };
+  /** Anchor sel (basis 0, offset px) dari sel + ukuran px dokumen. */
+  const oleAnchorAt = (row: number, col: number, wPx: number, hPx: number): OleAnchor => {
+    const l = layout(), z = l.zoom || 1;
+    const a = rectToAnchor(l, { x: l.colStart[col]!, y: l.rowStart[row]!, w: wPx * z, h: hPx * z }, { kind: "twoCell" });
+    return { c1: a.from.col, c1off: a.from.colOff / 9525, r1: a.from.row, r1off: a.from.rowOff / 9525, c2: a.to.col, c2off: a.to.colOff / 9525, r2: a.to.row, r2off: a.to.rowOff / 9525 };
+  };
+  const oleInsert: XlsxPreviewApi["ole"]["insert"] = async (input, opts) => {
+    let name = "";
+    try {
+      const b = book(), w = ws();
+      if (!b || !w) throw new Error("Tidak ada workbook / worksheet aktif.");
+      if (ro()) throw new Error("Mode baca-saja: objek OLE tidak dapat disisipkan.");
+      const f = await readFileInput(input); name = f.name;
+      const prep = await prepareOle(f.name, f.bytes, opts);
+      const pos = opts?.cell ? parseAddress(opts.cell) : undefined;
+      if (opts?.cell && !pos) throw new Error(`Alamat sel tidak valid: "${opts.cell}".`);
+      const row = pos?.r1 ?? active().row, col = pos?.c1 ?? active().col;
+      const size = opts?.size ?? { wPx: prep.previewWidth, hPx: prep.previewHeight };
+      const r = b.insertOle(w, prep, oleAnchorAt(row, col, size.wPx, size.hPx), { w: size.wPx, h: size.hPx });
+      b.commit([r.record], { styleOnly: true });
+      bumpLayout();
+      oleLog("ok", `Objek OLE “${f.name}” disisipkan di ${addr(row, col)} (${prep.kind}, ${prep.progId}, ${formatBytes(prep.bytes.length)})`, prep.description);
+      toast(`Objek OLE disisipkan di ${addr(row, col)}`);
+      const info = oleEventInfo(r.id, "", prep, `${w.title}!${addr(row, col)}`);
+      emit("ole:inserted", info);
+      return info;
+    } catch (e) { oleFail("insert", e, name); return undefined; }
+  };
+  const oleUpdate: XlsxPreviewApi["ole"]["update"] = async (id, input, opts) => {
+    let name = "";
+    try {
+      const b = book();
+      if (!b) throw new Error("Tidak ada workbook yang terbuka.");
+      if (ro()) throw new Error("Mode baca-saja: objek OLE tidak dapat diperbarui.");
+      const f = await readFileInput(input); name = f.name;
+      const prep = await prepareOle(f.name, f.bytes, opts);
+      const r = b.updateOle(id, prep);
+      b.commit([r.record], { styleOnly: true });
+      bumpLayout();
+      oleLog("ok", `Objek OLE ${id} diperbarui dengan “${f.name}” (${prep.kind}, ${prep.progId}, ${formatBytes(prep.bytes.length)})`, prep.description);
+      toast(`Objek OLE diperbarui: ${f.name}`);
+      const info = { ...oleEventInfo(id, r.target.part ?? "", prep, `${r.target.sheet}!${r.target.anchor ? addr(r.target.anchor.r1 + 1, r.target.anchor.c1 + 1) : ""}`), previousId: id };
+      emit("ole:updated", info);
+      return info;
+    } catch (e) { oleFail("update", e, name); return undefined; }
+  };
+  const oleResize: XlsxPreviewApi["ole"]["resize"] = (id, wPx, hPx) => {
+    try {
+      const b = book();
+      const o = b?.oleList().find(x => x.id === id);
+      if (!b || !o) throw new Error(`Objek OLE "${id}" tidak ditemukan.`);
+      if (ro()) throw new Error("Mode baca-saja.");
+      if (!(wPx > 4) || !(hPx > 4)) throw new Error("Ukuran tidak valid.");
+      const a = o.anchor ?? { c1: 0, c1off: 0, r1: 0, r1off: 0, c2: 1, c2off: 0, r2: 1, r2off: 0 };
+      const r = b.moveOle(id, oleAnchorAt(a.r1 + 1, a.c1 + 1, wPx, hPx), { w: wPx, h: hPx });
+      b.commit([r.record], { styleOnly: true });
+      bumpLayout();
+      emit("ole:updated", { id, part: "", progId: o.progId, fileName: o.fileName, size: o.size, kind: "package", previousId: id });
+      return true;
+    } catch (e) { oleFail("resize", e); return false; }
+  };
+  const oleInsertUi = async (f: File) => {
+    const info = await oleInsert(f);
+    if (!info) return;
+    setPanel("ole"); setOleSelId(info.id); setSelImage(`ole:${info.id}`);
+  };
+  const oleUpdateUi = async (f: File) => {
+    if (!oleTarget) return;
+    const id = oleTarget; oleTarget = null;
+    const info = await oleUpdate(id, f);
+    if (info) setOleSelId(info.id);
+  };
+  async function oleDownload(id: string) {
+    const b = book(); const o = b?.oleList().find(x => x.id === id);
+    const data = b && o ? await b.oleBytes(id) : undefined;
+    if (!o || !data) { toast("Isi objek tidak tersedia"); return; }
+    downloadBlob(o.fileName || `object-${id.replace(/\W+/g, "_")}.bin`, new Blob([data as BlobPart]));
+  }
+  const openOle = (id: string) => { setPanel("ole"); setOleSelId(id); setSelImage(`ole:${id}`); emit("ole:open", { id, progId: book()?.oleList().find(o => o.id === id)?.progId }); };
+
+  // ───────── penggaris ─────────
+  const rulerGeometry = () => {
+    const body = frameEl.querySelector<HTMLElement>(":scope > .rk-body");
+    const vp = gridApi?.viewport();
+    const z = layout().zoom || 1;
+    if (!body || !vp) return { originX: 0, originY: 0, scale: z, zeroX: 0, zeroY: 0 };
+    const br = body.getBoundingClientRect();
+    // koordinat dokumen = koordinat sheet / zoom; angka 0 penggaris = tepi kiri kolom A / tepi atas baris 1
+    return { originX: vp.left - br.left + vp.headerW - vp.scrollX, originY: vp.top - br.top + vp.headerH - vp.scrollY, scale: z, zeroX: 0, zeroY: 0 };
+  };
+  const onRulerEvent = <K extends keyof RulerEventMap>(type: K, payload: RulerEventMap[K]) => {
+    if (type === "ruler:visible") setRulerOn((payload as RulerEventMap["ruler:visible"]).visible);
+    else if (type === "ruler:unit") setRulerUnit((payload as RulerEventMap["ruler:unit"]).unit);
+    else if (type === "ruler:measure-mode") { setMeasuring((payload as RulerEventMap["ruler:measure-mode"]).active); if (!(payload as RulerEventMap["ruler:measure-mode"]).active) setMeasureText(""); }
+    else if (type === "ruler:measure") setMeasureText((payload as RulerEventMap["ruler:measure"]).text);
+    if (type === "ruler:guide-add" || type === "ruler:guide-remove") setGuideCount(ruler?.getGuides().length ?? 0);
+    emit(type, payload as never);
+  };
+
+  const sheetByRef = (ref: number | string) => {
+    const b = book();
+    const i = typeof ref === "number" ? ref : (b?.sheets.findIndex(s => s.sheet.title === ref) ?? -1);
+    return i >= 0 && b?.sheets[i] ? i : -1;
+  };
+  const cellAt = (address: string): { w: Worksheet; r: number; c: number } | undefined => {
+    const b = book(); if (!b) return undefined;
+    const m = /^(?:'?([^'!]+)'?!)?([A-Za-z]+\d+)$/.exec(address.trim());
+    if (!m) return undefined;
+    const i = m[1] ? sheetByRef(m[1]) : sheetIdx();
+    const w = i >= 0 ? b.worksheetAt(i) : undefined;
+    const a = parseAddress(m[2]!);
+    return w && a ? { w, r: a.r1, c: a.c1 } : undefined;
+  };
+  const buildApi = (): XlsxPreviewApi => ({
+    events: bus, on: bus.on, off: bus.off, once: bus.once, run: (name, ...args) => bus.run(name, ...args),
+    getBook: () => book(),
+    load: async (input, name) => {
+      const f = typeof File !== "undefined" && input instanceof File ? input : undefined;
+      const bytes = f ? new Uint8Array(await f.arrayBuffer()) : input instanceof Uint8Array ? input : new Uint8Array(input as ArrayBuffer);
+      loadSource = "api";
+      await loadBytes(bytes, name ?? f?.name ?? "workbook.xlsx");
+    },
+    getBytes: async () => { commitEdit("none"); return book()?.toBytes(); },
+    getSheets: () => (book()?.sheets ?? []).map((s, index) => ({ index, name: s.sheet.title, kind: s.kind })),
+    setSheet: ref => { const i = sheetByRef(ref); if (i < 0) throw new Error(`Sheet "${ref}" tidak ditemukan.`); selectSheet(i); },
+    getSelection: () => ({ sheet: ws()?.title ?? "", range: selAddr(sel()), active: addr(active().row, active().col) }),
+    select: range => { const a = parseAddress(range); if (!a) throw new Error(`Rentang tidak valid: "${range}".`); onSelect({ r1: a.r1, c1: a.c1, r2: a.r2, c2: a.c2 }, { row: a.r1, col: a.c1 }); },
+    getCell: address => { const t = cellAt(address), b = book(); return t && b ? { text: b.textAt(t.w, t.r, t.c), raw: b.rawInputText(t.w.rows.get(t.r)?.get(t.c)) } : undefined; },
+    setCell: (address, text) => {
+      const t = cellAt(address), b = book();
+      if (!t || !b || ro()) return false;
+      b.commit([b.setInput(t.w, t.r, t.c, text)]);
+      setLive(b.ev.live); bump();
+      emit("cell-edit", { sheet: t.w.title, row: t.r, col: t.c, address: addr(t.r, t.c), text });
+      return true;
+    },
+    undo: () => doUndo(), redo: () => doRedo(),
+    getZoom: () => zoom(), setZoom: z => setZoom(Math.min(4, Math.max(0.25, z))),
+    ruler: ruler!,
+    ole: { list: sheet => (sheet ? book()?.oleList().filter(o => o.sheet === sheet) : book()?.oleList()) ?? [], insert: oleInsert, update: oleUpdate, getBytes: id => book()?.oleBytes(id) ?? Promise.resolve(undefined), resize: oleResize },
+  });
+  const registerCommands = () => {
+    const a = api!;
+    const cmds: Record<string, (...x: any[]) => unknown> = {
+      undo: () => a.undo(), redo: () => a.redo(), setZoom: (z: number) => a.setZoom(z), getZoom: () => a.getZoom(),
+      load: (i: Uint8Array | ArrayBuffer | File, n?: string) => a.load(i, n), getBytes: () => a.getBytes(), save: () => saveXlsx(),
+      getSheets: () => a.getSheets(), setSheet: (r: number | string) => a.setSheet(r), getSelection: () => a.getSelection(), select: (r: string) => a.select(r),
+      getCell: (ad: string) => a.getCell(ad), setCell: (ad: string, t: string) => a.setCell(ad, t), setPanel: (p: Panel) => setPanel(p),
+      "ole.list": (s?: string) => a.ole.list(s), "ole.insert": (f: FileInput, o?: object) => a.ole.insert(f, o),
+      "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o), "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
+      "ruler.show": () => a.ruler.setVisible(true), "ruler.hide": () => a.ruler.setVisible(false), "ruler.toggle": () => a.ruler.toggle(),
+      "ruler.setUnit": (u: RulerUnit) => a.ruler.setUnit(u), "ruler.addGuide": (axis: "x" | "y", pos: number) => a.ruler.addGuide(axis, pos),
+      "ruler.removeGuide": (id: string) => a.ruler.removeGuide(id), "ruler.clearGuides": () => a.ruler.clearGuides(), "ruler.getGuides": () => a.ruler.getGuides(),
+      "ruler.measure": (x1: number, y1: number, x2: number, y2: number) => a.ruler.measure(x1, y1, x2, y2), "ruler.setMeasureMode": (on: boolean) => a.ruler.setMeasureMode(on),
+    };
+    for (const [n, fn] of Object.entries(cmds)) onCleanup(bus.registerCommand(n, fn));
+  };
+  onMount(() => {
+    ruler = new RulerKit({
+      frame: frameEl, unit: rulerUnit(), visible: rulerOn(), getGeometry: rulerGeometry, emit: onRulerEvent,
+      labels: { corner: "Satuan penggaris (klik untuk ganti)", removeGuide: "Seret untuk memindah. Seret ke penggaris atau klik ganda untuk menghapus." },
+    });
+    onCleanup(() => ruler?.destroy());
+    api = buildApi();
+    registerCommands();
+    onCleanup(bus.attach(rootEl));
+    emit("ready", { api });
+    props.onReady?.(api);
+    onCleanup(() => { emit("destroy", {}); if (ownBus) bus.clear(); });
+  });
+  createEffect(on(layout, () => ruler?.refresh(), { defer: true }));
+  createEffect(on(zoom, z => emit("zoom", { zoom: z }), { defer: true }));
+  createEffect(on(panel, p => emit("panel", { panel: p }), { defer: true }));
+  createEffect(on(ro, v => emit("readonly", { readonly: v }), { defer: true }));
+  createEffect(on(sheetIdx, i => emit("sheet", { index: i, name: book()?.sheets[i]?.sheet.title ?? "" }), { defer: true }));
+  createEffect(on([sel, active], () => { const w = ws(); if (w) emit("selection", { sheet: w.title, range: selAddr(sel()), active: addr(active().row, active().col) }); }, { defer: true }));
+  createEffect(on(ver, () => { const b = book(); if (b) emit("change", { label: "model", modified: b.dirty }); }, { defer: true }));
+  createEffect(on(() => props.ruler, v => { if (v !== undefined) ruler?.setVisible(!!v); }, { defer: true }));
+  createEffect(on(() => props.rulerUnit, v => { if (v) ruler?.setUnit(v); }, { defer: true }));
 
   // ───────── merge ─────────
   const canMerge = createMemo(() => { const n = normSel(sel()); return n.r1 !== n.r2 || n.c1 !== n.c2; });
@@ -842,7 +1134,9 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       pushLog(logEntry("ok", "Simpan", `Diunduh sebagai ${name} (${formatBytes(bytes.length)})${b.isMacro ? " — biner VBA dipertahankan" : ""}`));
       toast(`Diunduh: ${name}`);
       b.dirty = false; bump();
+      emit("save", { fileName: name, size: bytes.length });
     } catch (e: any) {
+      emit("error", { scope: "save", error: e });
       pushLog(logEntry("error", "Simpan", `Gagal menyimpan: ${e?.message ?? e}`, e?.stack));
       setPanel("log"); toast("Gagal menyimpan — lihat Log");
     } finally { setBusy(null); }
@@ -1013,6 +1307,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       onDrop={onDrop}
     >
       <input ref={imgInput} type="file" hidden accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml,image/tiff" onChange={e => { void insertImageFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
+      <input ref={oleInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleInsertUi(f); }} />
+      <input ref={oleUpdInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleUpdateUi(f); }} />
       <input ref={fileInput} type="file" hidden accept=".xlsx,.xlsm,.xltx,.xltm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" onChange={e => { void openFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
 
       {/* toolbar */}
@@ -1070,6 +1366,12 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                 <label><input type="checkbox" checked={gridlines()} onChange={e => setGridlines(e.currentTarget.checked)} /> Garis grid</label>
                 <label><input type="checkbox" checked={showFormulas()} onChange={e => setShowFormulas(e.currentTarget.checked)} /> Tampilkan rumus (bukan hasil)</label>
                 <label><input type="checkbox" checked={showHidden()} onChange={e => { setShowHidden(e.currentTarget.checked); bumpLayout(); }} /> Tampilkan baris/kolom/sheet tersembunyi</label>
+                <hr />
+                <label title="Seret dari penggaris untuk membuat garis bantu; gambar yang dipindah menempel ke garis bantu"><input type="checkbox" checked={rulerOn()} onChange={e => ruler?.setVisible(e.currentTarget.checked)} /> Penggaris</label>
+                <label>Satuan <select class="xl-input" style={{ width: "70px", display: "inline-block" }} title="Satuan penggaris" value={rulerUnit()} onChange={e => ruler?.setUnit(e.currentTarget.value as RulerUnit)}><For each={RULER_UNITS}>{u => <option value={u}>{u}</option>}</For></select></label>
+                <button title="Ukur jarak: seret di sheet (Shift mengunci sumbu, Esc menghapus)" onClick={() => { ruler?.setMeasureMode(!measuring()); setMenu(null); }}>{measuring() ? "Matikan alat ukur" : "Alat ukur jarak"}</button>
+                <button disabled={!guideCount()} onClick={() => { ruler?.clearGuides(); setMenu(null); }}>Hapus garis bantu {guideCount() ? `(${guideCount()})` : ""}</button>
+                <Show when={measureText()}><small style={{ padding: "2px 10px", display: "block", "white-space": "normal" }}>{measureText()}</small></Show>
                 <label><input type="checkbox" checked={live()} onChange={toggleLive} /> Hitung ulang formula (mesin evaluasi)</label>
                 <hr />
                 <label><input type="checkbox" checked={showToolbar()} onChange={e => setShowToolbar(e.currentTarget.checked)} /> Toolbar</label>
@@ -1092,6 +1394,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
               <Show when={menu() === "image"}>
                 <div class="xl-menu">
                   <button onClick={() => { setMenu(null); imgInput.click(); }}>Sisipkan gambar… <small>di {addr(active().row, active().col)}</small></button>
+                  <button onClick={() => { setMenu(null); oleInput.click(); }}>Sisipkan objek OLE… <small>di {addr(active().row, active().col)}</small></button>
+                  <button disabled={!oleSelId() || !oleItems().some(o => o.id === oleSelId() && !o.linked)} onClick={() => { setMenu(null); oleTarget = oleSelId(); oleUpdInput.click(); }}>Ganti isi objek OLE terpilih…</button>
                   <button disabled={!selDrawing()} onClick={() => { setMenu(null); deleteSelectedImage(); }}>Hapus gambar terpilih <small>Del</small></button>
                   <hr /><small style={{ padding: "2px 10px", display: "block", "white-space": "normal" }}>Klik gambar untuk memilih, seret untuk memindah, tarik sudut kanan-bawah untuk ukuran, panah untuk geser halus.</small>
                 </div>
@@ -1104,6 +1408,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
         <span class="xl-spacer" />
         <div class="xl-group">
           <Btn icon={full() || maxed() ? "shrink" : "expand"} title="Layar penuh (Esc untuk keluar)" on={full() || maxed()} onClick={() => void toggleFull()} />
+          <Btn icon="object" label="OLE" on={panel() === "ole"} disabled={!book()} title="Objek OLE tertanam: lihat, sisipkan, ganti isi" onClick={() => setPanel(p => (p === "ole" ? null : "ole"))} />
           <Btn icon="info" label="Info" on={panel() === "info"} disabled={!book()} title="Informasi workbook & worksheet" onClick={() => setPanel(p => (p === "info" ? null : "info"))} />
           <Btn icon="log" label="Log" on={panel() === "log"} title="Log pembacaan (berhasil / gagal / makro)" onClick={() => setPanel(p => (p === "log" ? null : "log"))}>
             <Show when={countLevel("error") > 0}><span class="badge">{countLevel("error")}</span></Show>
@@ -1204,7 +1509,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
 
       {/* grid + panel */}
       <div class="xl-main">
-        <div class="xl-gridwrap">
+        <div ref={frameEl} class="rk-frame xl-rkframe"><div class="rk-body"><div class="xl-gridwrap">
           <Show when={ws()} keyed fallback={
             <div class="xl-empty">
               <Show when={busy()} fallback={
@@ -1250,6 +1555,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                 selectedImage={selImage}
                 onSelectImage={setSelImage}
                 onImageRect={onImageRect}
+                onOleOpen={openOle}
                 onZoomWheel={d => setZoom(z => Math.min(3, Math.max(0.4, +(z + d).toFixed(2))))}
                 onContextMenu={(e, r, c) => setCtx({ x: e.clientX, y: e.clientY, row: r, col: c })}
                 onLink={openLink}
@@ -1259,7 +1565,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
               />
             )}
           </Show>
-        </div>
+        </div></div></div>
 
         <Show when={panel()}>
           <aside class="xl-side">
@@ -1268,10 +1574,31 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                 <button classList={{ on: panel() === "find" }} onClick={() => openFind()}>Cari</button>
                 <button classList={{ on: panel() === "info" }} onClick={() => setPanel("info")}>Info</button>
                 <button classList={{ on: panel() === "log" }} onClick={() => setPanel("log")}>Log</button>
+                <button classList={{ on: panel() === "ole" }} onClick={() => setPanel("ole")}>OLE</button>
               </div>
               <button class="xl-x" onClick={() => setPanel(null)} title="Tutup">×</button>
             </div>
             <div class="xl-side-body">
+              {/* OLE */}
+              <Show when={panel() === "ole"}>
+                <p style={{ color: "var(--xl-muted)", margin: "0 0 6px" }}>Objek tertanam (Insert → Object). Klik ganda objek di sheet untuk membukanya di sini. Objek tidak pernah dieksekusi.</p>
+                <div class="xl-row-inline">
+                  <button class="xl-btn" disabled={ro() || !ws()} onClick={() => oleInput.click()}>Sisipkan objek… ({addr(active().row, active().col)})</button>
+                  <button class="xl-btn" disabled={ro() || !oleSelId() || !oleItems().some(o => o.id === oleSelId() && !o.linked)} onClick={() => { oleTarget = oleSelId(); oleUpdInput.click(); }}>Ganti isi…</button>
+                  <button class="xl-btn" disabled={!oleSelId()} onClick={() => void oleDownload(oleSelId()!)}>Unduh isi</button>
+                </div>
+                <Show when={oleItems().length === 0}><p style={{ color: "var(--xl-muted)" }}>Belum ada objek OLE pada workbook ini.</p></Show>
+                <ul class="xl-log">
+                  <For each={oleItems()}>{o => (
+                    <li classList={{ on: oleSelId() === o.id }} style={{ cursor: "pointer" }} onClick={() => { setOleSelId(o.id); setSelImage(`ole:${o.id}`); const i = book()?.sheets.findIndex(s => s.sheet.title === o.sheet) ?? -1; if (i >= 0 && i !== sheetIdx()) selectSheet(i); }}>
+                      <div class="area"><b>{o.description}</b>{o.linked ? " · tertaut" : ""}{o.origin === "inserted" ? " · baru" : ""}</div>
+                      <div style={{ color: "var(--xl-muted)", "font-size": "12px" }}>{o.progId || "—"} · {o.fileName || "—"} · {formatBytes(o.size)} · {o.format}</div>
+                      <div style={{ color: "var(--xl-muted)", "font-size": "12px" }}>{o.sheet}{o.anchor ? `!${addr(o.anchor.r1 + 1, o.anchor.c1 + 1)}` : ""}</div>
+                    </li>
+                  )}</For>
+                </ul>
+              </Show>
+
               {/* CARI */}
               <Show when={panel() === "find"}>
                 <input ref={findInput} class="xl-input" placeholder="Cari teks / angka…" value={q()} onInput={e => setQ(e.currentTarget.value)}
@@ -1488,6 +1815,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
               <button disabled={!canMerge()} onClick={() => doMerge(false)}>Gabungkan sel</button>
               <button disabled={!canUnmerge()} onClick={doUnmerge}>Pisahkan sel gabungan</button>
               <button onClick={() => { setCtx(null); imgInput.click(); }}>Sisipkan gambar di sini…</button>
+              <button onClick={() => { setCtx(null); oleInput.click(); }}>Sisipkan objek OLE di sini…</button>
               <Show when={selDrawing()}><button onClick={() => { setCtx(null); deleteSelectedImage(); }}>Hapus gambar terpilih</button></Show>
             </Show>
             <button onClick={() => { setDialog("debug"); setCtx(null); }}>Debug sel {addr(c().row, c().col)}</button>

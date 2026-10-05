@@ -13,7 +13,63 @@ import { resolveRevisions } from "./docx-ops";
 import { compileQuery, type Hit, type SearchResult } from "./docx-search";
 import { createI18n, type Lang } from "./docx-i18n";
 import { formatBytes } from "./docx-util";
+import { oleBytes, oleSize } from "./docx-ole-edit";
+import { createEventBus, type EditorEventBus } from "../editor-kit/events";
+import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
+import { RulerKit, type RulerEventMap, type RulerRegion } from "../editor-kit/ruler-kit";
+import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
+import { prepareOle } from "../office-shared/ole-embed";
+import { canPreviewOle, prepareOlePreview, type OlePreviewData } from "../office-shared/ole-preview";
 import "./docx-editor.css";
+
+/** Event yang dipancarkan editor DOCX (bus: `api.events`; DOM: CustomEvent `docx-editor:<tipe>` pada elemen akar). */
+export interface DocxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, RulerEventMap {
+  /** Editor siap dipakai (dokumen mungkin belum selesai dimuat → tunggu `load`). */
+  ready: { api: DocxEditorApi };
+  selection: { info: SelInfo };
+  pages: { count: number };
+  find: { query: string; count: number };
+}
+
+/** Handle imperatif yang diberikan lewat `onReady`. */
+export interface DocxEditorApi {
+  readonly events: EditorEventBus<DocxEditorEventMap>;
+  on: EditorEventBus<DocxEditorEventMap>["on"];
+  off: EditorEventBus<DocxEditorEventMap>["off"];
+  once: EditorEventBus<DocxEditorEventMap>["once"];
+  /** Jalankan perintah bernama (sama dengan CustomEvent `docx-editor:command`). */
+  run<T = unknown>(command: string, ...args: unknown[]): Promise<T>;
+  /** Objek dokumen & view mentah untuk kebutuhan lanjutan. */
+  getBook(): DocxBook | undefined;
+  getView(): DocxView | undefined;
+  /** Muat dokumen dari bytes/File. */
+  load(input: Uint8Array | ArrayBuffer | File, fileName?: string): Promise<void>;
+  /** DOCX hasil edit (bytes). */
+  getBytes(): Uint8Array | undefined;
+  getText(): string;
+  undo(): void;
+  redo(): void;
+  setZoom(z: number): void;
+  getZoom(): number;
+  /** Penggaris, garis bantu (alignment), dan alat ukur. */
+  readonly ruler: RulerKit;
+  readonly ole: {
+    list(): OleObject[];
+    /** Sisipkan berkas apa pun sebagai objek OLE di kursor. */
+    insert(file: FileInput, opts?: OleInsertOptions): Promise<OleEventInfo | undefined>;
+    /** Ganti isi objek OLE `relId` (relId baru dikembalikan di `id`). */
+    update(relId: string, file: FileInput, opts?: OleInsertOptions): Promise<OleEventInfo | undefined>;
+    getBytes(relId: string): Uint8Array | undefined;
+    getSize(relId: string): { wPx: number; hPx: number } | undefined;
+    resize(relId: string, wPx: number, hPx: number): boolean;
+    /** Buka dialog pratinjau isi objek (teks/gambar/audio/video/PDF). `false` bila tidak dapat dipratinjau. */
+    preview(relId: string): boolean;
+    /** Tutup dialog pratinjau. */
+    closePreview(): void;
+    /** Apakah isi objek dapat dipratinjau di browser? */
+    canPreview(relId: string): boolean;
+  };
+}
 
 export interface DocxEditorProps {
   /** URL berkas .docx yang dimuat di awal. */
@@ -35,6 +91,15 @@ export interface DocxEditorProps {
   /** Sembunyikan toolbar/ribbon di awal. */
   toolbarHidden?: boolean;
   onChange?: (info: { label: string; modified: boolean }) => void;
+  /** Bus event milik aplikasi (opsional). Tanpa ini editor membuat bus sendiri; selalu tersedia lewat `api.events`. */
+  bus?: EditorEventBus<DocxEditorEventMap>;
+  /** Menerima SETIAP event editor. */
+  onEvent?: <K extends keyof DocxEditorEventMap>(type: K, payload: DocxEditorEventMap[K], api: DocxEditorApi) => void;
+  onReady?: (api: DocxEditorApi) => void;
+  /** Tampilkan penggaris di awal (default false). */
+  ruler?: boolean;
+  /** Satuan penggaris. Default "cm". */
+  rulerUnit?: RulerUnit;
 }
 
 const ICONS: Record<string, string> = {
@@ -82,6 +147,8 @@ const ICONS: Record<string, string> = {
   sun: "M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z M12 1v2 M12 21v2 M4.2 4.2l1.4 1.4 M18.4 18.4l1.4 1.4 M1 12h2 M21 12h2 M4.2 19.8l1.4-1.4 M18.4 5.6l1.4-1.4",
   check: "M20 6L9 17l-5-5", x: "M18 6L6 18 M6 6l12 12", chevron: "M6 9l6 6 6-6", sample: "M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8-5-3.6-5 3.6 1.9-5.8L4 8.8h6.1z",
   arrowUp: "M12 19V5 M5 12l7-7 7 7", arrowDown: "M12 5v14 M19 12l-7 7-7-7", replace: "M17 1l4 4-4 4 M3 11V9a4 4 0 0 1 4-4h14 M7 23l-4-4 4-4 M21 13v2a4 4 0 0 1-4 4H3",
+  ruler: "M3 17L17 3l4 4L7 21z M7 13l2 2 M10 10l2 2 M13 7l2 2", measure: "M2 12h20 M2 8v8 M22 8v8 M7 10v4 M12 9v6 M17 10v4",
+  object: "M4 4h10l6 6v10H4z M14 4v6h6 M8 14h8 M8 17h5",
 };
 const Ic = (p: { n: string; size?: number }) => (
   <svg width={p.size ?? 16} height={p.size ?? 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={ICONS[p.n] ?? ""} /></svg>
@@ -119,11 +186,29 @@ export default function DocxEditor(props: DocxEditorProps) {
   let replInput!: HTMLInputElement;
   let findInput: HTMLInputElement | undefined;
   let view: DocxView | undefined;
+  let frameEl!: HTMLDivElement;
+  let oleInput!: HTMLInputElement;
+  let oleUpdInput!: HTMLInputElement;
+  let oleTarget: string | null = null;
+  let ruler: RulerKit | undefined;
+  let api: DocxEditorApi | undefined;
+  let loadSource: DocxEditorEventMap["load"]["source"] = "api";
+  const ownBus = !props.bus;
+  const bus: EditorEventBus<DocxEditorEventMap> = props.bus ?? createEventBus<DocxEditorEventMap>({ source: "docx-editor", domPrefix: "docx-editor" });
+  const emit = <K extends keyof DocxEditorEventMap>(type: K, payload: DocxEditorEventMap[K]) => {
+    bus.emit(type, payload);
+    if (api) { try { props.onEvent?.(type, payload, api); } catch (e) { console.error("[docx-editor] onEvent", e); } }
+  };
+  const [rulerOn, setRulerOn] = createSignal(!!props.ruler);
+  const [rulerUnit, setRulerUnit] = createSignal<RulerUnit>(props.rulerUnit ?? "cm");
+  const [measuring, setMeasuring] = createSignal(false);
+  const [guideCount, setGuideCount] = createSignal(0);
+  const [measureText, setMeasureText] = createSignal("");
 
   const detect = (): Lang => (typeof navigator !== "undefined" && /^id\b|^in\b/i.test(navigator.language) ? "id" : "en");
   const [lang, setLangSig] = createSignal<Lang>(props.locale ?? detect());
   const { t } = createI18n(lang);
-  const setLang = (l: Lang) => { setLangSig(l); props.onLocaleChange?.(l); };
+  const setLang = (l: Lang) => { setLangSig(l); props.onLocaleChange?.(l); emit("locale", { locale: l }); };
   createEffect(() => { if (props.locale) setLangSig(props.locale); });
 
   const [book, setBook] = createSignal<DocxBook | undefined>(undefined);
@@ -145,7 +230,8 @@ export default function DocxEditor(props: DocxEditorProps) {
   const [painter, setPainter] = createSignal<PainterInfo | null>(null);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
   const [menu, setMenu] = createSignal<{ id: MenuId; x: number; y: number } | null>(null);
-  const [dialog, setDialog] = createSignal<"debug" | "link" | null>(null);
+  const [dialog, setDialog] = createSignal<"debug" | "link" | "ole" | null>(null);
+  const [oleView, setOleView] = createSignal<{ relId: string; data: OlePreviewData; url?: string } | null>(null);
   const [dragOver, setDragOver] = createSignal(false);
   const [lockRatio, setLockRatio] = createSignal(true);
   const [histMax, setHistMax] = createSignal(props.maxHistory ?? 100);
@@ -193,6 +279,10 @@ export default function DocxEditor(props: DocxEditorProps) {
     view!.load(b);
     refreshProps(b);
     if (fq()) runSearch();
+    ruler?.clearGuides();
+    ruler?.refresh();
+    emit("load", { fileName: b.fileName, size: b.originalBytes.length, source: loadSource });
+    loadSource = "api";
   };
 
   const loadBytes = async (bytes: Uint8Array, name: string) => {
@@ -206,22 +296,26 @@ export default function DocxEditor(props: DocxEditorProps) {
       const code = e instanceof DocxLoadError ? e.code : "parse";
       setLoadErr({ msg: e instanceof Error ? e.message : String(e), code, info, bytes: e instanceof DocxLoadError ? e.bytes : undefined, name });
       setBusy(null);
+      emit("load-error", { message: e instanceof Error ? e.message : String(e), code, fileName: name });
     }
   };
   const openFile = async (f: File | undefined | null) => {
     if (!f) return;
     if (book()?.modified && !ro() && !window.confirm(t("confirm.discard"))) return;
+    loadSource = "file";
     await loadBytes(new Uint8Array(await f.arrayBuffer()), f.name);
   };
   const openSample = async () => {
     if (book()?.modified && !ro() && !window.confirm(t("confirm.discard"))) return;
     setBusy("busy.sample");
-    try { attach(await createSampleBook({ lang: lang() })); } catch (e) { setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: "parse", name: "sample" }); setBusy(null); }
+    loadSource = "sample";
+    try { attach(await createSampleBook({ lang: lang() })); } catch (e) { setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: "parse", name: "sample" }); setBusy(null); emit("load-error", { message: e instanceof Error ? e.message : String(e), code: "parse", fileName: "sample" }); }
   };
   const newBlank = async () => {
     const { createDocx } = await import("@office-kit/docx");
     if (book()?.modified && !ro() && !window.confirm(t("confirm.discard"))) return;
     const doc = createDocx({ paragraphs: [""] });
+    loadSource = "new";
     attach(DocxBook.fromDocx(doc, lang() === "id" ? "dokumen-baru.docx" : "new-document.docx"));
   };
 
@@ -233,28 +327,40 @@ export default function DocxEditor(props: DocxEditorProps) {
     if (!b || ro()) return;
     try {
       const out = /\.(docx|docm)$/i.test(b.fileName) ? b.fileName : baseName(b.fileName) + ".docx";
-      downloadBlob(out, b.toBlob());
+      const blob = b.toBlob();
+      downloadBlob(out, blob);
       b.markSaved(); bump();
       toast("toast.saved", { name: out });
-    } catch (e) { b.addLog("error", "save", "log.saveFail", { msg: e instanceof Error ? e.message : String(e) }); setLogVer(v => v + 1); toast("toast.saveFail"); }
+      emit("save", { fileName: out, size: blob.size });
+    } catch (e) { b.addLog("error", "save", "log.saveFail", { msg: e instanceof Error ? e.message : String(e) }); setLogVer(v => v + 1); toast("toast.saveFail"); emit("error", { scope: "save", error: e }); }
   };
-  const saveSource = () => { const b = book(); if (b) downloadBlob(b.fileName, new Blob([b.originalBytes as BlobPart])); };
-  const saveTxt = () => { const b = book(); if (b) downloadBlob(baseName(b.fileName) + ".txt", new Blob([exportText(b)], { type: "text/plain;charset=utf-8" })); };
-  const saveHtml = () => { const b = book(); if (b) downloadBlob(baseName(b.fileName) + ".html", new Blob([exportHtml(b)], { type: "text/html;charset=utf-8" })); };
+  const saveSource = () => { const b = book(); if (b) { downloadBlob(b.fileName, new Blob([b.originalBytes as BlobPart])); emit("export", { format: "source", fileName: b.fileName, size: b.originalBytes.length }); } };
+  const saveTxt = () => { const b = book(); if (b) { const s = exportText(b); downloadBlob(baseName(b.fileName) + ".txt", new Blob([s], { type: "text/plain;charset=utf-8" })); emit("export", { format: "txt", fileName: baseName(b.fileName) + ".txt", size: s.length }); } };
+  const saveHtml = () => { const b = book(); if (b) { const s = exportHtml(b); downloadBlob(baseName(b.fileName) + ".html", new Blob([s], { type: "text/html;charset=utf-8" })); emit("export", { format: "html", fileName: baseName(b.fileName) + ".html", size: s.length }); } };
 
   // ───────── hook ke view ─────────
 
   const hooks = () => ({
     changed: (label: string) => {
       bump();
-      props.onChange?.({ label, modified: !!book()?.modified });
+      const info = { label, modified: !!book()?.modified };
+      props.onChange?.(info);
+      emit("change", info);
+      if (label === "hist.undo" || label === "hist.redo") emit("history", { action: label === "hist.undo" ? "undo" : "redo" });
+      ruler?.refresh();
       if (panel() === "find" && fq()) scheduleSearch();
       if (panel() === "outline") bump();
     },
-    selection: (s: SelInfo) => { setSel(s); if (s.image) setLockRatio(s.image.lock); },
-    pages: (n: number) => setPages(n),
+    selection: (s: SelInfo) => { setSel(s); if (s.image) setLockRatio(s.image.lock); emit("selection", { info: s }); },
+    pages: (n: number) => { setPages(n); ruler?.refresh(); emit("pages", { count: n }); },
     painter: (p: PainterInfo | null) => setPainter(p),
-    ole: (relId: string) => { setPanel("ole"); const list = oleList(); const i = list.findIndex(o => o.relId === relId); if (i >= 0) selectOle(i); },
+    ole: (relId: string) => {
+      setPanel("ole");
+      const list = oleList(); const i = list.findIndex(o => o.relId === relId);
+      if (i >= 0) selectOle(i);
+      emit("ole:open", { id: relId, progId: i >= 0 ? list[i].progId : undefined });
+      if (i >= 0 && canPreviewOle(book()?.part(list[i].part)?.data, list[i].fileName)) oleOpenPreview(relId);
+    },
     openFile: (f: File) => { void openFile(f); },
     toast,
     log: (level: "info" | "warn" | "error", cat: string, key: string, params?: Record<string, string | number>) => { book()?.addLog(level, cat, key, params); setLogVer(v => v + 1); },
@@ -262,11 +368,166 @@ export default function DocxEditor(props: DocxEditorProps) {
     askLink: (cur: string | undefined) => { setLinkUrl(cur ?? "https://"); setLinkTip(""); setDialog("link"); },
   });
 
+  // ───────── OLE: sisip & perbarui (API + UI) ─────────
+
+  const oleLog = (level: "info" | "warn" | "error", key: string, params?: Record<string, string | number>) => { book()?.addLog(level, "ole", key, params); setLogVer(v => v + 1); };
+  const oleFail = (action: "insert" | "update" | "resize" | "preview", e: unknown, fileName?: string) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    oleLog("error", "log.oleActionFail", { action, name: fileName ?? "", msg });
+    toast("toast.oleFail", { msg });
+    emit("ole:error", { action, message: msg, fileName });
+    emit("error", { scope: "ole", error: e });
+  };
+  const oleInsert: DocxEditorApi["ole"]["insert"] = async (input, opts) => {
+    let name = "";
+    try {
+      if (!book() || !view) throw new Error("Tidak ada dokumen yang terbuka.");
+      if (ro()) throw new Error("Mode baca-saja: objek OLE tidak dapat disisipkan.");
+      const f = await readFileInput(input); name = f.name;
+      const prep = await prepareOle(f.name, f.bytes, opts);
+      const r = view.insertOle(prep, opts?.size);
+      if (!r) throw new Error("Tidak ada posisi kursor untuk menyisipkan objek.");
+      bump();
+      oleLog("info", "log.oleInserted", { name: f.name, kind: prep.kind, progId: prep.progId, size: prep.bytes.length });
+      toast("toast.oleInserted", { name: f.name });
+      const info = oleEventInfo(r.relId, r.part, prep, `¶${r.paragraph}`);
+      emit("ole:inserted", info);
+      return info;
+    } catch (e) { oleFail("insert", e, name); return undefined; }
+  };
+  const oleUpdate: DocxEditorApi["ole"]["update"] = async (relId, input, opts) => {
+    let name = "";
+    try {
+      if (!book() || !view) throw new Error("Tidak ada dokumen yang terbuka.");
+      if (ro()) throw new Error("Mode baca-saja: objek OLE tidak dapat diperbarui.");
+      const f = await readFileInput(input); name = f.name;
+      const prep = await prepareOle(f.name, f.bytes, opts);
+      const r = view.updateOle(relId, prep);
+      if (!r) throw new Error(`Objek OLE "${relId}" tidak ditemukan.`);
+      bump();
+      oleLog("info", "log.oleUpdated", { name: f.name, kind: prep.kind, progId: prep.progId, size: prep.bytes.length });
+      toast("toast.oleUpdated", { name: f.name });
+      const info = { ...oleEventInfo(r.relId, r.part, prep), previousId: relId };
+      emit("ole:updated", info);
+      return info;
+    } catch (e) { oleFail("update", e, name); return undefined; }
+  };
+  /** Dari UI: sisip lalu tampilkan di panel OLE. */
+  const oleInsertUi = async (f: File) => {
+    const info = await oleInsert(f);
+    if (!info) return;
+    setPanel("ole");
+    queueMicrotask(() => { const i = oleList().findIndex(o => o.relId === info.id); if (i >= 0) selectOle(i); });
+  };
+  const oleUpdateUi = async (f: File) => {
+    if (!oleTarget) return;
+    const info = await oleUpdate(oleTarget, f);
+    oleTarget = null;
+    if (!info) return;
+    queueMicrotask(() => { const i = oleList().findIndex(o => o.relId === info.id); if (i >= 0) selectOle(i); });
+  };
+  const oleResize = (relId: string, wPx: number, hPx: number) => {
+    try {
+      const ok = !!view?.resizeOle(relId, wPx, hPx);
+      if (ok) { bump(); emit("ole:updated", { id: relId, part: "", progId: "", fileName: "", size: 0, kind: "package", previousId: relId }); }
+      return ok;
+    } catch (e) { oleFail("resize", e); return false; }
+  };
+
+  // ───────── penggaris ─────────
+
+  const rulerGeometry = () => {
+    const s = view?.zoom ?? 1;
+    const body = frameEl.querySelector<HTMLElement>(":scope > .rk-body");
+    const pg = view?.pageGeometry();
+    if (!view || !body || !pg) return { originX: 0, originY: 0, scale: s, zeroX: 0, zeroY: 0 };
+    const br = body.getBoundingClientRect(), pr = pg.el.getBoundingClientRect(), lr = view.pagesEl.getBoundingClientRect();
+    return { originX: pr.left - br.left, originY: lr.top - br.top, scale: s, zeroX: pg.ml, zeroY: (pr.top - lr.top) / s + pg.mt };
+  };
+  const rulerRegions = (): RulerRegion[] => {
+    const pg = view?.pageGeometry();
+    if (!view || !pg) return [];
+    const top = (pg.el.getBoundingClientRect().top - view.pagesEl.getBoundingClientRect().top) / (view.zoom || 1);
+    return [
+      { axis: "x", from: 0, to: pg.ml, kind: "margin" }, { axis: "x", from: pg.width - pg.mr, to: pg.width, kind: "margin" },
+      { axis: "y", from: top, to: top + pg.mt, kind: "margin" }, { axis: "y", from: top + pg.height - pg.mb, to: top + pg.height, kind: "margin" },
+    ];
+  };
+  const onRulerEvent = <K extends keyof RulerEventMap>(type: K, payload: RulerEventMap[K]) => {
+    if (type === "ruler:visible") setRulerOn((payload as RulerEventMap["ruler:visible"]).visible);
+    else if (type === "ruler:unit") setRulerUnit((payload as RulerEventMap["ruler:unit"]).unit);
+    else if (type === "ruler:measure-mode") { setMeasuring((payload as RulerEventMap["ruler:measure-mode"]).active); if (!(payload as RulerEventMap["ruler:measure-mode"]).active) setMeasureText(""); }
+    else if (type === "ruler:measure") setMeasureText((payload as RulerEventMap["ruler:measure"]).text);
+    if (type === "ruler:guide-add" || type === "ruler:guide-remove") setGuideCount(ruler?.getGuides().length ?? 0);
+    emit(type, payload as never);
+  };
+
+  const buildApi = (): DocxEditorApi => ({
+    events: bus, on: bus.on, off: bus.off, once: bus.once, run: (name, ...args) => bus.run(name, ...args),
+    getBook: () => book(), getView: () => view,
+    load: async (input, name) => {
+      const f = typeof File !== "undefined" && input instanceof File ? input : undefined;
+      const bytes = f ? new Uint8Array(await f.arrayBuffer()) : input instanceof Uint8Array ? input : new Uint8Array(input as ArrayBuffer);
+      loadSource = "api";
+      await loadBytes(bytes, name ?? f?.name ?? "document.docx");
+    },
+    getBytes: () => book()?.toBytes(),
+    getText: () => book()?.plain() ?? "",
+    undo: () => view?.undo(), redo: () => view?.redo(),
+    setZoom: z => setZoom(z), getZoom: () => zoom(),
+    ruler: ruler!,
+    ole: {
+      list: () => oleList(), insert: oleInsert, update: oleUpdate,
+      getBytes: relId => { const b = book(); return b ? oleBytes(b, relId)?.data : undefined; },
+      getSize: relId => { const b = book(); return b ? oleSize(b, relId) : undefined; },
+      resize: oleResize,
+      preview: oleOpenPreview, closePreview: oleClosePreview,
+      canPreview: relId => { const b = book(); const o = b ? listOle(b).find(x => x.relId === relId) : undefined; return !!o && canPreviewOle(b!.part(o.part)?.data, o.fileName); },
+    },
+  });
+
+  const registerCommands = () => {
+    const a = api!;
+    const cmds: Record<string, (...x: any[]) => unknown> = {
+      undo: () => a.undo(), redo: () => a.redo(), setZoom: (z: number) => a.setZoom(z), getZoom: () => a.getZoom(),
+      load: (i: Uint8Array | ArrayBuffer | File, n?: string) => a.load(i, n), getBytes: () => a.getBytes(), getText: () => a.getText(),
+      save: () => saveDocx(), setPanel: (p: Panel) => setPanel(p), setLocale: (l: Lang) => setLang(l),
+      "ole.list": () => a.ole.list(), "ole.insert": (f: FileInput, o?: OleInsertOptions) => a.ole.insert(f, o),
+      "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o),
+      "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
+      "ole.preview": (id: string) => a.ole.preview(id), "ole.closePreview": () => a.ole.closePreview(),
+      "ruler.show": () => a.ruler.setVisible(true), "ruler.hide": () => a.ruler.setVisible(false), "ruler.toggle": () => a.ruler.toggle(),
+      "ruler.setUnit": (u: RulerUnit) => a.ruler.setUnit(u), "ruler.addGuide": (axis: "x" | "y", pos: number) => a.ruler.addGuide(axis, pos),
+      "ruler.removeGuide": (id: string) => a.ruler.removeGuide(id), "ruler.clearGuides": () => a.ruler.clearGuides(), "ruler.getGuides": () => a.ruler.getGuides(),
+      "ruler.measure": (x1: number, y1: number, x2: number, y2: number) => a.ruler.measure(x1, y1, x2, y2), "ruler.setMeasureMode": (on: boolean) => a.ruler.setMeasureMode(on),
+    };
+    for (const [n, fn] of Object.entries(cmds)) onCleanup(bus.registerCommand(n, fn));
+  };
+
   onMount(async () => {
     view = new DocxView(hostEl, hooks());
     view.readonly = ro();
+    ruler = new RulerKit({
+      frame: frameEl, unit: rulerUnit(), visible: rulerOn(), scrollEl: hostEl, getGeometry: rulerGeometry, getRegions: rulerRegions, emit: onRulerEvent,
+      labels: { corner: t("ruler.corner"), removeGuide: t("ruler.removeGuide") },
+    });
+    // gambar mengambang yang diseret menempel ke garis bantu penggaris (tepi kiri/tengah/kanan dan atas/tengah/bawah)
+    view.snapGuides = r => {
+      if (!ruler?.isVisible() || !ruler.getGuides().length) return { dx: 0, dy: 0 };
+      const z = view?.zoom || 1;
+      const a = ruler.toDoc(r.left, r.top);
+      const sn = ruler.snap({ x: a.x, y: a.y, w: r.width / z, h: r.height / z });
+      return { dx: (sn.x ?? a.x) - a.x, dy: (sn.y ?? a.y) - a.y };
+    };
+    onCleanup(() => ruler?.destroy());
+    api = buildApi();
+    registerCommands();
+    onCleanup(bus.attach(rootEl));
     // gagang debug (dipakai uji E2E / konsol): rootEl.__dx = { view, book() }
-    (rootEl as unknown as { __dx: unknown }).__dx = { view, book };
+    (rootEl as unknown as { __dx: unknown }).__dx = { view, book, api };
+    emit("ready", { api });
+    props.onReady?.(api);
+    onCleanup(() => { emit("destroy", {}); if (ownBus) bus.clear(); });
     const onFs = () => setFs(document.fullscreenElement === rootEl || cssFs());
     document.addEventListener("fullscreenchange", onFs);
     const onDocDown = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest?.(".dxe-menu,[data-menu]")) setMenu(null); };
@@ -287,6 +548,12 @@ export default function DocxEditor(props: DocxEditorProps) {
   createEffect(on(marks, v => view?.setMarks(v), { defer: true }));
   createEffect(on(revs, v => view?.setRevisions(v), { defer: true }));
   createEffect(on(histMax, v => { const b = book(); if (b) { b.setMaxHistory(v); bump(); } }, { defer: true }));
+  createEffect(on(zoom, z => { ruler?.refresh(); emit("zoom", { zoom: z }); }, { defer: true }));
+  createEffect(on(panel, p => emit("panel", { panel: p }), { defer: true }));
+  createEffect(on(ro, v => emit("readonly", { readonly: v }), { defer: true }));
+  createEffect(on(() => props.ruler, v => { if (v !== undefined) ruler?.setVisible(!!v); }, { defer: true }));
+  createEffect(on(() => props.rulerUnit, v => { if (v) ruler?.setUnit(v); }, { defer: true }));
+  createEffect(on(dark, () => ruler?.refresh(), { defer: true }));
 
   const setZoom = (z: number) => { view?.setZoom(z); setZoomSig(view?.zoom ?? z); };
   const toggleFs = async () => {
@@ -303,6 +570,7 @@ export default function DocxEditor(props: DocxEditorProps) {
     if (!fq()) { view.clearSearch(); setFRes(null); setFCur(-1); return; }
     const r = view.search(searchOpts());
     setFRes(r); setFCur(-1); setFLimit(300);
+    emit("find", { query: fq(), count: r.hits.length });
   };
   const scheduleSearch = () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(runSearch, 160); };
   const step = (d: 1 | -1) => {
@@ -350,6 +618,30 @@ export default function DocxEditor(props: DocxEditorProps) {
     const el = hostEl.querySelector<HTMLElement>(`.dx-ole[data-ole="${o.relId ?? ""}"]`);
     el?.scrollIntoView({ block: "center" });
   };
+  const oleClosePreview = () => {
+    const v = oleView();
+    if (v?.url) URL.revokeObjectURL(v.url);
+    setOleView(null);
+    if (dialog() === "ole") setDialog(null);
+  };
+  const oleOpenPreview = (relId: string): boolean => {
+    const b = book();
+    const o = b ? listOle(b).find(x => x.relId === relId) : undefined;
+    const data = o && b?.part(o.part)?.data;
+    if (!o || !data) return false;
+    try {
+      const d = prepareOlePreview(data, o.fileName);
+      if (!d) { toast("toast.oleFail", { msg: t("ole.previewNone") }); return false; }
+      const prev = oleView();
+      if (prev?.url) URL.revokeObjectURL(prev.url);
+      const url = d.kind === "text" ? undefined : URL.createObjectURL(new Blob([d.data as BlobPart], { type: d.mime }));
+      setOleView({ relId, data: d, url });
+      setDialog("ole");
+      emit("ole:preview", { id: relId, fileName: d.fileName, kind: d.kind, size: d.data.length });
+      return true;
+    } catch (e) { oleFail("preview", e, o.fileName); return false; }
+  };
+  onCleanup(() => { const v = oleView(); if (v?.url) URL.revokeObjectURL(v.url); });
   const oleDownload = (o: OleObject, mode: "raw" | "native") => {
     const b = book(); const data = b?.part(o.part)?.data;
     if (!b || !data) return;
@@ -520,6 +812,7 @@ export default function DocxEditor(props: DocxEditorProps) {
         <Btn icon="unlink" title={t("b.unlink")} disabled={!edit() || !S()?.link} onClick={() => view?.setLink(null)} />
         <Btn icon="pagebreak" label={t("b.pageBreak")} title={t("b.pageBreak") + " (Ctrl+Enter)"} disabled={!edit() || !S()?.has} onClick={() => view?.insertPageBreakAtCaret()} />
         <Btn label="Ω" title={t("b.symbol")} disabled={!edit() || !S()?.has} menu onClick={e => openMenu("symbols", e)} />
+        <Btn icon="object" label={t("ole.insert")} title={t("ole.insertTip")} disabled={!edit() || !book()} onClick={() => oleInput.click()} />
       </Grp>
       <Grp cap={t("g.review")}>
         <Btn label={t("b.acceptAll")} disabled={!edit()} onClick={() => { const b = book(); if (!b) return; const n = resolveRevisions(b.body, "accept"); if (n) { b.reindex(); view?.renderAll({ sel: null }); view?.commit("hist.revisions"); } toast("toast.revisions", { n }); }} />
@@ -668,6 +961,16 @@ export default function DocxEditor(props: DocxEditorProps) {
         <label class="dxe-chk"><input type="checkbox" checked={revs()} onChange={e => setRevs(e.currentTarget.checked)} />{t("v.revisions")}</label>
         <label class="dxe-chk"><input type="checkbox" checked={dark()} onChange={e => setDark(e.currentTarget.checked)} />{t("v.dark")}</label>
         <Btn icon="outline" label={t("v.outline")} on={panel() === "outline"} onClick={() => setPanel(p => (p === "outline" ? null : "outline"))} />
+      </Grp>
+      <Grp cap={t("g.ruler")}>
+        <label class="dxe-chk" title={t("ruler.showTip")}><input type="checkbox" checked={rulerOn()} onChange={e => ruler?.setVisible(e.currentTarget.checked)} />{t("ruler.show")}</label>
+        <select class="dxe-sel" style={{ width: "62px" }} title={t("ruler.unit")} value={rulerUnit()} onChange={e => ruler?.setUnit(e.currentTarget.value as RulerUnit)}>
+          <For each={RULER_UNITS}>{u => <option value={u}>{u}</option>}</For>
+        </select>
+        <Btn icon="measure" label={t("ruler.measure")} title={t("ruler.measureTip")} on={measuring()} onClick={() => ruler?.setMeasureMode(!measuring())} />
+        <Btn icon="trash" label={t("ruler.clearGuides")} disabled={!guideCount()} onClick={() => ruler?.clearGuides()} />
+        <Show when={guideCount()}><span class="dxe-lbl">{t("ruler.guides", { n: guideCount() })}</span></Show>
+        <Show when={measureText()}><span class="dxe-lbl" title={t("ruler.measure")}>{measureText()}</span></Show>
       </Grp>
       <Grp cap={t("g.window")}>
         <Btn icon="eyeoff" label={t("v.hideToolbar")} onClick={() => setTbHidden(true)} />
@@ -860,6 +1163,30 @@ export default function DocxEditor(props: DocxEditorProps) {
 
         <Show when={panel() === "ole"}>
           <div class="dxe-note">{t("ole.help")}</div>
+          <div style={{ display: "flex", gap: "4px", "flex-wrap": "wrap", "margin-bottom": "6px" }}>
+            <Btn icon="object" label={t("ole.insert")} title={t("ole.insertTip")} disabled={!edit() || !book()} onClick={() => oleInput.click()} />
+            <Btn icon="replace" label={t("ole.update")} title={t("ole.updateTip")} disabled={!edit() || oleSel() === null || !oleList()[oleSel()!] || oleList()[oleSel()!].format === "missing" || oleList()[oleSel()!].linked || !oleList()[oleSel()!].relId}
+              onClick={() => { oleTarget = oleList()[oleSel()!].relId ?? null; oleUpdInput.click(); }} />
+            <Btn icon="eye" label={t("ole.preview")} title={t("ole.previewTip")} disabled={oleSel() === null || !oleList()[oleSel()!]?.relId || !canPreviewOle(book()?.part(oleList()[oleSel()!].part)?.data, oleList()[oleSel()!].fileName)}
+              onClick={() => oleOpenPreview(oleList()[oleSel()!].relId!)} />
+          </div>
+          <Show when={oleSel() !== null && oleList()[oleSel()!]?.relId && oleSize(book()!, oleList()[oleSel()!].relId!)}>
+            {(() => {
+              const o = () => oleList()[oleSel()!];
+              const size = () => { ver(); return oleSize(book()!, o().relId!); };
+              return (
+                <div style={{ display: "flex", gap: "6px", "align-items": "center", "margin-bottom": "6px", "flex-wrap": "wrap" }}>
+                  <span class="dxe-lbl">{t("ole.size")}</span>
+                  <input class="dxe-num-in" type="number" min="0.5" step="0.1" disabled={!edit()} title={t("ole.width")} value={size() ? cm(size()!.wPx) : ""}
+                    onChange={e => { const w = parseFloat(e.currentTarget.value) * PX_CM; const s = size(); if (w > 4 && s) oleResize(o().relId!, w, s.hPx * (w / s.wPx)); }} />
+                  <span class="dxe-lbl">×</span>
+                  <input class="dxe-num-in" type="number" min="0.5" step="0.1" disabled={!edit()} title={t("ole.height")} value={size() ? cm(size()!.hPx) : ""}
+                    onChange={e => { const h = parseFloat(e.currentTarget.value) * PX_CM; const s = size(); if (h > 4 && s) oleResize(o().relId!, s.wPx * (h / s.hPx), h); }} />
+                  <span class="dxe-lbl">cm</span>
+                </div>
+              );
+            })()}
+          </Show>
           <Show when={oleList().length} fallback={<div class="dxe-note">{t("ole.none")}</div>}>
             <div class="dxe-list">
               <For each={oleList()}>{(o, i) => (
@@ -924,6 +1251,8 @@ export default function DocxEditor(props: DocxEditorProps) {
       <input ref={fileInput} type="file" hidden accept=".docx,.docm,.dotx,.dotm,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e => { void openFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
       <input ref={imgInput} type="file" hidden accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml" onChange={e => { const f = e.currentTarget.files?.[0]; if (f) void view?.insertImageFile(f); e.currentTarget.value = ""; }} />
       <input ref={replInput} type="file" hidden accept="image/*" onChange={e => { const f = e.currentTarget.files?.[0]; if (f) void view?.imgReplace(f); e.currentTarget.value = ""; }} />
+      <input ref={oleInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleInsertUi(f); }} />
+      <input ref={oleUpdInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleUpdateUi(f); }} />
 
       {/* top bar */}
       <div class="dxe-top">
@@ -992,7 +1321,9 @@ export default function DocxEditor(props: DocxEditorProps) {
       <div class="dxe-main">
         <Show when={panel() === "outline"}>{sidePanel("left")}</Show>
         <div class="dxe-canvas">
-          <div ref={hostEl} class="dxe-host" />
+          <div ref={frameEl} class="rk-frame dxe-rkframe">
+            <div class="rk-body"><div ref={hostEl} class="dxe-host" /></div>
+          </div>
           <Show when={busy()}><div class="dxe-busy">{t(busy()!)}</div></Show>
           <Show when={dragOver()}><div class="dxe-drop">{t("drop.hint")}</div></Show>
           <Show when={loadErr()}>
@@ -1116,6 +1447,32 @@ export default function DocxEditor(props: DocxEditorProps) {
             </div>
           </div>
         </div>
+      </Show>
+      <Show when={dialog() === "ole" && oleView()}>
+        {(() => {
+          const v = () => oleView()!;
+          return (
+            <div class="dxe-modal-bg" onClick={e => { if (e.target === e.currentTarget) oleClosePreview(); }} onKeyDown={e => { if (e.key === "Escape") oleClosePreview(); }}>
+              <div class="dxe-modal lg">
+                <div class="dxe-modal-h"><Ic n="object" /> {t("ole.previewTitle")} — {v().data.fileName} <span class="dxe-lbl">({formatBytes(v().data.data.length)} · {v().data.mime})</span><span style={{ flex: 1 }} /><Btn icon="x" onClick={oleClosePreview} /></div>
+                <div class="dxe-modal-b">
+                  <Show when={v().data.truncated}><div class="dxe-note">{t("ole.truncated")}</div></Show>
+                  <div class="dxe-prev">
+                    <Show when={v().data.kind === "text"}><pre>{v().data.text}</pre></Show>
+                    <Show when={v().data.kind === "image"}><img src={v().url} alt={v().data.fileName} /></Show>
+                    <Show when={v().data.kind === "audio"}><audio src={v().url} controls /></Show>
+                    <Show when={v().data.kind === "video"}><video src={v().url} controls /></Show>
+                    <Show when={v().data.kind === "pdf"}><iframe src={v().url} title={v().data.fileName} /></Show>
+                  </div>
+                </div>
+                <div class="dxe-modal-f">
+                  <Btn icon="download" label={t("b.download")} onClick={() => downloadBlob(v().data.fileName || "object.bin", new Blob([v().data.data as BlobPart], { type: v().data.mime }))} />
+                  <Btn primary label={t("b.close")} onClick={oleClosePreview} />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </Show>
       <Show when={toastMsg()}><div class="dxe-toast">{toastMsg()}</div></Show>
     </div>

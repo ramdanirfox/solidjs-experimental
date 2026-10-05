@@ -7,6 +7,8 @@ import * as P from "@office-kit/pptx";
 import type { SlideData, SlideShapeData, TextFormat, ReadTextFormat, PresetShape } from "@office-kit/pptx";
 import { PptxDeck } from "./pptx-model";
 import { PX, renderShape, renderSlide, themeColor, topShapes, type RenderCtx } from "./pptx-render";
+import { insertOleFrame, readOleFrame, updateOleFrame, type InsertedOleFrame, type OleFrameBounds, type UpdatedOleFrame } from "./pptx-ole";
+import type { PreparedOle } from "../office-shared/ole-embed";
 
 export interface PxSelInfo {
   slideIndex: number; slideCount: number; layout: string | null; hidden: boolean;
@@ -38,6 +40,8 @@ export interface PxHooks {
   painter(p: { items: [string, string][] } | null): void;
   tool(t: Tool): void;
   openFile(f: File): void;
+  /** Klik ganda pada objek OLE. */
+  ole?(slideIndex: number, shapeId: number, progId: string): void;
 }
 
 export interface FindOpts { query: string; regex: boolean; caseSensitive: boolean; wholeWord: boolean }
@@ -208,6 +212,52 @@ export class PptxView {
     this.hooks.thumbs("all");
   }
   selectedIds() { return this.sel.map(s => P.getShapeId(s)); }
+
+  // ───────── objek OLE ─────────
+
+  /** Sisipkan objek OLE di slide aktif (bingkai dipilih setelahnya). Paket diubah langsung lalu model dimuat ulang. */
+  async insertOle(prep: PreparedOle, at?: OleFrameBounds): Promise<InsertedOleFrame | undefined> {
+    const deck = this.deck;
+    if (!deck || this.readonly || !this.slides.length) return undefined;
+    this.commitEdit();
+    const idx = this.slideIdx;
+    const res = await deck.mutatePackage("hist.oleInsert", pres => insertOleFrame(pres, idx, prep, at));
+    this.afterRestore([res.shapeId], idx);
+    this.hooks.changed("hist.oleInsert"); // riwayat sudah dicatat oleh mutatePackage/commit
+    return res;
+  }
+
+  /** Ganti isi objek OLE `shapeId` pada slide `slideIndex` (posisi & ukuran tetap). */
+  async updateOle(slideIndex: number, shapeId: number, prep: PreparedOle): Promise<UpdatedOleFrame | undefined> {
+    const deck = this.deck;
+    if (!deck || this.readonly) return undefined;
+    this.commitEdit();
+    const res = await deck.mutatePackage("hist.oleUpdate", pres => updateOleFrame(pres, slideIndex, shapeId, prep));
+    this.afterRestore([shapeId], slideIndex);
+    this.hooks.changed("hist.oleUpdate"); // riwayat sudah dicatat oleh mutatePackage/commit
+    return res;
+  }
+
+  /** Ubah ukuran bingkai (px slide) dan catat riwayat. */
+  async resizeOle(slideIndex: number, shapeId: number, wPx: number, hPx: number): Promise<boolean> {
+    const deck = this.deck;
+    const slide = deck && !this.readonly ? P.getSlides(deck.pres)[slideIndex] : undefined;
+    const sh = slide ? P.findShapeById(slide, shapeId) : undefined;
+    if (!deck || !sh || !(wPx > 4) || !(hPx > 4)) return false;
+    this.commitEdit();
+    const b = P.getShapeBounds(sh);
+    P.setShapeBounds(sh, { x: b.x, y: b.y, w: Math.round(wPx * PX), h: Math.round(hPx * PX) });
+    await deck.commit("hist.oleSize");
+    this.afterRestore([shapeId], slideIndex);
+    this.hooks.changed("hist.oleSize"); // riwayat sudah dicatat oleh mutatePackage/commit
+    return true;
+  }
+
+  /** Kotak slide pada layar + ukuran slide (px dokumen) — dasar penggaris. */
+  slideBox(): { rect: DOMRect; width: number; height: number } | null {
+    if (!this.slideEl) return null;
+    return { rect: this.slideEl.getBoundingClientRect(), width: this.slideEl.offsetWidth, height: this.slideEl.offsetHeight };
+  }
 
   // ───────── zoom ─────────
 
@@ -393,11 +443,15 @@ export class PptxView {
     this.updateOverlay(); this.scheduleEmit();
   }
 
+  /** Garis bantu penggaris (px slide) yang ikut menjadi target snapping. */
+  guideSource?: () => { x: number[]; y: number[] };
   private guides: { v: number[]; h: number[] } = { v: [], h: [] };
   private snap(box: Bounds, moving: Set<SlideShapeData>, kinds: ("x" | "y")[] = ["x", "y"]): { dx: number; dy: number } {
     if (!this.snapOn) { this.guides = { v: [], h: [] }; return { dx: 0, dy: 0 }; }
     const size = P.getSlideSize(this.deck!.pres)!;
     const xs: number[] = [0, size.width / 2, size.width], ys: number[] = [0, size.height / 2, size.height];
+    const gs = this.guideSource?.();
+    if (gs) { for (const x of gs.x) xs.push(x * PX); for (const y of gs.y) ys.push(y * PX); }
     for (const s of topShapes(this.slide!)) { if (moving.has(s) || P.isShapeHidden(s)) continue; const b = this.boundsOf(s); xs.push(b.x, b.x + b.w / 2, b.x + b.w); ys.push(b.y, b.y + b.h / 2, b.y + b.h); }
     const th = 6 / this.zoom * PX;
     const best = (vals: number[], cands: number[]) => { let d = Infinity, g: number | undefined; for (const v of vals) for (const c of cands) { const dd = c - v; if (Math.abs(dd) < Math.abs(d) && Math.abs(dd) <= th) { d = dd; g = c; } } return { d: g === undefined ? 0 : d, g }; };
@@ -557,9 +611,14 @@ export class PptxView {
   setTool(t: Tool) { this.tool = t; this.host.classList.toggle("px-drawing", !!t); this.hooks.tool(t); this.emit(); }
 
   private onDbl(e: MouseEvent) {
-    if (this.readonly || !this.deck) return;
+    if (!this.deck) return;
+    const staticOle = (e.target as HTMLElement).closest<HTMLElement>(".px-ole-static");
+    if (staticOle) { this.hooks.ole?.(this.slideIdx, Number(staticOle.dataset.oleId), staticOle.dataset.progId ?? ""); return; }
     const s = this.shapeOfTarget(e.target);
     if (!s) return;
+    const ole = P.getShapeKind(s) === "graphicFrame" && !P.isTableShape(s) && !P.isChartShape(s) ? readOleFrame(s) : null;
+    if (ole) { this.hooks.ole?.(this.slideIdx, P.getShapeId(s), ole.progId); return; }
+    if (this.readonly) return;
     const td = (e.target as HTMLElement).closest<HTMLElement>("td");
     if (td && P.isTableShape(s)) { this.startEdit(s, { row: Number(td.dataset.r), col: Number(td.dataset.c) }); return; }
     if (P.getShapeKind(s) === "shape") this.startEdit(s);

@@ -22,6 +22,7 @@ interface Item { el: HTMLElement; rows?: [number, number]; rowEls?: HTMLElement[
 
 const cs = (el: Element) => getComputedStyle(el);
 function outerH(el: HTMLElement): number {
+  if (el.dataset.fl) return 0; // tabel mengambang: di luar aliran
   const s = cs(el);
   return el.offsetHeight + (parseFloat(s.marginTop) || 0) + (parseFloat(s.marginBottom) || 0);
 }
@@ -67,6 +68,7 @@ export class Paginator {
     ctx.editable = false;
     const box = this.h.doc.createElement("div");
     box.className = "dx-hfc";
+    box.dataset.hf = relId; // dipakai view untuk mengenali gambar di header/footer
     box.style.display = "flex"; box.style.flexDirection = "column";
     fillBlocks(ctx, box, root, true);
     return box;
@@ -74,7 +76,7 @@ export class Paginator {
 
   private measureHF(relId: string | undefined, contentW: number): number {
     if (!relId) return 0;
-    const key = `${relId}|${Math.round(contentW)}`;
+    const key = `${relId}|${Math.round(contentW)}|${this.h.book.hfRev}`;
     const hit = this.hfH.get(key);
     if (hit !== undefined) return hit;
     const box = this.renderHF(relId, contentW);
@@ -201,7 +203,7 @@ export class Paginator {
       ftr.style.left = `${g.ml}px`; ftr.style.bottom = `${g.ftrDist}px`; ftr.style.width = `${g.contentW}px`;
       void bot;
       const hk = this.hfKey(sect, "hdr", pageInSec, idx + 1), fk = this.hfKey(sect, "ftr", pageInSec, idx + 1);
-      const sig = `${hk}|${fk}|${idx + 1}|${total}|${g.contentW}`;
+      const sig = `${hk}|${fk}|${idx + 1}|${total}|${g.contentW}|${this.h.book.hfRev}`;
       if (page.dataset.hfsig !== sig) {
         page.dataset.hfsig = sig;
         hdr.textContent = ""; ftr.textContent = "";
@@ -233,6 +235,7 @@ export class Paginator {
   // ───────── tabel ─────────
 
   private planTable(tbl: HTMLElement, c: () => PagePlan, newPage: () => void) {
+    if (tbl.dataset.fl) { c().items.push({ el: tbl }); return; }
     const xml = this.h.reg.elOf.get(tbl);
     const rowEls: HTMLElement[] = xml ? xml.children.filter(isEl).filter(x => x.name.local === "tr").map(tr => this.h.reg.domOf.get(tr)).filter((x): x is HTMLElement => !!x) : [];
     if (!rowEls.length) {
@@ -480,13 +483,19 @@ export class Paginator {
   layoutAnchors() {
     const { reg } = this.h;
     for (const page of this.pages) {
-      page.querySelectorAll<HTMLElement>(':scope > .dx-body .dx-img[data-wrap="abs"]').forEach(img => {
+      const sections = this.h.book.sections();
+      const pg = geomOf(sections[Math.min(sections.length - 1, Number(page.dataset.sec ?? 0))]);
+      // gambar bungkus-none (abs) dan bungkus-persegi (float); termasuk yang ada di header/footer
+      page.querySelectorAll<HTMLElement>('.dx-img[data-wrap="abs"], .dx-img[data-wrap="float"]').forEach(img => {
         const dr = reg.elOf.get(img);
         if (!dr) return;
+        const isFloat = img.dataset.wrap === "float";
+        if (isFloat) { img.style.position = "relative"; img.style.left = "0px"; img.style.top = "0px"; }
         const info = readDrawing(dr);
         const fr = info ? this.anchorBase(img, info) : undefined;
         if (!info || !fr) return;
         const { px0, py0, w, h, baseX, baseY } = fr;
+        if (isFloat && !info.posH && !info.posV) return;
         let x = px0, y = py0;
         const hs = info.posH, vs = info.posV;
         if (hs) {
@@ -497,8 +506,30 @@ export class Paginator {
           const [b0, bh] = baseY(vs.rel);
           y = vs.align ? (vs.align === "center" ? b0 + (bh - h) / 2 : vs.align === "bottom" || vs.align === "outside" ? b0 + bh - h : b0) : b0 + emuPx(vs.off ?? 0);
         }
+        if (isFloat) {
+          // float CSS menentukan lilitan teks; geser (relative) ke posisi yang diminta dokumen — Word mengizinkan melewati margin
+          const pr = page.getBoundingClientRect(), rr = img.getBoundingClientRect();
+          const z = pr.width / (pg.pageW || 1) || 1;
+          img.style.left = `${Math.round((x - (rr.left - pr.left) / z) * 100) / 100}px`;
+          img.style.top = `${Math.round((y - (rr.top - pr.top) / z) * 100) / 100}px`;
+          return;
+        }
         img.style.left = `${Math.round((x - px0) * 100) / 100}px`;
         img.style.top = `${Math.round((y - py0) * 100) / 100}px`;
+      });
+      // tabel mengambang yang ditambatkan ke halaman / margin
+      const body = page.querySelector<HTMLElement>(":scope > .dx-body");
+      body?.querySelectorAll<HTMLElement>(":scope > table[data-fl]").forEach(t => {
+        let f: { ha: string; va: string; x?: number; y?: number; xs?: string; ys?: string };
+        try { f = JSON.parse(t.dataset.fl ?? "{}"); } catch { return; }
+        const w = t.offsetWidth, h = t.offsetHeight, bodyTop = body.offsetTop;
+        const [bx, bw] = f.ha === "page" ? [0, pg.pageW] : [pg.ml, pg.contentW];
+        const [by, bh] = f.va === "page" ? [0, pg.pageH] : [bodyTop, pg.pageH - pg.mb - bodyTop];
+        const x = f.xs === "center" ? bx + (bw - w) / 2 : f.xs === "right" || f.xs === "outside" ? bx + bw - w : f.xs ? bx : bx + twipPx(f.x ?? 0);
+        const y = f.ys === "center" ? by + (bh - h) / 2 : f.ys === "bottom" || f.ys === "outside" ? by + bh - h : f.ys ? by : by + twipPx(f.y ?? 0);
+        t.style.position = "absolute";
+        t.style.left = `${Math.round((x - pg.ml) * 100) / 100}px`;
+        t.style.top = `${Math.round((y - bodyTop) * 100) / 100}px`;
       });
     }
   }

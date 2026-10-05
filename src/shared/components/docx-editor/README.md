@@ -59,9 +59,13 @@ Props (`DocxEditorProps`): `src?: string`, `data?: Uint8Array | ArrayBuffer`, `f
   paragraf pada kursor beserta XML mentahnya).
 - Toolbar dapat disembunyikan, layar penuh, mode gelap, tanda format (¶), kerangka (outline), zoom, `readonly`, antarmuka en/id.
 
+- **Tata letak Word**: tabel mengambang (`w:tblpPr`) diposisikan absolut terhadap halaman/margin; kotak teks (`wps:bodyPr`) memakai inset dan perataan vertikal aslinya; gambar `wrapSquare`/anchor di header ditempatkan tepat pada posisi OOXML-nya (kiri/kanan header tidak lagi bertumpuk).
+
+- **Pratinjau OLE**: tombol *Pratinjau* di panel OLE (atau klik ganda objek yang dapat dipratinjau) membuka dialog untuk berkas tertanam berupa teks, gambar, audio, video, atau PDF (dideteksi dari ekstensi dan magic bytes; teks dibatasi 512 KB). HTML/SVG tidak dieksekusi. API: `api.ole.preview(relId)`, `closePreview()`, `canPreview(relId)`; event `ole:preview`; perintah `ole.preview`.
+
 ## Batasan yang disengaja
 
-- Header/footer dan catatan kaki hanya tampil (belum dapat disunting); catatan kaki ditampilkan di akhir isi, bukan di dasar tiap halaman.
+- Teks header/footer dan catatan kaki hanya tampil (belum dapat disunting); gambar/kotak teks di header/footer dapat dipilih, digeser, diubah ukuran, dan dihapus (masuk undo/redo dan tersimpan). Catatan kaki ditampilkan di akhir isi, bukan di dasar tiap halaman.
 - Paragraf tidak dibelah antar-halaman (paragraf sangat panjang menjadikan halaman memanjang); baris tabel *dapat* dibelah. Section multi-kolom ditata satu kolom, tabel mengambang inline,
   grafik/SmartArt/EMF/WMF berupa placeholder, persamaan OMML sebagai teks. Semua dicatat di **Log**.
 - Pagination mendekati Word/LibreOffice tetapi tidak identik (metrik font, kerning, widow/orphan).
@@ -73,3 +77,49 @@ Props (`DocxEditorProps`): `src?: string`, `data?: Uint8Array | ArrayBuffer`, `f
 `pnpm test src/shared/components/docx-editor` — teks/tabel/OLE/i18n murni (Node) serta render, pemetaan offset DOM, dan controller (jsdom).
 Invarian utama: untuk setiap paragraf `teks datar DOM == teks datar model` dan `offset → posisi DOM → offset` identik.
 Di browser, `document.querySelector(".dxe-root").__dx` mengekspos `{ view, book() }` untuk debugging/E2E.
+
+## Event, API, dan perintah (pemrograman)
+
+Editor memancarkan event bertipe lewat **bus**, prop `onEvent`, dan **CustomEvent DOM** `docx-editor:<tipe>` (bubbles) pada elemen akar; semuanya membawa payload yang sama.
+
+```tsx
+<DocxEditor onReady={api => {
+  api.on("change", ({ label, modified }) => …);
+  api.on("ole:inserted", info => …);
+  api.ruler.setVisible(true);
+}} />
+// dari luar tanpa referensi ke API:
+el.addEventListener("docx-editor:change", e => (e as CustomEvent).detail);
+await dispatchCommand(el, "docx-editor", "getBytes");
+```
+
+- Event umum: `ready` (editor siap — dokumen mungkin belum selesai dimuat), `load` (`fileName`, `size`, `source`), `load-error`, `change`, `save`, `export`, `zoom`, `panel`, `readonly`, `error`, `destroy`, `locale`, `history`, `selection`, `pages`, `find`.
+- Event OLE: `ole:inserted`, `ole:updated`, `ole:open` (klik ganda objek), `ole:error` (`action`: insert | update | resize). Event penggaris: `ruler:visible|unit|guide-add|guide-move|guide-remove|measure|measure-mode`.
+- `api.events` = bus (`on/once/off/onAny/emit/wait/registerCommand/run/history`); prop `bus` memakai bus milik aplikasi (tidak dibersihkan saat editor dilepas); `api.run("<perintah>", …)` menjalankan perintah bernama (`api.events.commands()` untuk daftar).
+- Galat di handler tidak merusak editor.
+
+## Objek OLE: sisip & perbarui
+
+`api.ole.insert(file, opts?)` menyisipkan **berkas apa pun** sebagai objek OLE; `api.ole.update(id, file)` mengganti isinya; `api.ole.list()`, `api.ole.getBytes(id)`, `api.ole.resize(id, w, h)`.
+`file` = `File`/`Blob` atau `{ name, data }`. Cara penyimpanan mengikuti Office (`prepareOle`, `office-shared/ole-embed.ts`):
+
+| Berkas | Disimpan sebagai | ProgID |
+| --- | --- | --- |
+| `.xlsx/.xlsm/.docx/.docm/.pptx/.pptm` (ZIP asli) | paket OOXML tertanam (relasi `package`) | `Excel.Sheet.12`, `Word.Document.12`, `PowerPoint.Show.12`, … |
+| Compound File biner (`.bin`, `.xls`, `.doc`) | apa adanya (relasi `oleObject`) | dari `\x01CompObj`, bila ada |
+| Lainnya | objek `Package` (`\x01Ole10Native` dalam CFB, seperti *Insert → Object → From file*) | `Package` |
+
+Pratinjau (ikon + nama berkas, PNG) dibuat otomatis (`opts.preview` untuk milik sendiri). Galat (berkas kosong, id tidak ada, mode `readonly`, dst.) memancarkan `ole:error` dan masuk Log; API mengembalikan `undefined`/`false`, tidak melempar.
+UI: tombol **Objek…** dan panel **OLE** (daftar objek, *Ganti isi…*). Isi tertanam tidak pernah dieksekusi.
+Catatan verifikasi: struktur paket diperiksa dengan buka-ulang lewat library + uji well-formed XML + validasi library; **belum dibuka di aplikasi Office sungguhan** pada pengembangan ini.
+
+## Penggaris, garis bantu, dan alat ukur
+
+Prop `ruler` / `rulerUnit` (default tersembunyi, `cm`) atau `api.ruler`. Penggaris menampilkan `cm / mm / in / pt / px` (klik sudut untuk berganti), **garis bantu** dibuat dengan menyeret dari penggaris
+(untuk perataan; gambar mengambang yang diseret menempel ke guide; tahan Alt untuk menonaktifkan), dan **alat ukur** (tombol *Ukur*, seret di area kerja untuk jarak/Δx/Δy/sudut; Shift = kunci sumbu, Esc = hapus). Lihat `editor-kit/README.md` untuk API lengkap.
+Angka nol = margin kiri/atas halaman terdekat (margin diberi warna); posisi guide disimpan sebagai koordinat dokumen.
+
+### Detail OLE di DOCX
+
+Objek ditulis sebagai `<w:object>` + VML (`v:shape`/`o:OLEObject`) dengan part `/word/embeddings/*` dan gambar pratinjau. **Perbarui** selalu membuat part + relasi baru lalu mengarahkan objek ke sana (riwayat undo hanya menyimpan XML body, jadi undo tetap mengembalikan isi lama);
+saat menyimpan, part sisa yang tidak dirujuk body dilepas sementara dari berkas (dan dikembalikan ke sesi sehingga undo setelah simpan tetap benar). File baru: `docx-ole-edit.ts`.

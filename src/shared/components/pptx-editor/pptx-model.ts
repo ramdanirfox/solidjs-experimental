@@ -99,6 +99,29 @@ export class PptxDeck {
   }
   async flushQueue() { await this.queue; }
 
+  /**
+   * Ubah paket OPC langsung (part, relasi, XML slide) — untuk hal yang belum punya API di library, mis. objek OLE.
+   * `fn` dijalankan pada model saat ini; setelah itu model dimuat ulang dari paket hasil ubahan (cache slide sah kembali,
+   * `generation` naik) dan satu catatan riwayat dibuat. Bila `fn` melempar galat, paket dikembalikan dari riwayat terakhir.
+   */
+  async mutatePackage<T>(label: string, fn: (pres: PresentationData) => T): Promise<T> {
+    await this.queue;
+    let out: T;
+    try {
+      out = fn(this.pres);
+      const bytes = await P.savePresentation(this.pres);
+      this.pres = await P.loadPresentation(bytes);
+    } catch (e) {
+      const last = this.hist[this.histIdx];
+      if (last) this.pres = await P.loadPresentation(last.bytes); // buang ubahan setengah jadi
+      this.generation++;
+      throw e;
+    }
+    this.generation++;
+    await this.commit(label);
+    return out;
+  }
+
   async restore(idx: number): Promise<boolean> {
     await this.queue;
     if (idx < 0 || idx >= this.hist.length || idx === this.histIdx) return false;

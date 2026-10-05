@@ -17,6 +17,8 @@ import type { ResolvedStyle } from "./xlsx-style";
 export interface GridApi {
   scrollTo(row: number, col: number): void;
   focus(): void;
+  /** Posisi area gulir pada layar + gulir saat ini (px sheet ter-zoom) — dasar penggaris. */
+  viewport(): { left: number; top: number; scrollX: number; scrollY: number; headerW: number; headerH: number };
 }
 
 export interface XlsxGridProps {
@@ -60,6 +62,8 @@ export interface XlsxGridProps {
   selectedImage?: Accessor<string | undefined>;
   onSelectImage?(key: string | undefined): void;
   onImageRect?(d: DrawingView, rect: { x: number; y: number; w: number; h: number }): void;
+  /** Klik ganda pada objek OLE. */
+  onOleOpen?(id: string): void;
   ref?(api: GridApi): void;
   initialScroll?: { x: number; y: number };
   onScrollChange?(x: number, y: number): void;
@@ -141,6 +145,7 @@ export default function XlsxGrid(props: XlsxGridProps) {
     props.ref?.({
       scrollTo: (r, c) => ensureVisible(r, c),
       focus: () => scroller.focus({ preventScroll: true }),
+      viewport: () => { const r = scroller.getBoundingClientRect(); return { left: r.left, top: r.top, scrollX: scroller.scrollLeft, scrollY: scroller.scrollTop / geo().scaleY, headerW: HEADER_W, headerH: HEADER_H }; },
     });
     onCleanup(() => ro.disconnect());
   });
@@ -518,15 +523,17 @@ export default function XlsxGrid(props: XlsxGridProps) {
               return (
                 <div
                   class="xl-float"
-                  classList={{ chart: d.kind !== "picture", broken: d.kind === "picture" && !d.url, editable: editable(), selected: isSel() && editable() }}
+                  classList={{ chart: d.kind !== "picture" && d.kind !== "ole", ole: d.kind === "ole", broken: d.kind === "picture" && !d.url, editable: editable(), selected: isSel() && (editable() || d.kind === "ole") }}
                   style={{ left: `${rect().x + (drag()?.dx ?? 0)}px`, top: `${rect().y + (drag()?.dy ?? 0)}px`, width: `${Math.max(4, rect().w + (drag()?.dw ?? 0))}px`, height: `${Math.max(4, rect().h + (drag()?.dh ?? 0))}px` }}
                   title={d.descr || d.name || ""}
                   data-nodrag
-                  onMouseDown={e => start("move", e)}
+                  onMouseDown={e => { if (d.kind === "ole") { if (e.button === 0) { e.stopPropagation(); props.onSelectImage?.(d.key); } return; } start("move", e); }}
+                  onDblClick={() => { if (d.kind === "ole" && d.oleId) props.onOleOpen?.(d.oleId); }}
                 >
-                  <Show when={d.kind === "picture" && d.url} fallback={<div class="xl-float-ph"><b>{d.kind === "chart" ? "📊 Grafik" : d.kind === "picture" ? "🖼 Gambar" : d.text ?? "◻ Objek"}</b><Show when={!d.text}><small>{d.note}</small></Show></div>}>
+                  <Show when={(d.kind === "picture" || d.kind === "ole") && d.url} fallback={<div class="xl-float-ph"><b>{d.kind === "chart" ? "📊 Grafik" : d.kind === "picture" ? "🖼 Gambar" : d.kind === "ole" ? "📎 " + (d.name ?? "OLE") : d.text ?? "◻ Objek"}</b><Show when={!d.text}><small>{d.note}</small></Show></div>}>
                     <img src={d.url} alt={d.descr || d.name || "gambar"} draggable={false} />
                   </Show>
+                  <Show when={d.kind === "ole"}><span class="xl-ole-badge">OLE</span></Show>
                   <Show when={isSel() && editable()}><i class="xl-img-h" title="Ubah ukuran" onMouseDown={e => start("resize", e)} /></Show>
                 </div>
               );

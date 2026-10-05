@@ -55,3 +55,55 @@ Props: `src?: string`, `sample?: boolean` (default `true`), `height?: string`, `
   operasi angka, angka bertipe teks, rentang kosong/berisi error, dan hasil error — dialog menampilkan penjelasan + saran, bisa *Kembali edit* atau *Simpan apa adanya* (kecuali sintaks rusak).
 - **Status bar** menampilkan tipe data sel aktif (Angka, Teks, Tanggal/Waktu, Boolean, Error, Formula → tipe hasil) dan memberi tanda ⚠ untuk teks yang tampak seperti angka.
 
+## Event, API, dan perintah (pemrograman)
+
+Editor memancarkan event bertipe lewat **bus**, prop `onEvent`, dan **CustomEvent DOM** `xlsx-preview:<tipe>` (bubbles) pada elemen akar; semuanya membawa payload yang sama.
+
+```tsx
+<XlsxPreview onReady={api => {
+  api.on("change", ({ label, modified }) => …);
+  api.on("ole:inserted", info => …);
+  api.ruler.setVisible(true);
+}} />
+// dari luar tanpa referensi ke API:
+el.addEventListener("xlsx-preview:change", e => (e as CustomEvent).detail);
+await dispatchCommand(el, "xlsx-preview", "getBytes");
+```
+
+- Event umum: `ready` (editor siap — dokumen mungkin belum selesai dimuat), `load` (`fileName`, `size`, `source`), `load-error`, `change`, `save`, `export`, `zoom`, `panel`, `readonly`, `error`, `destroy`, `selection`, `sheet`, `cell-edit`, `find`.
+- Event OLE: `ole:inserted`, `ole:updated`, `ole:open` (klik ganda objek), `ole:error` (`action`: insert | update | resize). Event penggaris: `ruler:visible|unit|guide-add|guide-move|guide-remove|measure|measure-mode`.
+- `api.events` = bus (`on/once/off/onAny/emit/wait/registerCommand/run/history`); prop `bus` memakai bus milik aplikasi (tidak dibersihkan saat editor dilepas); `api.run("<perintah>", …)` menjalankan perintah bernama (`api.events.commands()` untuk daftar).
+- Galat di handler tidak merusak editor.
+
+## Objek OLE: sisip & perbarui
+
+`api.ole.insert(file, opts?)` menyisipkan **berkas apa pun** sebagai objek OLE; `api.ole.update(id, file)` mengganti isinya; `api.ole.list()`, `api.ole.getBytes(id)`, `api.ole.resize(id, w, h)`.
+`file` = `File`/`Blob` atau `{ name, data }`. Cara penyimpanan mengikuti Office (`prepareOle`, `office-shared/ole-embed.ts`):
+
+| Berkas | Disimpan sebagai | ProgID |
+| --- | --- | --- |
+| `.xlsx/.xlsm/.docx/.docm/.pptx/.pptm` (ZIP asli) | paket OOXML tertanam (relasi `package`) | `Excel.Sheet.12`, `Word.Document.12`, `PowerPoint.Show.12`, … |
+| Compound File biner (`.bin`, `.xls`, `.doc`) | apa adanya (relasi `oleObject`) | dari `\x01CompObj`, bila ada |
+| Lainnya | objek `Package` (`\x01Ole10Native` dalam CFB, seperti *Insert → Object → From file*) | `Package` |
+
+Pratinjau (ikon + nama berkas, PNG) dibuat otomatis (`opts.preview` untuk milik sendiri). Galat (berkas kosong, id tidak ada, mode `readonly`, dst.) memancarkan `ole:error` dan masuk Log; API mengembalikan `undefined`/`false`, tidak melempar.
+UI: tombol **Objek…** dan panel **OLE** (daftar objek, *Ganti isi…*). Isi tertanam tidak pernah dieksekusi.
+Catatan verifikasi: struktur paket diperiksa dengan buka-ulang lewat library + uji well-formed XML + validasi library; **belum dibuka di aplikasi Office sungguhan** pada pengembangan ini.
+
+## Penggaris, garis bantu, dan alat ukur
+
+Prop `ruler` / `rulerUnit` (default tersembunyi, `cm`) atau `api.ruler`. Penggaris menampilkan `cm / mm / in / pt / px` (klik sudut untuk berganti), **garis bantu** dibuat dengan menyeret dari penggaris
+(untuk perataan; gambar yang dipindah menempel ke guide saat dilepas), dan **alat ukur** (tombol *Ukur*, seret di area kerja untuk jarak/Δx/Δy/sudut; Shift = kunci sumbu, Esc = hapus). Lihat `editor-kit/README.md` untuk API lengkap.
+Satuan dokumen = px sheet; angka nol = tepi kiri kolom A / tepi atas baris 1 (header baris/kolom tidak dihitung).
+
+### API tambahan XLSX
+
+Props baru: `data` + `fileName` (muat dari bytes), `bus`, `onEvent`, `onReady`, `ruler`, `rulerUnit`. API: `load`, `getBytes`, `getSheets`, `setSheet`, `getSelection`, `select("B2:C3")`, `getCell("Sheet!A1")`, `setCell("A1", "=SUM(B1:B3)")` (memancarkan `cell-edit`), `undo/redo`, `getZoom/setZoom`.
+Event `change` bersifat kasar (setiap perubahan model; cek `modified`). Id objek OLE: `"<indeks sheet>:<shapeId>"` untuk objek dari berkas, `"new:<n>"` untuk sisipan sesi ini.
+
+### Detail OLE di XLSX
+
+`xlsx-ole.ts` bekerja pada ZIP hasil simpan (setelah `workbookToBytes` + `repairPackage`), karena library tidak punya API OLE. **Sisip**: part `xl/embeddings/*`, `xl/media/oleprev*.png`, relasi sheet, `<oleObjects><oleObject … shapeId r:id/></oleObjects>` pada posisi skema yang benar, dan bentuk VML (`xl/drawings/vmlDrawingN.vml`, ditambahkan ke VML komentar yang sudah ada bila ada; id bentuk unik; blok `idmap` dilengkapi) berisi anchor sel + gambar pratinjau — bentuk klasik Excel 2007+.
+**Perbarui**: isi part diganti (atau part + relasi baru bila jenis berganti) dan pratinjau diarahkan ulang. **Membaca** mendukung bentuk klasik (VML) dan Excel 2010+ (`mc:AlternateContent` + `objectPr` + anchor). Objek ditampilkan di grid sebagai kotak pratinjau + lencana *OLE*; klik ganda membukanya di panel OLE.
+Pada `@office-kit/xlsx` 0.23.4, `oleObjects` + VML + embedding **bertahan** saat berkas dimuat lalu disimpan (diuji; uji akan gagal bila versi library berikutnya mengubahnya).
+Batasan: posisi/ukuran objek yang **sudah ada di berkas** belum dapat diubah (hanya isinya); objek yang disisipkan pada sesi ini dapat diubah ukurannya lewat `api.ole.resize`. Objek tertaut (link) hanya dapat dibaca.

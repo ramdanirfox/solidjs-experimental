@@ -9,6 +9,7 @@ import {
 } from "@office-kit/docx";
 import { NS, astBodyToXml, attr, cloneEl, descendAll, els, first, isEl, mk, num, parseXmlString, serialize, setAttr, setChild, val, type XEl, type XNode } from "./docx-xml";
 import { StyleEngine } from "./docx-style";
+import { pruneOleParts } from "./docx-ole-edit";
 import { NumberingEngine } from "./docx-numbering";
 import { flatText, plainText } from "./docx-text";
 import { maxDocPrId, sniffImageSize } from "./docx-image";
@@ -37,7 +38,7 @@ export interface Section {
   ftrRefs: Record<string, string>;
 }
 
-export interface HistEntry { label: string; at: number; xml: string; size: number }
+export interface HistEntry { label: string; at: number; xml: string; size: number; /** Snapshot header/footer yang pernah diubah (relId → XML). */ hf?: Record<string, string> }
 export interface DocStats { paragraphs: number; words: number; chars: number; charsNoSpaces: number; tables: number; images: number; headings: number; lines?: number }
 
 export const PAGE_SIZES: Record<string, { w: number; h: number }> = {
@@ -94,12 +95,20 @@ export class DocxBook {
   private parents = new WeakMap<XEl, XEl>();
   private imgUrls = new Map<string, string>();
   private hfCache = new Map<string, XEl | null>();
+  /** XML asli tiap header/footer saat pertama dibaca (dasar undo untuk entri riwayat sebelum perubahan pertama). */
+  private hfOrig = new Map<string, string>();
+  /** relId header/footer yang pernah diubah; ditulis kembali ke paket saat `flush()`. */
+  hfEdited = new Set<string>();
+  /** Naik setiap header/footer berubah → Paginator menggambar ulang header/footer. */
+  hfRev = 0;
   private notesCache = new Map<string, Map<string, XEl>>();
   private settingsEl: XEl | null | undefined;
   /** Berubah sejak dibuka / disimpan terakhir. */
   modified = false;
   private savedIdx = 0;
   ole: { relId: string; part: string; progId?: string }[] = [];
+  /** Part embedding/pratinjau yang dibuat oleh operasi sisip/perbarui OLE (relId → part). Dipangkas saat simpan bila tak dirujuk body maupun riwayat undo. */
+  oleTracked = new Map<string, string>();
 
   constructor(doc: Docx, fileName: string, bytes: Uint8Array) {
     this.fileName = fileName;
@@ -228,7 +237,30 @@ export class DocxBook {
     const r = this.rel(relId);
     const root = r ? this.xmlPart(this.resolve(this.doc.partName, r.target)) : undefined;
     this.hfCache.set(relId, root ?? null);
+    if (root) this.hfOrig.set(relId, serialize(root));
     return root;
+  }
+  /** Tandai header/footer berubah (panggil setelah mengubah pohon XML-nya). */
+  touchHF(relId: string) { this.hfEdited.add(relId); this.hfRev++; }
+  private hfSnapshot(): Record<string, string> | undefined {
+    if (!this.hfEdited.size) return undefined;
+    const out: Record<string, string> = {};
+    for (const id of this.hfEdited) { const r = this.hfCache.get(id); if (r) out[id] = serialize(r); }
+    return out;
+  }
+  private restoreHF(idx: number) {
+    if (!this.hfEdited.size) return;
+    for (const id of this.hfEdited) {
+      const x = this.hist[idx]?.hf?.[id] ?? this.hfOrig.get(id);
+      if (x) { try { this.hfCache.set(id, parseXmlString(x)); } catch { /* biarkan versi saat ini */ } }
+    }
+    this.hfRev++;
+  }
+  private flushHF() {
+    for (const id of this.hfEdited) {
+      const root = this.hfCache.get(id), pn = this.hfPart(id), part = pn ? this.part(pn) : undefined;
+      if (root && part) (part as { data: Uint8Array }).data = new TextEncoder().encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + serialize(root));
+    }
   }
   hfPart(relId: string): string | undefined { const r = this.rel(relId); return r ? this.resolve(this.doc.partName, r.target) : undefined; }
   notes(kind: "footnotes" | "endnotes"): Map<string, XEl> {
@@ -351,11 +383,11 @@ export class DocxBook {
     if (!init) this.modified = true;
     const last = this.hist[this.histIdx];
     if (!init && merge && last && last.label === merge && now - last.at < 1800 && this.histIdx === this.hist.length - 1) {
-      this.hist[this.histIdx] = { label: merge, at: now, xml, size: xml.length };
+      this.hist[this.histIdx] = { label: merge, at: now, xml, size: xml.length, hf: this.hfSnapshot() };
       return;
     }
     this.hist.length = this.histIdx + 1;
-    this.hist.push({ label: merge ?? label, at: now, xml, size: xml.length });
+    this.hist.push({ label: merge ?? label, at: now, xml, size: xml.length, hf: this.hfSnapshot() });
     this.histIdx = this.hist.length - 1;
     this.trim();
   }
@@ -378,6 +410,7 @@ export class DocxBook {
     this.body = mk("body", undefined, kids);
     this.histIdx = idx;
     this.modified = idx !== this.savedIdx;
+    this.restoreHF(idx);
     this.reindex();
     return true;
   }
@@ -388,13 +421,14 @@ export class DocxBook {
   // ───────── simpan ─────────
 
   flush() {
+    this.flushHF();
     const b = this.doc.document.body;
     b.blocks = this.body.children.filter(isEl).map(node => ({ kind: "raw" as const, node: node as never }));
     b.extras = [];
     (b as { sectPr?: unknown }).sectPr = this.sectPr as never;
     this.doc.dirty = true;
   }
-  toBytes(): Uint8Array { this.flush(); return toUint8Array(this.doc); }
+  toBytes(): Uint8Array { const restore = pruneOleParts(this); try { this.flush(); return toUint8Array(this.doc); } finally { restore(); } }
   toBlob(): Blob { return new Blob([this.toBytes() as BlobPart], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }); }
   validate() { this.flush(); return validate(this.doc); }
 

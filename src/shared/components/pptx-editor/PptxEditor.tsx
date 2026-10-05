@@ -12,7 +12,57 @@ import { createSampleDeck } from "./pptx-sample";
 import { createI18n, type Lang } from "./pptx-i18n";
 import { hexDump, isCfb, isZip, readCfb, readVba, streamBytes, type CfbInfo, type VbaInfo } from "../office-shared/ole-core";
 import { formatBytes } from "../docx-editor/docx-util";
+import { listPptxOle, pptxOleBytes, type PptxOle } from "./pptx-ole";
+import { createEventBus, type EditorEventBus } from "../editor-kit/events";
+import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
+import { RulerKit, type RulerEventMap } from "../editor-kit/ruler-kit";
+import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
+import { prepareOle } from "../office-shared/ole-embed";
 import "./pptx-editor.css";
+
+/** Event yang dipancarkan editor PPTX (bus: `api.events`; DOM: CustomEvent `pptx-editor:<tipe>` pada elemen akar). */
+export interface PptxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, RulerEventMap {
+  ready: { api: PptxEditorApi };
+  selection: { info: PxSelInfo };
+  /** Slide aktif berpindah. */
+  slide: { index: number; count: number };
+  find: { query: string; count: number };
+  tool: { tool: Tool };
+}
+
+/** Handle imperatif yang diberikan lewat `onReady`. */
+export interface PptxEditorApi {
+  readonly events: EditorEventBus<PptxEditorEventMap>;
+  on: EditorEventBus<PptxEditorEventMap>["on"];
+  off: EditorEventBus<PptxEditorEventMap>["off"];
+  once: EditorEventBus<PptxEditorEventMap>["once"];
+  /** Jalankan perintah bernama (sama dengan CustomEvent `pptx-editor:command`). */
+  run<T = unknown>(command: string, ...args: unknown[]): Promise<T>;
+  getDeck(): PptxDeck | undefined;
+  getView(): PptxView | undefined;
+  load(input: Uint8Array | ArrayBuffer | File, fileName?: string): Promise<void>;
+  /** PPTX hasil edit (bytes). */
+  getBytes(): Promise<Uint8Array | undefined>;
+  getText(): string;
+  undo(): Promise<void>;
+  redo(): Promise<void>;
+  goTo(slideIndex: number): void;
+  getSlideCount(): number;
+  setZoom(z: number): void;
+  getZoom(): number;
+  /** Penggaris (satuan px slide 1280×720), garis bantu yang menjadi target snapping, dan alat ukur. */
+  readonly ruler: RulerKit;
+  readonly ole: {
+    list(): PptxOle[];
+    /** Sisipkan berkas apa pun sebagai objek OLE di slide aktif (atau `opts.slide`). */
+    insert(file: FileInput, opts?: OleInsertOptions & { slide?: number; at?: { x?: number; y?: number; w?: number; h?: number } }): Promise<OleEventInfo | undefined>;
+    /** Ganti isi objek OLE `id` ("slide:shapeId", mis. "0:12"); posisi & ukuran tetap. */
+    update(id: string, file: FileInput, opts?: OleInsertOptions): Promise<OleEventInfo | undefined>;
+    getBytes(id: string): Uint8Array | undefined;
+    /** Ubah ukuran bingkai (px slide). */
+    resize(id: string, wPx: number, hPx: number): Promise<boolean>;
+  };
+}
 
 export interface PptxEditorProps {
   /** URL berkas .pptx yang dimuat di awal. */
@@ -34,6 +84,15 @@ export interface PptxEditorProps {
   /** Sembunyikan toolbar/ribbon di awal. */
   toolbarHidden?: boolean;
   onChange?: (info: { label: string; modified: boolean }) => void;
+  /** Bus event milik aplikasi (opsional). Tanpa ini editor membuat bus sendiri; selalu tersedia lewat `api.events`. */
+  bus?: EditorEventBus<PptxEditorEventMap>;
+  /** Menerima SETIAP event editor. */
+  onEvent?: <K extends keyof PptxEditorEventMap>(type: K, payload: PptxEditorEventMap[K], api: PptxEditorApi) => void;
+  onReady?: (api: PptxEditorApi) => void;
+  /** Tampilkan penggaris di awal (default false). */
+  ruler?: boolean;
+  /** Satuan penggaris. Default "cm". */
+  rulerUnit?: RulerUnit;
 }
 
 const ICONS: Record<string, string> = {
@@ -69,6 +128,8 @@ const ICONS: Record<string, string> = {
   copy: "M9 9h11v11H9z M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1", paste: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2 M9 2h6v4H9z",
   fill: "M19 11l-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2a2 2 0 0 0 2.8 0L19 11z M5 2l5 5 M21 15s2 2.3 2 4a2 2 0 0 1-4 0c0-1.7 2-4 2-4z",
   stroke: "M4 20l4-1L20 7l-3-3L5 16z", shadow: "M5 5h12v12H5z M9 19h10V9",
+  ruler: "M3 17L17 3l4 4L7 21z M7 13l2 2 M10 10l2 2 M13 7l2 2", measure: "M2 12h20 M2 8v8 M22 8v8 M7 10v4 M12 9v6 M17 10v4",
+  object: "M4 4h10l6 6v10H4z M14 4v6h6 M8 14h8 M8 17h5",
 };
 const Ic = (p: { n: string; size?: number }) => (
   <svg width={p.size ?? 16} height={p.size ?? 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={ICONS[p.n] ?? ""} /></svg>
@@ -106,11 +167,29 @@ export default function PptxEditor(props: PptxEditorProps) {
   let bgInput!: HTMLInputElement;
   let findInput: HTMLInputElement | undefined;
   let view: PptxView | undefined;
+  let frameEl!: HTMLDivElement;
+  let oleInput!: HTMLInputElement;
+  let oleUpdInput!: HTMLInputElement;
+  let oleTarget: string | null = null;
+  let ruler: RulerKit | undefined;
+  let api: PptxEditorApi | undefined;
+  let loadSource: PptxEditorEventMap["load"]["source"] = "api";
+  const ownBus = !props.bus;
+  const bus: EditorEventBus<PptxEditorEventMap> = props.bus ?? createEventBus<PptxEditorEventMap>({ source: "pptx-editor", domPrefix: "pptx-editor" });
+  const emit = <K extends keyof PptxEditorEventMap>(type: K, payload: PptxEditorEventMap[K]) => {
+    bus.emit(type, payload);
+    if (api) { try { props.onEvent?.(type, payload, api); } catch (e) { console.error("[pptx-editor] onEvent", e); } }
+  };
+  const [rulerOn, setRulerOn] = createSignal(!!props.ruler);
+  const [rulerUnit, setRulerUnit] = createSignal<RulerUnit>(props.rulerUnit ?? "cm");
+  const [measuring, setMeasuring] = createSignal(false);
+  const [guideCount, setGuideCount] = createSignal(0);
+  const [measureText, setMeasureText] = createSignal("");
 
   const detect = (): Lang => (typeof navigator !== "undefined" && /^id\b|^in\b/i.test(navigator.language) ? "id" : "en");
   const [lang, setLangSig] = createSignal<Lang>(props.locale ?? detect());
   const { t } = createI18n(lang);
-  const setLang = (l: Lang) => { setLangSig(l); props.onLocaleChange?.(l); };
+  const setLang = (l: Lang) => { setLangSig(l); props.onLocaleChange?.(l); emit("locale", { locale: l }); };
   createEffect(() => { if (props.locale) setLangSig(props.locale); });
 
   const [deck, setDeck] = createSignal<PptxDeck | undefined>(undefined);
@@ -229,6 +308,10 @@ export default function PptxEditor(props: PptxEditorProps) {
     refreshProps(d);
     syncNotes();
     if (fq()) runSearch();
+    ruler?.clearGuides();
+    ruler?.refresh();
+    emit("load", { fileName: d.fileName, size: d.originalBytes.length, source: loadSource });
+    loadSource = "api";
   };
   const loadBytes = async (bytes: Uint8Array, name: string) => {
     setBusy("busy.opening");
@@ -238,13 +321,15 @@ export default function PptxEditor(props: PptxEditorProps) {
       if (e instanceof PptxLoadError && e.bytes && e.bytes.length > 8 && (e.code === "legacy-ppt" || e.code === "encrypted")) { try { info = readCfb(e.bytes); } catch { /* abaikan */ } }
       setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: e instanceof PptxLoadError ? e.code : "parse", info, bytes: e instanceof PptxLoadError ? e.bytes : undefined, name });
       setBusy(null);
+      emit("load-error", { message: e instanceof Error ? e.message : String(e), code: e instanceof PptxLoadError ? e.code : "parse", fileName: name });
     }
   };
   const confirmDiscard = () => !(deck()?.modified && !ro()) || window.confirm(t("confirm.discard"));
-  const openFile = async (f: File | undefined | null) => { if (!f || !confirmDiscard()) return; await loadBytes(new Uint8Array(await f.arrayBuffer()), f.name); };
+  const openFile = async (f: File | undefined | null) => { if (!f || !confirmDiscard()) return; loadSource = "file"; await loadBytes(new Uint8Array(await f.arrayBuffer()), f.name); };
   const openSample = async () => {
     if (!confirmDiscard()) return;
     setBusy("busy.sample");
+    loadSource = "sample";
     try { attach(await createSampleDeck(lang())); } catch (e) { setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: "parse", name: "sample" }); setBusy(null); }
   };
   const newBlank = async () => {
@@ -252,6 +337,7 @@ export default function PptxEditor(props: PptxEditorProps) {
     const pres = P.createPresentation({ size: "16:9" });
     const s = P.addBlankSlide(pres);
     void s;
+    loadSource = "new";
     attach(await PptxDeck.fromPresentation(pres, lang() === "id" ? "presentasi-baru.pptx" : "new-presentation.pptx"));
   };
 
@@ -263,18 +349,20 @@ export default function PptxEditor(props: PptxEditorProps) {
     view?.commitEdit();
     try {
       const out = /\.(pptx|pptm)$/i.test(d.fileName) ? d.fileName : baseName(d.fileName) + ".pptx";
-      downloadBlob(out, await d.toBlob());
+      const blob = await d.toBlob();
+      downloadBlob(out, blob);
       d.markSaved(); bump();
       toast("toast.saved", { name: out });
-    } catch (e) { d.addLog("error", "log.saveFail", { msg: e instanceof Error ? e.message : String(e) }); setLogVer(v => v + 1); toast("toast.saveFail"); }
+      emit("save", { fileName: out, size: blob.size });
+    } catch (e) { d.addLog("error", "log.saveFail", { msg: e instanceof Error ? e.message : String(e) }); setLogVer(v => v + 1); toast("toast.saveFail"); emit("error", { scope: "save", error: e }); }
   };
-  const saveSource = () => { const d = deck(); if (d) downloadBlob(d.fileName, new Blob([d.originalBytes as BlobPart])); };
+  const saveSource = () => { const d = deck(); if (d) { downloadBlob(d.fileName, new Blob([d.originalBytes as BlobPart])); emit("export", { format: "source", fileName: d.fileName, size: d.originalBytes.length }); } };
   const outlineText = () => {
     const d = deck();
     if (!d) return "";
     return d.slides.map((s, i) => { return `# ${i + 1}. ${P.getSlideTitle(s) ?? ""}\n${P.getSlideText(s)}${P.getSlideNotes(s) ? `\n[${t("notes.label")}] ${P.getSlideNotes(s)}` : ""}`; }).join("\n\n");
   };
-  const saveTxt = () => { const d = deck(); if (d) downloadBlob(baseName(d.fileName) + ".txt", new Blob([outlineText()], { type: "text/plain;charset=utf-8" })); };
+  const saveTxt = () => { const d = deck(); if (d) { const s = outlineText(); downloadBlob(baseName(d.fileName) + ".txt", new Blob([s], { type: "text/plain;charset=utf-8" })); emit("export", { format: "txt", fileName: baseName(d.fileName) + ".txt", size: s.length }); } };
 
   // ───────── hook ke view ─────────
 
@@ -282,25 +370,183 @@ export default function PptxEditor(props: PptxEditorProps) {
     committed: () => bump(),
     changed: (label: string) => {
       bump();
-      props.onChange?.({ label, modified: !!deck()?.modified });
+      const info = { label, modified: !!deck()?.modified };
+      props.onChange?.(info);
+      emit("change", info);
+      ruler?.refresh();
       if (panel() === "find" && fq()) scheduleSearch();
     },
-    selection: (s: PxSelInfo) => { setSel(s); if (s.slideIndex !== slideIdx()) setSlideIdx(s.slideIndex); },
-    slide: (i: number) => { setSlideIdx(i); queueMicrotask(() => { markActive(); syncNotes(); }); },
+    selection: (s: PxSelInfo) => { setSel(s); if (s.slideIndex !== slideIdx()) setSlideIdx(s.slideIndex); emit("selection", { info: s }); },
+    slide: (i: number) => { setSlideIdx(i); queueMicrotask(() => { markActive(); syncNotes(); ruler?.refresh(); }); emit("slide", { index: i, count: deck()?.slides.length ?? 0 }); },
+    ole: (slideIndex: number, shapeId: number, progId: string) => {
+      setPanel("ole");
+      const list = oleItems(); const i = list.findIndex(o => o.slideIndex === slideIndex && o.shapeId === shapeId);
+      if (i >= 0) setOleItem(slideIndex + ":" + shapeId);
+      emit("ole:open", { id: slideIndex + ":" + shapeId, progId });
+    },
     thumbs: (w: number[] | "all") => rebuildThumbs(w),
     toast,
     log: (level: "info" | "warn" | "error", key: string, params?: Record<string, string | number>) => { deck()?.addLog(level, key, params); setLogVer(v => v + 1); },
     context: (x: number, y: number, kind: "shape" | "slide") => setMenu({ id: kind === "shape" ? "ctx-shape" : "ctx-slide", x, y }),
     painter: (p: { items: [string, string][] } | null) => setPainter(p),
-    tool: (tl: Tool) => setTool(tl),
+    tool: (tl: Tool) => { setTool(tl); emit("tool", { tool: tl }); },
     openFile: (f: File) => { void openFile(f); },
   });
+
+  // ───────── OLE: sisip & perbarui (API + UI) ─────────
+
+  const oleItems = createMemo<PptxOle[]>(() => { ver(); const d = deck(); return d ? listPptxOle(d.pres) : []; });
+  const [oleItem, setOleItem] = createSignal<string | null>(null);
+  const oleKey = (o: PptxOle) => o.slideIndex + ":" + o.shapeId;
+  const parseOleId = (id: string): { slide: number; shape: number } => {
+    const m = /^(\d+):(\d+)$/.exec(id);
+    if (!m) throw new Error('Id objek OLE tidak valid: "' + id + '" (format "slide:shapeId", mis. "0:12").');
+    return { slide: Number(m[1]), shape: Number(m[2]) };
+  };
+  const oleLog = (level: "info" | "warn" | "error", key: string, params?: Record<string, string | number>) => { deck()?.addLog(level, key, params); setLogVer(v => v + 1); };
+  const oleFail = (action: "insert" | "update" | "resize", e: unknown, fileName?: string) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    oleLog("error", "log.oleActionFail", { action, name: fileName ?? "", msg });
+    toast("toast.oleFail", { msg });
+    emit("ole:error", { action, message: msg, fileName });
+    emit("error", { scope: "ole", error: e });
+  };
+  const oleInsert: PptxEditorApi["ole"]["insert"] = async (input, opts) => {
+    let name = "";
+    try {
+      if (!deck() || !view) throw new Error("Tidak ada presentasi yang terbuka.");
+      if (ro()) throw new Error("Mode baca-saja: objek OLE tidak dapat disisipkan.");
+      const f = await readFileInput(input); name = f.name;
+      const prep = await prepareOle(f.name, f.bytes, opts);
+      if (opts?.slide !== undefined) view.goTo(opts.slide);
+      const r = await view.insertOle(prep, opts?.at ?? (opts?.size ? { w: opts.size.wPx * 9525, h: opts.size.hPx * 9525 } : undefined));
+      if (!r) throw new Error("Tidak ada slide untuk menyisipkan objek.");
+      bump();
+      oleLog("info", "log.oleInserted", { name: f.name, kind: prep.kind, progId: prep.progId, size: prep.bytes.length });
+      toast("toast.oleInserted", { name: f.name });
+      const info = oleEventInfo(r.slideIndex + ":" + r.shapeId, r.part, prep, "slide " + (r.slideIndex + 1));
+      emit("ole:inserted", info);
+      return info;
+    } catch (e) { oleFail("insert", e, name); return undefined; }
+  };
+  const oleUpdate: PptxEditorApi["ole"]["update"] = async (id, input, opts) => {
+    let name = "";
+    try {
+      if (!deck() || !view) throw new Error("Tidak ada presentasi yang terbuka.");
+      if (ro()) throw new Error("Mode baca-saja: objek OLE tidak dapat diperbarui.");
+      const { slide, shape } = parseOleId(id);
+      const f = await readFileInput(input); name = f.name;
+      const prep = await prepareOle(f.name, f.bytes, opts);
+      const r = await view.updateOle(slide, shape, prep);
+      if (!r) throw new Error('Objek OLE "' + id + '" tidak ditemukan.');
+      bump();
+      oleLog("info", "log.oleUpdated", { name: f.name, kind: prep.kind, progId: prep.progId, size: prep.bytes.length });
+      toast("toast.oleUpdated", { name: f.name });
+      const info = { ...oleEventInfo(slide + ":" + shape, r.part, prep, "slide " + (slide + 1)), previousId: id };
+      emit("ole:updated", info);
+      return info;
+    } catch (e) { oleFail("update", e, name); return undefined; }
+  };
+  const oleResize: PptxEditorApi["ole"]["resize"] = async (id, wPx, hPx) => {
+    try {
+      const d = deck();
+      if (!d || !view || ro()) throw new Error("Tidak dapat mengubah ukuran (tanpa presentasi atau baca-saja).");
+      const { slide, shape } = parseOleId(id);
+      if (!(await view.resizeOle(slide, shape, wPx, hPx))) throw new Error('Objek OLE "' + id + '" tidak ditemukan atau ukuran tidak valid.');
+      bump();
+      emit("ole:updated", { id, part: "", progId: "", fileName: "", size: 0, kind: "package", previousId: id });
+      return true;
+    } catch (e) { oleFail("resize", e); return false; }
+  };
+  const oleInsertUi = async (f: File) => {
+    const info = await oleInsert(f);
+    if (!info) return;
+    setPanel("ole");
+    setOleItem(info.id);
+  };
+  const oleUpdateUi = async (f: File) => {
+    if (!oleTarget) return;
+    const info = await oleUpdate(oleTarget, f);
+    oleTarget = null;
+    if (info) setOleItem(info.id);
+  };
+
+  // ───────── penggaris ─────────
+
+  const rulerGeometry = () => {
+    const body = frameEl.querySelector<HTMLElement>(":scope > .rk-body");
+    const box = view?.slideBox();
+    const s = view?.zoom ?? 1;
+    if (!body || !box) return { originX: 0, originY: 0, scale: s, zeroX: 0, zeroY: 0 };
+    const br = body.getBoundingClientRect();
+    return { originX: box.rect.left - br.left, originY: box.rect.top - br.top, scale: s, zeroX: 0, zeroY: 0 };
+  };
+  const onRulerEvent = <K extends keyof RulerEventMap>(type: K, payload: RulerEventMap[K]) => {
+    if (type === "ruler:visible") setRulerOn((payload as RulerEventMap["ruler:visible"]).visible);
+    else if (type === "ruler:unit") setRulerUnit((payload as RulerEventMap["ruler:unit"]).unit);
+    else if (type === "ruler:measure-mode") { setMeasuring((payload as RulerEventMap["ruler:measure-mode"]).active); if (!(payload as RulerEventMap["ruler:measure-mode"]).active) setMeasureText(""); }
+    else if (type === "ruler:measure") setMeasureText((payload as RulerEventMap["ruler:measure"]).text);
+    if (type === "ruler:guide-add" || type === "ruler:guide-remove") setGuideCount(ruler?.getGuides().length ?? 0);
+    emit(type, payload as never);
+  };
+
+  const buildApi = (): PptxEditorApi => ({
+    events: bus, on: bus.on, off: bus.off, once: bus.once, run: (name, ...args) => bus.run(name, ...args),
+    getDeck: () => deck(), getView: () => view,
+    load: async (input, name) => {
+      const f = typeof File !== "undefined" && input instanceof File ? input : undefined;
+      const bytes = f ? new Uint8Array(await f.arrayBuffer()) : input instanceof Uint8Array ? input : new Uint8Array(input as ArrayBuffer);
+      loadSource = "api";
+      await loadBytes(bytes, name ?? f?.name ?? "presentation.pptx");
+    },
+    getBytes: async () => { view?.commitEdit(); return deck()?.toBytes(); },
+    getText: () => outlineText(),
+    undo: async () => { await restore(() => deck()!.undo()); emit("history", { action: "undo" }); },
+    redo: async () => { await restore(() => deck()!.redo()); emit("history", { action: "redo" }); },
+    goTo: i => view?.goTo(i), getSlideCount: () => deck()?.slides.length ?? 0,
+    setZoom: z => setZoom(z), getZoom: () => zoom(),
+    ruler: ruler!,
+    ole: {
+      list: () => oleItems(), insert: oleInsert, update: oleUpdate, resize: oleResize,
+      getBytes: id => { const d = deck(); if (!d) return undefined; try { const { slide, shape } = parseOleId(id); return pptxOleBytes(d.pres, slide, shape)?.data; } catch { return undefined; } },
+    },
+  });
+
+  const registerCommands = () => {
+    const a = api!;
+    const cmds: Record<string, (...x: any[]) => unknown> = {
+      undo: () => a.undo(), redo: () => a.redo(), goTo: (i: number) => a.goTo(i), getSlideCount: () => a.getSlideCount(), setZoom: (z: number) => a.setZoom(z), getZoom: () => a.getZoom(),
+      load: (i: Uint8Array | ArrayBuffer | File, n?: string) => a.load(i, n), getBytes: () => a.getBytes(), getText: () => a.getText(),
+      save: () => savePptx(), setPanel: (p: Panel) => setPanel(p), setLocale: (l: Lang) => setLang(l),
+      "ole.list": () => a.ole.list(), "ole.insert": (f: FileInput, o?: object) => a.ole.insert(f, o),
+      "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o),
+      "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
+      "ruler.show": () => a.ruler.setVisible(true), "ruler.hide": () => a.ruler.setVisible(false), "ruler.toggle": () => a.ruler.toggle(),
+      "ruler.setUnit": (u: RulerUnit) => a.ruler.setUnit(u), "ruler.addGuide": (axis: "x" | "y", pos: number) => a.ruler.addGuide(axis, pos),
+      "ruler.removeGuide": (id: string) => a.ruler.removeGuide(id), "ruler.clearGuides": () => a.ruler.clearGuides(), "ruler.getGuides": () => a.ruler.getGuides(),
+      "ruler.measure": (x1: number, y1: number, x2: number, y2: number) => a.ruler.measure(x1, y1, x2, y2), "ruler.setMeasureMode": (on: boolean) => a.ruler.setMeasureMode(on),
+    };
+    for (const [n, fn] of Object.entries(cmds)) onCleanup(bus.registerCommand(n, fn));
+  };
 
   onMount(async () => {
     view = new PptxView(hostEl, hooks());
     view.readonly = ro();
+    ruler = new RulerKit({
+      frame: frameEl, unit: rulerUnit(), visible: rulerOn(), scrollEl: hostEl, getGeometry: rulerGeometry, emit: onRulerEvent,
+      labels: { corner: t("ruler.corner"), removeGuide: t("ruler.removeGuide") },
+    });
+    // garis bantu penggaris ikut menjadi target snapping saat memindah / mengubah ukuran bentuk
+    view.guideSource = () => (ruler?.isVisible() ? { x: ruler.guidePositions("x"), y: ruler.guidePositions("y") } : { x: [], y: [] });
+    onCleanup(() => ruler?.destroy());
+    api = buildApi();
+    registerCommands();
+    onCleanup(bus.attach(rootEl));
     // gagang debug (dipakai uji E2E / konsol): rootEl.__px = { view, deck }
-    (rootEl as unknown as { __px: unknown }).__px = { view, deck };
+    (rootEl as unknown as { __px: unknown }).__px = { view, deck, api };
+    emit("ready", { api });
+    props.onReady?.(api);
+    onCleanup(() => { emit("destroy", {}); if (ownBus) bus.clear(); });
     const onFs = () => setFs(document.fullscreenElement === rootEl || cssFs());
     document.addEventListener("fullscreenchange", onFs);
     const onDocDown = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest?.(".pxe-menu,[data-menu]")) setMenu(null); };
@@ -332,6 +578,12 @@ export default function PptxEditor(props: PptxEditorProps) {
   createEffect(on(lockAspect, v => { if (view) view.lockAspect = v; }, { defer: true }));
   createEffect(on(lang, () => { if (view) { view.prompts = prompts(); view.render(); } }, { defer: true }));
   createEffect(on(histMax, v => { const d = deck(); if (d) { d.setMaxHistory(v); bump(); } }, { defer: true }));
+  createEffect(on(zoom, z => { ruler?.refresh(); emit("zoom", { zoom: z }); }, { defer: true }));
+  createEffect(on(panel, p => emit("panel", { panel: p }), { defer: true }));
+  createEffect(on(ro, v => emit("readonly", { readonly: v }), { defer: true }));
+  createEffect(on(() => props.ruler, v => { if (v !== undefined) ruler?.setVisible(!!v); }, { defer: true }));
+  createEffect(on(() => props.rulerUnit, v => { if (v) ruler?.setUnit(v); }, { defer: true }));
+  createEffect(on(dark, () => ruler?.refresh(), { defer: true }));
 
   const setZoom = (z: number) => { view?.setZoom(z); setFit(false); setZoomSig(view?.zoom ?? z); };
   const fitZoom = () => { view?.fitNow(); setFit(true); setZoomSig(view?.zoom ?? 1); };
@@ -350,8 +602,8 @@ export default function PptxEditor(props: PptxEditorProps) {
     const ids = view.selectedIds(), idx = view.slideIdx;
     if (await fn()) { view.afterRestore(ids, idx); setSlideIdx(view.slideIdx); bump(); syncNotes(); markActive(); refreshProps(d); if (panel() === "find" && fq()) runSearch(); }
   };
-  const undo = () => { const d = deck(); if (d) void restore(() => d.undo()); };
-  const redo = () => { const d = deck(); if (d) void restore(() => d.redo()); };
+  const undo = () => { const d = deck(); if (d) void restore(() => d.undo()).then(() => emit("history", { action: "undo" })); };
+  const redo = () => { const d = deck(); if (d) void restore(() => d.redo()).then(() => emit("history", { action: "redo" })); };
   const jump = (i: number) => { const d = deck(); if (d) void restore(() => d.restore(i)); };
 
   // ───────── pencarian ─────────
@@ -361,7 +613,9 @@ export default function PptxEditor(props: PptxEditorProps) {
   const runSearch = () => {
     if (!view || !deck()) return;
     if (!fq()) { view.clearSearch(); setFRes(null); setFCur(-1); return; }
-    setFRes(view.search(searchOpts())); setFCur(-1); setFLimit(200);
+    const r = view.search(searchOpts());
+    setFRes(r); setFCur(-1); setFLimit(200);
+    emit("find", { query: fq(), count: r.hits.length });
   };
   const scheduleSearch = () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(runSearch, 160); };
   const step = (d: 1 | -1) => { const r = fRes(); if (!r?.hits.length) return; const n = (fCur() + d + r.hits.length) % r.hits.length; setFCur(n); view?.gotoHit(n); };
@@ -604,6 +858,7 @@ export default function PptxEditor(props: PptxEditorProps) {
         <Btn icon="line" title={t("b.line")} disabled={!edit()} on={tool()?.type === "line" && !(tool() as { arrow?: boolean }).arrow} onClick={() => view?.setTool({ type: "line" })} />
         <Btn icon="arrow" title={t("b.arrowLine")} disabled={!edit()} on={tool()?.type === "line" && !!(tool() as { arrow?: boolean }).arrow} onClick={() => view?.setTool({ type: "line", arrow: true })} />
         <Btn icon="image" label={t("b.picture")} disabled={!edit()} onClick={() => imgInput.click()} />
+        <Btn icon="object" label={t("ole.insert")} title={t("ole.insertTip")} disabled={!edit() || !deck()} onClick={() => oleInput.click()} />
         <Btn icon="table" label={t("b.table")} disabled={!edit()} menu onClick={e => openMenu("table", e)} />
         <Btn icon="chart" label={t("b.chart")} disabled={!edit()} menu onClick={e => openMenu("chart", e)} />
         <Btn icon="link" label={t("b.link")} disabled={!hasSel()} onClick={() => { setLinkUrl(S()?.hyperlink ?? "https://"); setDialog("link"); }} />
@@ -765,6 +1020,16 @@ export default function PptxEditor(props: PptxEditorProps) {
         <label class="pxe-chk"><input type="checkbox" checked={notesOpen()} onChange={e => { setNotesOpen(e.currentTarget.checked); queueMicrotask(() => { if (fit()) fitZoom(); }); }} />{t("v.notes")}</label>
         <label class="pxe-chk"><input type="checkbox" checked={dark()} onChange={e => setDark(e.currentTarget.checked)} />{t("v.dark")}</label>
       </Grp>
+      <Grp cap={t("g.ruler")}>
+        <label class="pxe-chk" title={t("ruler.showTip")}><input type="checkbox" checked={rulerOn()} onChange={e => ruler?.setVisible(e.currentTarget.checked)} />{t("ruler.show")}</label>
+        <select class="pxe-sel" style={{ width: "62px" }} title={t("ruler.unit")} value={rulerUnit()} onChange={e => ruler?.setUnit(e.currentTarget.value as RulerUnit)}>
+          <For each={RULER_UNITS}>{u => <option value={u}>{u}</option>}</For>
+        </select>
+        <Btn icon="measure" label={t("ruler.measure")} title={t("ruler.measureTip")} on={measuring()} onClick={() => ruler?.setMeasureMode(!measuring())} />
+        <Btn icon="trash" label={t("ruler.clearGuides")} disabled={!guideCount()} onClick={() => ruler?.clearGuides()} />
+        <Show when={guideCount()}><span class="pxe-lbl">{t("ruler.guides", { n: guideCount() })}</span></Show>
+        <Show when={measureText()}><span class="pxe-lbl" title={t("ruler.measure")}>{measureText()}</span></Show>
+      </Grp>
       <Grp cap={t("g.window")}>
         <Btn icon="play" label={t("b.present")} onClick={startPresent} />
         <Btn icon={fs() ? "shrink" : "expand"} label={fs() ? t("v.exitFs") : t("v.fullscreen")} onClick={() => void toggleFs()} />
@@ -872,6 +1137,21 @@ export default function PptxEditor(props: PptxEditorProps) {
 
         <Show when={panel() === "ole"}>
           <div class="pxe-note">{t("ole.help")}</div>
+          <div style={{ display: "flex", gap: "4px", "flex-wrap": "wrap", "margin-bottom": "6px" }}>
+            <Btn icon="object" label={t("ole.insert")} title={t("ole.insertTip")} disabled={!edit() || !deck()} onClick={() => oleInput.click()} />
+            <Btn icon="replace" label={t("ole.update")} title={t("ole.updateTip")} disabled={!edit() || !oleItem() || !oleItems().some(o => oleKey(o) === oleItem() && !o.linked && o.format !== "missing")}
+              onClick={() => { oleTarget = oleItem(); oleUpdInput.click(); }} />
+          </div>
+          <Show when={oleItems().length}>
+            <div class="pxe-h3">{t("ole.objects")}</div>
+            <div class="pxe-list">
+              <For each={oleItems()}>{o => (
+                <div class="pxe-row" classList={{ on: oleItem() === oleKey(o) }} onClick={() => { setOleItem(oleKey(o)); view?.goTo(o.slideIndex); }}>
+                  <span style={{ flex: 1, "min-width": 0 }}><b>{o.description}</b><div class="loc">{o.progId || "—"} · {o.fileName} · {formatBytes(o.size)} · {t("ole.onSlide", { n: o.slideIndex + 1 })}</div></span>
+                </div>
+              )}</For>
+            </div>
+          </Show>
           <Show when={oleParts().length === 0}><div class="pxe-note">{t("ole.none")}</div></Show>
           <div class="pxe-list">
             <For each={oleParts()}>{o => (
@@ -939,6 +1219,8 @@ export default function PptxEditor(props: PptxEditorProps) {
       onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false); }}
       onDrop={() => setDragOver(false)}>
       <input ref={fileInput} type="file" hidden accept=".pptx,.pptm,.potx,.potm,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={e => { void openFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
+      <input ref={oleInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleInsertUi(f); }} />
+      <input ref={oleUpdInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleUpdateUi(f); }} />
       <input ref={imgInput} type="file" hidden accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml" onChange={e => { const f = e.currentTarget.files?.[0]; if (f) void view?.insertImage(f); e.currentTarget.value = ""; }} />
       <input ref={replInput} type="file" hidden accept="image/*" onChange={e => { const f = e.currentTarget.files?.[0]; if (f) void view?.replaceImage(f); e.currentTarget.value = ""; }} />
       <input ref={bgInput} type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" onChange={e => { const f = e.currentTarget.files?.[0]; if (f) void view?.setBackgroundImage(f); e.currentTarget.value = ""; }} />
@@ -1013,7 +1295,7 @@ export default function PptxEditor(props: PptxEditorProps) {
       <div class="pxe-main">
         <div class="pxe-thumbs" classList={{ closed: !thumbsOpen() }} ref={thumbsEl} />
         <div class="pxe-canvas">
-          <div ref={hostEl} class="pxe-host" />
+          <div ref={frameEl} class="rk-frame pxe-rkframe"><div class="rk-body"><div ref={hostEl} class="pxe-host" /></div></div>
           <Show when={notesOpen() && deck()}>
             <div class="pxe-notes">
               <label>{t("notes.label")}</label>

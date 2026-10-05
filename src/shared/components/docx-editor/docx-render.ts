@@ -539,7 +539,21 @@ function renderShape(ctx: RenderCtx, wrap: HTMLElement, drawing: XEl, info: ImgI
   if (txbx) {
     const inner = mkEl(ctx, "div", "dx-txbx");
     const savedW = ctx.contentW;
-    ctx.contentW = Math.max(40, w - 14);
+    // inset & perataan vertikal dari <wps:bodyPr lIns tIns rIns bIns anchor> (default OOXML 0,1"/0,05")
+    const bp = wsp ? first(wsp, "bodyPr") : undefined;
+    let li = 6, ri = 6;
+    if (bp) {
+      const ins = (n: string, d: number) => emuPx(num(attr(bp, n)) ?? d);
+      li = ins("lIns", 91440); ri = ins("rIns", 91440);
+      const ti = ins("tIns", 45720), bi = ins("bIns", 45720);
+      inner.style.padding = `${px(ti)} ${px(ri)} ${px(bi)} ${px(li)}`;
+      inner.style.boxSizing = "border-box";
+      inner.style.width = "100%"; inner.style.height = "100%";
+      const anc = attr(bp, "anchor");
+      inner.style.justifyContent = anc === "b" ? "flex-end" : anc === "ctr" ? "center" : "flex-start";
+      if (attr(bp, "vertOverflow") === "overflow") wrap.style.overflow = "visible";
+    }
+    ctx.contentW = Math.max(40, w - li - ri);
     fillBlocks(ctx, inner, txbx, true);
     ctx.contentW = savedW;
     wrap.appendChild(inner);
@@ -652,6 +666,11 @@ export function renderTable(ctx: RenderCtx, tbl: XEl, region: "body" | "readonly
   table.style.borderCollapse = "collapse";
   table.style.borderSpacing = "0";
   ctx.reg.set(table, tbl);
+  // tabel mengambang (w:tblpPr) yang ditambatkan ke halaman/margin: dilepas dari aliran dan diposisikan oleh Paginator.layoutAnchors
+  const pp = first(tblPr, "tblpPr");
+  if (pp && (attr(pp, "vertAnchor") === "page" || attr(pp, "vertAnchor") === "margin")) {
+    table.dataset.fl = JSON.stringify({ ha: attr(pp, "horzAnchor") ?? "text", va: attr(pp, "vertAnchor"), x: num(attr(pp, "tblpX")), y: num(attr(pp, "tblpY")), xs: attr(pp, "tblpXSpec"), ys: attr(pp, "tblpYSpec") });
+  }
   const jc = val(tblPr, "jc");
   const ind = twipPx(num(attr(first(tblPr, "tblInd"), "w")) ?? 0);
   if (jc === "center") table.style.alignSelf = "center";
