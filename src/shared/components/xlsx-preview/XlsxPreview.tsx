@@ -121,13 +121,14 @@ const ICONS: Record<string, string> = {
   zoomin: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M21 21l-4.3-4.3 M11 8v6 M8 11h6",
   palette: "M12 22a10 10 0 1 1 10-10c0 3-2 4-4 4h-2a2 2 0 0 0-1 3.7c.6.5.3 2.3-3 2.3z M7.5 10.5h.01 M12 7.5h.01 M16.5 10.5h.01",
   ruler: "M3 17L17 3l4 4L7 21z M7 13l2 2 M10 10l2 2 M13 7l2 2", measure: "M2 12h20 M2 8v8 M22 8v8 M7 10v4 M12 9v6 M17 10v4",
+  code: "M16 18l6-6-6-6 M8 6l-6 6 6 6",
   object: "M4 4h10l6 6v10H4z M14 4v6h6 M8 14h8 M8 17h5",
 };
 const Ic = (p: { n: string; size?: number }) => (
   <svg width={p.size ?? 16} height={p.size ?? 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={ICONS[p.n]} /></svg>
 );
 
-type Panel = "find" | "info" | "log" | "ole" | null;
+type Panel = "find" | "info" | "log" | "ole" | "macro" | null;
 type Dialog = "debug" | "eval" | null;
 
 function downloadBlob(name: string, blob: Blob) {
@@ -194,6 +195,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   const [active, setActive] = createSignal({ row: 1, col: 1 });
   const [editing, setEditing] = createSignal<{ row: number; col: number; text: string; src: "cell" | "bar" } | null>(null);
   const [panel, setPanel] = createSignal<Panel>(null);
+  const [macroSel, setMacroSel] = createSignal<string | null>(null);
   const [dialog, setDialog] = createSignal<Dialog>(null);
   const [logs, setLogs] = createSignal<LogEntry[]>([]);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
@@ -241,6 +243,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
 
   const ws = createMemo(() => { ver(); sheetIdx(); return book()?.worksheetAt(sheetIdx()); });
   const sheetRef = createMemo(() => book()?.sheets[sheetIdx()]);
+  const vba = createMemo(() => { ver(); return book()?.vba(); });
+  const macroModule = () => { const p = vba()?.project; return p?.modules.find(m => m.name === macroSel()) ?? p?.modules.find(m => m.code.trim()) ?? p?.modules[0]; };
 
   const filterState = createMemo<(FilterState & { _t?: number }) | undefined>(() => {
     lver(); const w = ws(); const b = book();
@@ -782,9 +786,9 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   function deleteSelectedImage() {
     const b = book(), w = ws(), d = selDrawing(); if (!b || !w || !d || ro()) return;
     const rec = b.deleteDrawing(w, d.index);
-    if (!rec) { toast("Hanya gambar yang dapat dihapus"); return; }
+    if (!rec) { toast("Objek ini tidak dapat dihapus"); return; }
     b.commit([rec], { styleOnly: true });
-    setSelImage(undefined); bumpLayout(); toast("Gambar dihapus (Ctrl+Z untuk urungkan)");
+    setSelImage(undefined); bumpLayout(); toast("Objek dihapus (Ctrl+Z untuk urungkan)");
     queueMicrotask(() => gridApi?.focus());
   }
   async function insertImageFile(f: File | undefined | null) {
@@ -1396,7 +1400,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                   <button onClick={() => { setMenu(null); imgInput.click(); }}>Sisipkan gambar… <small>di {addr(active().row, active().col)}</small></button>
                   <button onClick={() => { setMenu(null); oleInput.click(); }}>Sisipkan objek OLE… <small>di {addr(active().row, active().col)}</small></button>
                   <button disabled={!oleSelId() || !oleItems().some(o => o.id === oleSelId() && !o.linked)} onClick={() => { setMenu(null); oleTarget = oleSelId(); oleUpdInput.click(); }}>Ganti isi objek OLE terpilih…</button>
-                  <button disabled={!selDrawing()} onClick={() => { setMenu(null); deleteSelectedImage(); }}>Hapus gambar terpilih <small>Del</small></button>
+                  <button disabled={!selDrawing()} onClick={() => { setMenu(null); deleteSelectedImage(); }}>Hapus objek terpilih <small>Del</small></button>
                   <hr /><small style={{ padding: "2px 10px", display: "block", "white-space": "normal" }}>Klik gambar untuk memilih, seret untuk memindah, tarik sudut kanan-bawah untuk ukuran, panah untuk geser halus.</small>
                 </div>
               </Show>
@@ -1408,6 +1412,11 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
         <span class="xl-spacer" />
         <div class="xl-group">
           <Btn icon={full() || maxed() ? "shrink" : "expand"} title="Layar penuh (Esc untuk keluar)" on={full() || maxed()} onClick={() => void toggleFull()} />
+          <Show when={book()?.isMacro}>
+            <Btn icon="code" label="Makro" on={panel() === "macro"} title="Lihat kode VBA (read-only, tidak dieksekusi)" onClick={() => setPanel(p => (p === "macro" ? null : "macro"))}>
+              <Show when={(vba()?.project?.findings.filter(f => f.level === "warn").length ?? 0) > 0}><span class="badge warn">{vba()!.project!.findings.filter(f => f.level === "warn").length}</span></Show>
+            </Btn>
+          </Show>
           <Btn icon="object" label="OLE" on={panel() === "ole"} disabled={!book()} title="Objek OLE tertanam: lihat, sisipkan, ganti isi" onClick={() => setPanel(p => (p === "ole" ? null : "ole"))} />
           <Btn icon="info" label="Info" on={panel() === "info"} disabled={!book()} title="Informasi workbook & worksheet" onClick={() => setPanel(p => (p === "info" ? null : "info"))} />
           <Btn icon="log" label="Log" on={panel() === "log"} title="Log pembacaan (berhasil / gagal / makro)" onClick={() => setPanel(p => (p === "log" ? null : "log"))}>
@@ -1575,6 +1584,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                 <button classList={{ on: panel() === "info" }} onClick={() => setPanel("info")}>Info</button>
                 <button classList={{ on: panel() === "log" }} onClick={() => setPanel("log")}>Log</button>
                 <button classList={{ on: panel() === "ole" }} onClick={() => setPanel("ole")}>OLE</button>
+                <Show when={book()?.isMacro}><button classList={{ on: panel() === "macro" }} onClick={() => setPanel("macro")}>Makro</button></Show>
               </div>
               <button class="xl-x" onClick={() => setPanel(null)} title="Tutup">×</button>
             </div>
@@ -1597,6 +1607,54 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                     </li>
                   )}</For>
                 </ul>
+              </Show>
+
+              {/* MAKRO (VBA, read-only) */}
+              <Show when={panel() === "macro"}>
+                <p style={{ color: "var(--xl-muted)", margin: "0 0 6px" }}>Kode VBA hanya ditampilkan, <b>tidak pernah dieksekusi</b>. Biner makro dipertahankan apa adanya saat menyimpan.</p>
+                <Show when={!vba()}><p style={{ color: "var(--xl-muted)" }}>Workbook ini tidak memuat vbaProject.bin.</p></Show>
+                <Show when={vba()?.error}><p style={{ color: "var(--xl-err)" }}>Gagal membaca proyek VBA: {vba()!.error}</p></Show>
+                <Show when={vba()?.project}>{proj => (
+                  <>
+                    <dl class="xl-kv">
+                      <dt>Proyek</dt><dd>{proj().name || "—"}</dd>
+                      <dt>Modul</dt><dd>{proj().modules.length}</dd>
+                      <dt>Tanda tangan</dt><dd>{book()!.wb.vbaSignature ? "Ada (tidak diverifikasi)" : "Tidak ada"}</dd>
+                      <dt>Referensi</dt><dd>{proj().references.join(", ") || "—"}</dd>
+                    </dl>
+                    <Show when={proj().errors.length}><ul class="xl-log"><For each={proj().errors}>{e => <li class="warn"><div>{e}</div></li>}</For></ul></Show>
+                    <Show when={proj().findings.length}>
+                      <h4>Pemindaian kata kunci ({proj().findings.length})</h4>
+                      <ul class="xl-log">
+                        <For each={proj().findings}>{f => (
+                          <li class={f.level} style={{ cursor: "pointer" }} onClick={() => setMacroSel(f.module)}>
+                            <div class="area">{f.level === "warn" ? "⚠" : "ℹ"} {f.keyword}</div>
+                            <div>{f.description}</div>
+                            <div style={{ color: "var(--xl-muted)", "font-size": "12px" }}>{f.module}:{f.line}</div>
+                          </li>
+                        )}</For>
+                      </ul>
+                    </Show>
+                    <h4>Modul</h4>
+                    <div class="xl-row-inline" style={{ "flex-wrap": "wrap" }}>
+                      <For each={proj().modules}>{m => (
+                        <button class="xl-btn" classList={{ on: macroModule()?.name === m.name }} title={`${m.kind} · ${m.lines} baris`} onClick={() => setMacroSel(m.name)}>{m.name}</button>
+                      )}</For>
+                    </div>
+                    <Show when={macroModule()}>{m => (
+                      <>
+                        <div class="xl-row-inline" style={{ margin: "8px 0 4px" }}>
+                          <span class="xl-tag">{m().kind}</span>
+                          <span style={{ color: "var(--xl-muted)", "font-size": "12px" }}>{m().lines} baris · {m().procedures.length} prosedur</span>
+                          <span class="xl-spacer" />
+                          <button class="xl-btn" style={{ height: "26px" }} onClick={() => { void navigator.clipboard?.writeText(m().code); toast("Kode disalin"); }}>Salin</button>
+                        </div>
+                        <Show when={m().procedures.length}><p style={{ margin: "0 0 6px", "font-size": "12px", color: "var(--xl-muted)" }}>{m().procedures.map(x => `${x.type} ${x.name}`).join(" · ")}</p></Show>
+                        <pre class="xl-vba">{m().code.trim() ? m().code : "' (modul kosong — mis. dokumen tanpa kode)"}</pre>
+                      </>
+                    )}</Show>
+                  </>
+                )}</Show>
               </Show>
 
               {/* CARI */}
@@ -1816,7 +1874,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
               <button disabled={!canUnmerge()} onClick={doUnmerge}>Pisahkan sel gabungan</button>
               <button onClick={() => { setCtx(null); imgInput.click(); }}>Sisipkan gambar di sini…</button>
               <button onClick={() => { setCtx(null); oleInput.click(); }}>Sisipkan objek OLE di sini…</button>
-              <Show when={selDrawing()}><button onClick={() => { setCtx(null); deleteSelectedImage(); }}>Hapus gambar terpilih</button></Show>
+              <Show when={selDrawing()}><button onClick={() => { setCtx(null); deleteSelectedImage(); }}>Hapus objek terpilih</button></Show>
             </Show>
             <button onClick={() => { setDialog("debug"); setCtx(null); }}>Debug sel {addr(c().row, c().col)}</button>
             <button onClick={() => { openEval(); setCtx(null); }}>Evaluasi formula…</button>

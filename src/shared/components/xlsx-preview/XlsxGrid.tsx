@@ -11,6 +11,7 @@ import {
   HEADER_H, HEADER_W, anchorRect, colW, locate, measureTextPx, pxToColChars, pxToPt, rowH,
   type Layout,
 } from "./xlsx-layout";
+import { XlsxShapeView } from "./XlsxShape";
 import { XlsxBook, normSel, type FilterState, type Sel, type DrawingView } from "./xlsx-model";
 import type { ResolvedStyle } from "./xlsx-style";
 
@@ -496,7 +497,7 @@ export default function XlsxGrid(props: XlsxGridProps) {
             {d => {
               const rect = createMemo(() => anchorRect(l(), d.anchor));
               const [drag, setDrag] = createSignal<{ dx: number; dy: number; dw: number; dh: number } | null>(null);
-              const editable = () => d.kind === "picture" && !props.readonly?.() && !!props.onImageRect;
+              const editable = () => (d.kind === "picture" || d.kind === "shape" || d.kind === "unsupported") && !props.readonly?.() && !!props.onImageRect;
               const isSel = () => props.selectedImage?.() === d.key;
               const start = (mode: "move" | "resize", e: MouseEvent) => {
                 if (!editable() || e.button !== 0) return;
@@ -523,15 +524,16 @@ export default function XlsxGrid(props: XlsxGridProps) {
               return (
                 <div
                   class="xl-float"
-                  classList={{ chart: d.kind !== "picture" && d.kind !== "ole", ole: d.kind === "ole", broken: d.kind === "picture" && !d.url, editable: editable(), selected: isSel() && (editable() || d.kind === "ole") }}
+                  classList={{ chart: d.kind !== "picture" && d.kind !== "ole" && d.kind !== "shape", shape: d.kind === "shape", ole: d.kind === "ole", broken: d.kind === "picture" && !d.url, editable: editable(), selected: isSel() && (editable() || d.kind === "ole") }}
                   style={{ left: `${rect().x + (drag()?.dx ?? 0)}px`, top: `${rect().y + (drag()?.dy ?? 0)}px`, width: `${Math.max(4, rect().w + (drag()?.dw ?? 0))}px`, height: `${Math.max(4, rect().h + (drag()?.dh ?? 0))}px` }}
                   title={d.descr || d.name || ""}
                   data-nodrag
                   onMouseDown={e => { if (d.kind === "ole") { if (e.button === 0) { e.stopPropagation(); props.onSelectImage?.(d.key); } return; } start("move", e); }}
                   onDblClick={() => { if (d.kind === "ole" && d.oleId) props.onOleOpen?.(d.oleId); }}
                 >
-                  <Show when={(d.kind === "picture" || d.kind === "ole") && d.url} fallback={<div class="xl-float-ph"><b>{d.kind === "chart" ? "📊 Grafik" : d.kind === "picture" ? "🖼 Gambar" : d.kind === "ole" ? "📎 " + (d.name ?? "OLE") : d.text ?? "◻ Objek"}</b><Show when={!d.text}><small>{d.note}</small></Show></div>}>
-                    <img src={d.url} alt={d.descr || d.name || "gambar"} draggable={false} />
+                  <Show when={d.kind === "shape" && d.shape}>{g => <XlsxShapeView group={g()} w={rect().w} h={rect().h} zoom={l().zoom} uid={d.key} />}</Show>
+                  <Show when={d.kind === "shape" || ((d.kind === "picture" || d.kind === "ole") && d.url)} fallback={<div class="xl-float-ph"><b>{d.kind === "chart" ? "📊 Grafik" : d.kind === "picture" ? "🖼 Gambar" : d.kind === "ole" ? "📎 " + (d.name ?? "OLE") : d.text ?? "◻ Objek"}</b><Show when={!d.text}><small>{d.note}</small></Show></div>}>
+                    <Show when={d.kind !== "shape"}><img src={d.url} alt={d.descr || d.name || "gambar"} draggable={false} /></Show>
                   </Show>
                   <Show when={d.kind === "ole"}><span class="xl-ole-badge">OLE</span></Show>
                   <Show when={isSel() && editable()}><i class="xl-img-h" title="Ubah ukuran" onMouseDown={e => start("resize", e)} /></Show>

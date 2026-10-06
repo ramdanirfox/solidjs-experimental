@@ -126,6 +126,8 @@
 .xl-sel { position: absolute; background: var(--xl-sel); border: 1px solid rgba(33, 115, 70, .85); pointer-events: none; z-index: 4; }
 .xl-active { position: absolute; border: 2px solid var(--xl-accent); pointer-events: none; z-index: 5; }
 .xl-float { position: absolute; z-index: 3; border-radius: 2px; overflow: hidden; pointer-events: none; }
+.xl-float.shape { overflow: visible; border-radius: 0; }
+.xl-shape-text { font-family: Calibri, "Segoe UI", Arial, sans-serif; }
 .xl-float img { width: 100%; height: 100%; object-fit: fill; display: block; user-select: none; }
 .xl-float.chart, .xl-float.broken { background: repeating-linear-gradient(45deg, #f8fafc, #f8fafc 8px, #eef2f7 8px, #eef2f7 16px); border: 1px dashed #94a3b8; display: grid; place-items: center; text-align: center; color: #475569; }
 .xl-float-ph { display: grid; gap: 4px; padding: 6px; font-size: 12px; }
@@ -290,3 +292,6 @@
 .xl-float.ole.selected { outline: 2px solid #2563eb; outline-offset: 1px; }
 .xl-ole-badge { position: absolute; right: 2px; bottom: 2px; padding: 0 5px; border-radius: 4px; font: 600 10px/16px system-ui, sans-serif; background: rgba(15, 23, 42, 0.75); color: #fff; pointer-events: none; }
 .xl-log li.on { background: rgba(37, 99, 235, 0.12); }
+
+.xl-vba { margin: 0; padding: 8px 10px; background: #0f172a; color: #e2e8f0; border-radius: 6px; font: 12px/1.45 ui-monospace, Consolas, monospace; white-space: pre; overflow: auto; max-height: 60vh; tab-size: 4; }
+.xl-btn.on { background: rgba(37, 99, 235, 0.12); border-color: #2563eb; }

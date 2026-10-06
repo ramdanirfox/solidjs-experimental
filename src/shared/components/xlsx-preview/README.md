@@ -29,6 +29,8 @@ Props: `src?: string`, `sample?: boolean` (default `true`), `height?: string`, `
 - **Style** dibaca dari `styles.xml` + `theme1.xml`; baris tanpa tinggi eksplisit menyesuaikan ukuran font.
 - **Formula**: default menampilkan nilai cache dari berkas (mode *Cache*). Setelah ada edit, atau lewat tombol status *Live*, formula
   dihitung ulang oleh mesin evaluasi di `xlsx-formula.ts`. Fungsi yang belum didukung dilaporkan di **Log** dan jatuh balik ke cache.
+- **Shape & textbox** (`sp`, `cxnSp`, `grpSp`) dirender sebagai SVG + teks (preset umum, fill solid/gradien, garis/panah, rotasi, flip, grup; geometri kustom/tak dikenal disederhanakan menjadi persegi). Lihat `xlsx-shapes.ts`, `XlsxShape.tsx`.
+- **Panel Makro** (tombol "Makro" pada `.xlsm`): menampilkan kode VBA read-only per modul (`xlsx-vba.ts`: CFB + MS-OVBA), daftar prosedur, referensi, dan pemindaian kata kunci mencurigakan. Makro tidak pernah dieksekusi.
 - **Simpan** menulis ulang cache formula, mengaktifkan `fullCalcOnLoad`, dan mempertahankan VBA (`.xlsm`), pivot, customXml, dll. secara byte-per-byte.
   Makro **tidak** dieksekusi/ditampilkan.
 - **Tidak dirender** (dicatat di Log): grafik, shape (hanya teks + kotak), pivot, OLE/form control, icon set CF, dropdown data validation.

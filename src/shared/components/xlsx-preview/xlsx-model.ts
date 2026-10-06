@@ -25,6 +25,9 @@ import { repairPackage } from "./xlsx-repair";
 import { openZip } from "@office-kit/xlsx/zip";
 import { OleStore, applyOlePatches, oleAnchorToDrawing, scanXlsxOle, type OleAnchor, type XlsxOleObject } from "./xlsx-ole";
 import type { PreparedOle } from "../office-shared/ole-embed";
+import type { XmlNode } from "@office-kit/xlsx/xml";
+import { parseShapeGroup, schemeLookup, shapePlainText, type ShapeGroup } from "./xlsx-shapes";
+import { parseVbaProject, type VbaProject } from "./xlsx-vba";
 
 // ───────────────────────── log ─────────────────────────
 export type LogLevel = "ok" | "info" | "warn" | "error";
@@ -65,7 +68,9 @@ export interface DrawingView {
   key: string;
   /** Indeks item pada ws.drawing.items. */
   index: number;
-  kind: "picture" | "chart" | "unsupported" | "ole";
+  kind: "picture" | "chart" | "shape" | "unsupported" | "ole";
+  /** Model render shape (kind "shape"). */
+  shape?: ShapeGroup;
   /** Id objek OLE (kind "ole"). */
   oleId?: string;
   anchor: any;
@@ -79,6 +84,21 @@ export interface DrawingView {
   /** Teks di dalam shape/textbox (bila ada). */
   text?: string;
   anchorCell: { row: number; col: number };
+}
+
+/** Salin node anchor mentah lalu tulis posisi/ukuran baru (from/to/ext/pos) ke dalamnya. */
+function patchRawAnchor(raw: XmlNode, a: any): XmlNode {
+  const n: XmlNode = structuredClone(raw);
+  const kid = (parent: XmlNode, name: string) => parent.children.find(c => c.name.replace(/^\{[^}]*\}/, "") === name);
+  const setPoint = (el: XmlNode | undefined, v: any) => {
+    if (!el || !v) return;
+    for (const [k, val] of [["col", v.col], ["colOff", v.colOff], ["row", v.row], ["rowOff", v.rowOff]] as const) { const c = kid(el, k); if (c) c.text = String(Math.round(val)); }
+  };
+  setPoint(kid(n, "from"), a.from);
+  setPoint(kid(n, "to"), a.to);
+  const ext = kid(n, "ext"); if (ext && a.ext) { ext.attrs.cx = String(Math.round(a.ext.cx)); ext.attrs.cy = String(Math.round(a.ext.cy)); }
+  const pos = kid(n, "pos"); if (pos && a.pos) { pos.attrs.x = String(Math.round(a.pos.x)); pos.attrs.y = String(Math.round(a.pos.y)); }
+  return n;
 }
 
 function collectText(n: any, out: string[] = []): string[] {
@@ -148,6 +168,18 @@ export class XlsxBook {
     this.cf = new CfEngine({ wb, ev: this.ev, styles: this.styles, textAt: (ws, r, c) => this.textAt(ws, r, c) });
     this.ev.onUnsupported = fn => this.log(logEntry("warn", "Formula", `Fungsi ${fn}() belum didukung mesin evaluasi; nilai cache dari file dipakai bila ada, selain itu #NAME?`));
     this.cf.onUnsupported = t => this.log(logEntry("warn", "Conditional formatting", `Aturan tipe "${t}" belum dirender`));
+  }
+
+  private vbaCache?: { project?: VbaProject; error?: string };
+  /** Isi proyek VBA (read-only, tanpa eksekusi); di-cache. */
+  vba(): { project?: VbaProject; error?: string } | undefined {
+    const bin = this.wb.vbaProject;
+    if (!bin) return undefined;
+    if (!this.vbaCache) {
+      try { this.vbaCache = { project: parseVbaProject(bin) }; }
+      catch (e) { this.vbaCache = { error: (e as Error).message }; }
+    }
+    return this.vbaCache;
   }
 
   get isMacro(): boolean { return !!this.wb.vbaProject || /\.(xlsm|xltm)$/i.test(this.fileName); }
@@ -515,6 +547,12 @@ export class XlsxBook {
       } else {
         const tag = String(content.rawTag).replace(/^\{[^}]*\}/, "");
         const text = collectText(it.raw).join(" ").trim();
+        const shape = ["sp", "cxnSp", "grpSp"].includes(tag) ? parseShapeGroup(it.raw, schemeLookup(this.styles.palette)) : undefined;
+        if (shape) {
+          const first = shape.shapes[0]!;
+          d!.push({ ...base, kind: "shape", name: tag === "grpSp" ? `Grup (${shape.shapes.length})` : first.name, descr: first.descr, shape, text: shapePlainText(first.text) || text || undefined, hidden: shape.shapes.every(x => x.hidden), note: shape.approx ? "Sebagian geometri disederhanakan" : undefined });
+          return;
+        }
         d!.push({ ...base, kind: "unsupported", name: tag, text: text || undefined, hidden: false, note: tag === "sp" ? "Shape/textbox — hanya teks & kotak yang ditampilkan" : `Objek drawing "${tag}" belum dirender` });
       }
     });
@@ -636,13 +674,15 @@ export class XlsxBook {
   }
 
   // ───── gambar mengambang: pindah / ubah ukuran / hapus / sisip ─────
-  /** Hanya gambar (picture) yang dapat diedit; shape & grafik dipertahankan apa adanya. */
+  /** Gambar & shape (objek "unsupported" ber-raw) dapat dipindah/diubah ukurannya; grafik dipertahankan apa adanya. */
   moveDrawing(ws: Worksheet, index: number, anchor: any): EditRecord | undefined {
     const item: any = ws.drawing?.items[index];
-    if (!item || item.content.kind !== "picture") return undefined;
+    const isShape = item?.content.kind === "unsupported" && !!item.raw;
+    if (!item || (item.content.kind !== "picture" && !isShape)) return undefined;
     const old = item.anchor;
     const oldRaw = item.raw;
-    const set = (a: any) => { item.anchor = a; item.raw = undefined; this.invalidateDrawings(ws); };
+    // Shape ditulis ulang verbatim dari raw, jadi posisi harus ditulis ke dalam raw itu sendiri.
+    const set = (a: any) => { item.anchor = a; item.raw = isShape ? patchRawAnchor(oldRaw, a) : undefined; this.invalidateDrawings(ws); };
     set(anchor);
     return { sheet: ws.title, row: 0, col: 0, before: null, after: null, undo: () => { item.anchor = old; item.raw = oldRaw; this.invalidateDrawings(ws); }, redo: () => set(anchor) };
   }
@@ -650,7 +690,7 @@ export class XlsxBook {
   deleteDrawing(ws: Worksheet, index: number): EditRecord | undefined {
     const items: any[] | undefined = ws.drawing?.items;
     const item = items?.[index];
-    if (!items || !item || item.content.kind !== "picture") return undefined;
+    if (!items || !item || (item.content.kind !== "picture" && !(item.content.kind === "unsupported" && item.raw))) return undefined;
     items.splice(index, 1);
     this.invalidateDrawings(ws);
     return {
@@ -1047,7 +1087,9 @@ export function buildLoadReport(book: XlsxBook): LogEntry[] {
 
   // Makro
   if (wb.vbaProject) {
-    L("warn", "Makro (VBA)", `VBA project ditemukan (${formatBytes(wb.vbaProject.length)}${wb.vbaSignature ? ", bertanda tangan digital" : ""}). Makro TIDAK dieksekusi maupun ditampilkan kodenya; biner dipertahankan apa adanya saat disimpan sebagai .xlsm.`);
+    const v = book.vba();
+    if (v?.error) L("error", "Makro (VBA)", `vbaProject.bin ada (${formatBytes(wb.vbaProject.length)}) tetapi kodenya tidak dapat dibaca: ${v.error}. Biner tetap dipertahankan saat disimpan.`);
+    else L("warn", "Makro (VBA)", `VBA project ditemukan (${formatBytes(wb.vbaProject.length)}${wb.vbaSignature ? ", bertanda tangan digital" : ""}). Makro TIDAK dieksekusi; kodenya dapat dilihat (read-only) pada panel Makro. Biner dipertahankan apa adanya saat disimpan sebagai .xlsm.`);
   } else if (/\.(xlsm|xltm)$/i.test(book.fileName)) {
     L("info", "Makro (VBA)", "Ekstensi .xlsm tetapi tidak ada vbaProject.bin di dalam paket.");
   }
@@ -1103,6 +1145,12 @@ export function buildLoadReport(book: XlsxBook): LogEntry[] {
     if (pics.length) L(okPics.length === pics.length ? "ok" : "warn", `Sheet «${w.title}»`, `${okPics.length}/${pics.length} gambar mengambang dirender`, pics.filter(d => !d.url).map(d => d.note).join("\n") || undefined);
     const charts = dv.filter(d => d.kind === "chart").length;
     if (charts) L("warn", `Sheet «${w.title}»`, `${charts} grafik: ditampilkan sebagai placeholder`);
+    const drawn = dv.filter(d => d.kind === "shape");
+    if (drawn.length) {
+      const n = drawn.reduce((a, d) => a + d.shape!.shapes.length, 0);
+      const approx = drawn.filter(d => d.shape!.approx);
+      L(approx.length ? "info" : "ok", `Sheet «${w.title}»`, `${n} shape/textbox dirender (SVG)${approx.length ? `; ${approx.length} memakai geometri kustom/tak dikenal yang disederhanakan` : ""}`);
+    }
     const shapes = dv.filter(d => d.kind === "unsupported");
     if (shapes.length) L("warn", `Sheet «${w.title}»`, `${shapes.length} objek drawing tidak didukung (${[...new Set(shapes.map(s => s.name))].join(", ")})`);
     const extras = w.bodyExtras;
@@ -1209,7 +1257,7 @@ export function sheetInfo(book: XlsxBook, ws: Worksheet): InfoGroup[] {
         { label: "Conditional format", value: String(ws.conditionalFormatting?.length ?? 0) },
         { label: "Tabel", value: ws.tables?.map(t => `${t.displayName} (${t.ref})`).join(", ") || "—" },
         { label: "AutoFilter", value: ws.autoFilter?.ref ?? "—" },
-        { label: "Gambar / Grafik / Lainnya", value: `${dv.filter(d => d.kind === "picture").length} / ${dv.filter(d => d.kind === "chart").length} / ${dv.filter(d => d.kind === "unsupported").length}` },
+        { label: "Gambar / Grafik / Shape / Lainnya", value: `${dv.filter(d => d.kind === "picture").length} / ${dv.filter(d => d.kind === "chart").length} / ${dv.filter(d => d.kind === "shape").length} / ${dv.filter(d => d.kind === "unsupported").length}` },
       ],
     },
   ];
