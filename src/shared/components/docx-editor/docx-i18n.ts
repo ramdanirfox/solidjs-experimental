@@ -108,6 +108,16 @@ const en: Dict = {
   "log.signature": "Digital signature present — it is not verified and will be invalid after any edit.", "log.customXml": "Custom XML parts are preserved but ignored.", "log.compat": "Compatibility mode {mode}: layout may differ slightly from Word.",
   "log.validation": "Package check [{code}]: {msg}", "log.validateFail": "Package validation failed: {msg}", "log.imgFormat": "Picture format {fmt} cannot be shown ({part}).", "log.imgDecode": "Picture could not be decoded ({fmt}, {part}).",
   "log.placeholder": "A {kind} object is shown as a placeholder.", "log.imgInsertFail": "Could not insert the picture: {msg}", "log.saveFail": "Could not build the .docx: {msg}", "log.oleFail": "Could not read OLE object {part}: {msg}",
+  // tab stops, TOC, links, color
+  "b.tabs": "Tab stops…", "tabs.title": "Tab stops", "tabs.pos": "Position", "tabs.align": "Alignment", "tabs.leader": "Leader", "tabs.set": "Set", "tabs.clearAll": "Clear all", "tabs.clearOne": "Clear",
+  "tabs.left": "Left", "tabs.center": "Center", "tabs.right": "Right", "tabs.decimal": "Decimal", "tabs.bar": "Bar",
+  "tabs.leader.none": "None", "tabs.leader.dot": "Dots ……", "tabs.leader.hyphen": "Dashes ----", "tabs.leader.underscore": "Line ____",
+  "tabs.hint": "Click the ruler to add a tab stop of the selected type; drag a marker to move it, drag it off the ruler to remove it, double-click to edit.", "tabs.empty": "No custom tab stops in this paragraph.", "ruler.tabType": "Tab stop type (click to change)",
+  "g.toc": "Table of contents", "toc.insert": "Insert TOC", "toc.insertTip": "Insert a table of contents built from headings at the cursor", "toc.update": "Update TOC", "toc.updateTip": "Rebuild entries and page numbers from the current headings", "toc.remove": "Remove TOC",
+  "toc.levels": "Levels 1–", "toc.pageNumbers": "Page numbers", "toc.links": "Links", "toc.title": "Table of Contents", "toc.empty": "No table of contents entries found. Apply Heading styles to your titles, then update.", "toast.tocUpdated": "Table of contents updated ({n})", "toast.tocNone": "No table of contents in this document",
+  "hist.toc": "Table of contents", "hist.tabs": "Tab stops",
+  "panel.links": "Hyperlinks", "b.links": "Hyperlinks",
+  "color.opacity": "Opacity", "color.none": "No color", "color.hex": "Hex", "color.custom": "Custom", "color.noAlphaNote": "Word stores this color without transparency, so it is blended with white.",
 };
 
 const id: Dict = {
@@ -195,6 +205,16 @@ const id: Dict = {
   "log.signature": "Tanda tangan digital ada — tidak diverifikasi dan menjadi tidak valid setelah diedit.", "log.customXml": "Bagian custom XML dipertahankan tetapi diabaikan.", "log.compat": "Mode kompatibilitas {mode}: tata letak dapat sedikit berbeda dari Word.",
   "log.validation": "Pemeriksaan paket [{code}]: {msg}", "log.validateFail": "Validasi paket gagal: {msg}", "log.imgFormat": "Format gambar {fmt} tidak dapat ditampilkan ({part}).", "log.imgDecode": "Gambar tidak dapat didekode ({fmt}, {part}).",
   "log.placeholder": "Objek {kind} ditampilkan sebagai placeholder.", "log.imgInsertFail": "Gagal menyisipkan gambar: {msg}", "log.saveFail": "Gagal membuat .docx: {msg}", "log.oleFail": "Gagal membaca objek OLE {part}: {msg}",
+  // tab stops, TOC, links, color
+  "b.tabs": "Tab stop…", "tabs.title": "Tab stop", "tabs.pos": "Posisi", "tabs.align": "Perataan", "tabs.leader": "Pengisi", "tabs.set": "Terapkan", "tabs.clearAll": "Hapus semua", "tabs.clearOne": "Hapus",
+  "tabs.left": "Kiri", "tabs.center": "Tengah", "tabs.right": "Kanan", "tabs.decimal": "Desimal", "tabs.bar": "Garis",
+  "tabs.leader.none": "Tanpa", "tabs.leader.dot": "Titik ……", "tabs.leader.hyphen": "Strip ----", "tabs.leader.underscore": "Garis ____",
+  "tabs.hint": "Klik penggaris untuk menambah tab stop sesuai jenis terpilih; seret penanda untuk memindah, seret keluar dari penggaris untuk menghapus, klik ganda untuk mengubah.", "tabs.empty": "Paragraf ini belum punya tab stop khusus.", "ruler.tabType": "Jenis tab stop (klik untuk ganti)",
+  "g.toc": "Daftar isi", "toc.insert": "Sisip daftar isi", "toc.insertTip": "Sisipkan daftar isi dari judul pada posisi kursor", "toc.update": "Perbarui daftar isi", "toc.updateTip": "Susun ulang entri dan nomor halaman dari judul saat ini", "toc.remove": "Hapus daftar isi",
+  "toc.levels": "Level 1–", "toc.pageNumbers": "Nomor halaman", "toc.links": "Tautan", "toc.title": "Daftar Isi", "toc.empty": "Entri daftar isi tidak ditemukan. Terapkan gaya Heading pada judul, lalu perbarui.", "toast.tocUpdated": "Daftar isi diperbarui ({n})", "toast.tocNone": "Dokumen ini tidak memiliki daftar isi",
+  "hist.toc": "Daftar isi", "hist.tabs": "Tab stop",
+  "panel.links": "Hyperlink", "b.links": "Hyperlink",
+  "color.opacity": "Opasitas", "color.none": "Tanpa warna", "color.hex": "Hex", "color.custom": "Kustom", "color.noAlphaNote": "Word menyimpan warna ini tanpa transparansi, sehingga dicampur dengan putih.",
 };
 
 export const DICTS: Record<Lang, Dict> = { en, id };

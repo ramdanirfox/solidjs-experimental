@@ -227,3 +227,7 @@ textarea.pxe-txt { height: auto; padding: 6px; font-family: ui-monospace, Consol
 .pxe-rkframe > .rk-body > .pxe-host { flex: 1 1 auto; }
 .px-ole { overflow: hidden; }
 .px-ole-badge { position: absolute; right: 4px; bottom: 4px; padding: 0 5px; border-radius: 4px; font: 600 10px/16px system-ui, sans-serif; background: rgba(15, 23, 42, 0.75); color: #fff; pointer-events: none; }
+
+/* pemilih warna bersama (editor-kit/ColorField) */
+.pxe-cf .ck-btn { height: 28px; min-width: 30px; border: 1px solid var(--px-border, rgba(127, 127, 127, 0.4)); border-radius: 6px; background: var(--px-panel, transparent); color: inherit; }
+.pxe-cf .ck-btn:hover:not(:disabled) { background: rgba(127, 127, 127, 0.18); }

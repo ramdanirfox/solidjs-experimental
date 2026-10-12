@@ -183,3 +183,120 @@ describe("XlsxPreview — penggaris & garis bantu", () => {
     expect(root.querySelector(".rk-corner")).toBeTruthy();
   });
 });
+
+
+describe("XlsxPreview — navigasi, cari/ganti lintas jenis, hyperlink", () => {
+  it("goto: sel, rentang, sheet, awal/akhir, pencarian; target salah → ok=false; event navigate", async () => {
+    const { api } = await mount();
+    const nav = vi.fn();
+    api.on("navigate", nav);
+    expect(api.goto({ kind: "cell", address: "B2" })).toMatchObject({ ok: true });
+    await wait(0);
+    expect(api.getSelection().active).toBe("B2");
+    expect(api.goto({ kind: "range", range: "A1:B2" }).ok).toBe(true);
+    await wait(0);
+    expect(api.getSelection().range).toBe("A1:B2");
+    expect(api.goto({ kind: "cell", address: "A1", sheet: "Lain" }).ok).toBe(true);
+    await wait(0);
+    expect(api.getSheets().length).toBe(2);
+    expect(api.goto({ kind: "sheet", sheet: "Data" }).ok).toBe(true);
+    expect(api.goto({ kind: "sheet", sheet: "Nope" }).ok).toBe(false);
+    expect(api.goto({ kind: "cell", address: "bukan" }).ok).toBe(false);
+    const r = api.goto({ kind: "search", query: "halo" });
+    expect(r.ok).toBe(true);
+    await wait(0);
+    expect(api.getSelection().active).toBe("A1");
+    expect(nav).toHaveBeenCalled();
+    expect(api.goto({ kind: "start" }).ok).toBe(true);
+    expect(api.goto({ kind: "end" }).ok).toBe(true);
+  });
+
+  it("find/replace per jenis: teks, rumus, komentar; cakupan; tunggal vs semua; satu undo", async () => {
+    const { api } = await mount();
+    api.setCell("C1", "halo dunia");
+    api.setCell("C2", "=A1&\"!\"");
+    const f = api.find({ query: "halo", select: false });
+    expect(f.matches.map(m => m.location).sort()).toEqual(["Data!A1", "Data!C1"]);
+    // jenis tak didukung dilaporkan
+    const rep = api.replaceAll({ query: "halo", replacement: "hai", kinds: ["text", "name" as never] });
+    expect(rep.skipped).toEqual(["name"]);
+    expect(rep.byKind.text).toBe(2);
+    expect(api.getCell("A1")!.text).toBe("hai");
+    expect(api.getCell("C1")!.text).toBe("hai dunia");
+    api.undo();
+    expect(api.getCell("A1")!.text).toBe("halo");
+    expect(api.getCell("C1")!.text).toBe("halo dunia");
+    // tunggal: hanya hasil aktif/pertama
+    const one = api.replace({ query: "halo", replacement: "hai", kinds: ["text"] });
+    expect(one.total).toBe(1);
+    expect(api.find({ query: "halo", select: false }).count).toBe(1);
+    // rumus
+    const fr = api.replaceAll({ query: "A1", replacement: "C1", kinds: ["formula"] });
+    expect(fr.byKind.formula).toBe(1);
+    expect(api.getCell("C2")!.raw).toContain("C1");
+    // regex + grup + cakupan sheet
+    const rg = api.replaceAll({ query: "(hai|halo) (\\w+)", regex: true, replacement: "$2 $1", scope: "sheet" });
+    expect(rg.total).toBeGreaterThan(0);
+    expect(api.getCell("C1")!.text).toMatch(/dunia (hai|halo)/);
+    // readonly
+  });
+
+  it("find/replace nilai: font, warna teks, warna isi dengan hapus; hyperlink; undo", async () => {
+    const { api } = await mount();
+    api.select("A1:B2");
+    const b = api.getBook()!;
+    const w = b.worksheetAt(0)!;
+    const apply = (patch: object) => { const recs = b.applyStyle(w, { r1: 1, c1: 1, r2: 2, c2: 2 }, patch as never); b.commit(recs, { styleOnly: true }); };
+    apply({ fill: "#FFFF00", fontColor: "#FF0000", fontName: "Georgia" });
+    expect(b.styleOf(w, w.rows.get(1)!.get(1)).bg?.toLowerCase()).toBe("#ffff00");
+    const rf = api.replaceAll({ query: "#ffff00", replacement: "#00ff00", kinds: ["fill"] });
+    expect(rf.byKind.fill).toBeGreaterThan(0);
+    expect(b.styleOf(w, w.rows.get(1)!.get(1)).bg?.toLowerCase()).toBe("#00ff00");
+    const rc = api.replaceAll({ query: "FF0000", replacement: "0000FF", kinds: ["color"] });
+    expect(rc.byKind.color).toBeGreaterThan(0);
+    expect(b.styleOf(w, w.rows.get(1)!.get(1)).color?.toLowerCase()).toBe("#0000ff");
+    const rn = api.replaceAll({ query: "georgia", replacement: "Arial", kinds: ["font"] });
+    expect(rn.byKind.font).toBeGreaterThan(0);
+    expect(b.styleOf(w, w.rows.get(1)!.get(1)).fontName).toBe("Arial");
+    const rx = api.replaceAll({ query: "00ff00", replacement: "", kinds: ["fill"] });
+    expect(rx.byKind.fill).toBeGreaterThan(0);
+    expect(b.styleOf(w, w.rows.get(1)!.get(1)).bg).toBeUndefined();
+    api.undo();
+    expect(b.styleOf(w, w.rows.get(1)!.get(1)).bg?.toLowerCase()).toBe("#00ff00");
+
+    // hyperlink: pasang, daftar, ubah, ganti massal, goto, hapus, undo
+    api.select("D1");
+    expect(api.links.set("example.com/a", { tooltip: "tip" })).toBe(true);
+    const l = api.links.list();
+    expect(l).toHaveLength(1);
+    expect(l[0]).toMatchObject({ url: "https://example.com/a", tooltip: "tip", location: "Data!D1" });
+    expect(api.getCell("D1")!.text).toBe("https://example.com/a");
+    expect(api.links.replace("example.com", "example.org")).toBe(1);
+    expect(api.links.list()[0].url).toBe("https://example.org/a");
+    expect(api.links.update(api.links.list()[0].id, { url: "#Lain!A1" })).toBe(true);
+    expect(api.links.list()[0].url).toBe("#Lain!A1");
+    expect(api.links.set("javascript:alert(1)")).toBe(false);
+    expect(api.goto({ kind: "link", id: api.links.list()[0].id }).ok).toBe(true);
+    expect(api.links.removeById(api.links.list()[0].id)).toBe(true);
+    expect(api.links.list()).toHaveLength(0);
+    api.undo();
+    expect(api.links.list()).toHaveLength(1);
+  });
+
+  it("perintah bus: goto/find/replaceAll/link.* via CustomEvent dan readonly menolak", async () => {
+    const { api, root } = await mount();
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["goto", "find", "findNext", "replace", "replaceAll", "replace.kinds", "link.list", "link.set", "link.replace"]));
+    const res = await dispatchCommand<{ ok: boolean }>(root, "xlsx-preview", "goto", { kind: "cell", address: "B2" });
+    expect(res.ok).toBe(true);
+    const kinds = await dispatchCommand<string[]>(root, "xlsx-preview", "replace.kinds");
+    expect(kinds).toEqual(expect.arrayContaining(["text", "formula", "link", "comment", "font", "color", "fill"]));
+    const rep = await api.run<{ total: number }>("replaceAll", { query: "halo", replacement: "x", kinds: ["text"] });
+    expect(rep.total).toBe(1);
+  });
+
+  it("readonly: replace/link menolak", async () => {
+    const { api } = await mount({ readonly: true });
+    expect(api.replaceAll({ query: "halo", replacement: "x" }).error).toBe("readonly");
+    expect(api.links.set("https://a.b")).toBe(false);
+  });
+});

@@ -20,7 +20,17 @@ export interface RulerRegion { axis: "x" | "y"; from: number; to: number; kind?:
 export interface Guide { id: string; axis: "x" | "y"; pos: number }
 export interface MeasureResult { x1: number; y1: number; x2: number; y2: number; dx: number; dy: number; distance: number; angle: number; unit: RulerUnit; text: string }
 
+export type TabType = "left" | "center" | "right" | "decimal" | "bar";
+export const TAB_TYPES: readonly TabType[] = ["left", "center", "right", "decimal", "bar"];
+/** Tab stop pada penggaris horizontal. `pos` = px dokumen relatif ke titik nol penggaris (mis. margin kiri halaman). */
+export interface TabMarker { id: string; pos: number; type: TabType; leader?: string }
+
 export interface RulerEventMap {
+  "ruler:tab-add": { pos: number; type: TabType };
+  "ruler:tab-move": { id: string; pos: number; from: number; type: TabType };
+  "ruler:tab-remove": { id: string; pos: number; type: TabType };
+  "ruler:tab-edit": { id: string; pos: number; type: TabType };
+  "ruler:tab-type": { type: TabType };
   "ruler:visible": { visible: boolean };
   "ruler:unit": { unit: RulerUnit };
   "ruler:guide-add": Guide;
@@ -46,7 +56,9 @@ export interface RulerKitOptions {
   /** Toleransi tempel ke guide (px layar). Default 6. */
   snapTolerance?: number;
   /** Teks tombol sudut/ukur (i18n). */
-  labels?: { corner?: string; measure?: string; removeGuide?: string };
+  labels?: { corner?: string; measure?: string; removeGuide?: string; tabType?: string; tabs?: Partial<Record<TabType, string>> };
+  /** Aktifkan lapisan tab stop pada penggaris horizontal (klik = tambah, seret = pindah, seret keluar = hapus, klik ganda = ubah). */
+  tabs?: boolean;
 }
 
 let uid = 0;
@@ -78,6 +90,12 @@ export class RulerKit {
   private raf = 0;
   private ro?: ResizeObserver;
   private cleanups: (() => void)[] = [];
+  private tabsOn = false;
+  private tabType: TabType = "left";
+  private tabMarkers: TabMarker[] = [];
+  private tabLayer: HTMLElement;
+  private tabBtn: HTMLButtonElement;
+  private tabEls = new Map<string, HTMLElement>();
 
   constructor(opts: RulerKitOptions) {
     this.opts = opts;
@@ -98,6 +116,11 @@ export class RulerKit {
     this.vBox = el("div", "rk-ruler rk-v", this.frame);
     this.hCv = el("canvas", "rk-cv", this.hBox);
     this.vCv = el("canvas", "rk-cv", this.vBox);
+    this.tabLayer = el("div", "rk-tabs", this.hBox);
+    this.tabBtn = el("button", "rk-tabtype", this.hBox);
+    this.tabBtn.type = "button";
+    this.tabBtn.hidden = true;
+    this.tabBtn.addEventListener("click", () => this.setTabType(TAB_TYPES[(TAB_TYPES.indexOf(this.tabType) + 1) % TAB_TYPES.length]));
     this.hCur = el("div", "rk-cursor", this.hBox);
     this.vCur = el("div", "rk-cursor", this.vBox);
     this.layer = el("div", "rk-layer", this.body);
@@ -111,7 +134,7 @@ export class RulerKit {
     this.tip = el("div", "rk-tip", this.layer);
     this.tip.hidden = true;
 
-    this.hBox.addEventListener("pointerdown", e => this.startGuideFromRuler(e, "y"));
+    this.hBox.addEventListener("pointerdown", e => this.onHDown(e));
     this.vBox.addEventListener("pointerdown", e => this.startGuideFromRuler(e, "x"));
     this.layer.addEventListener("pointerdown", e => this.onMeasureDown(e));
     const onMove = (e: PointerEvent) => this.moveCursor(e);
@@ -129,6 +152,7 @@ export class RulerKit {
       this.cleanups.push(() => opts.scrollEl?.removeEventListener("scroll", sc));
     }
     this.applyVisible();
+    if (opts.tabs) this.setTabsEnabled(true);
     this.refresh();
   }
 
@@ -179,6 +203,7 @@ export class RulerKit {
     this.paintRuler(this.hCv, "x", g, regions, c);
     this.paintRuler(this.vCv, "y", g, regions, c);
     this.positionGuides(g);
+    this.positionTabs(g);
     this.drawLast(g);
   }
 
@@ -371,6 +396,105 @@ export class RulerKit {
     move(e);
   }
 
+  // ───────── tab stop ─────────
+
+  isTabsEnabled() { return this.tabsOn; }
+  setTabsEnabled(on: boolean) {
+    this.tabsOn = on;
+    this.tabBtn.hidden = !on;
+    this.hBox.classList.toggle("rk-tabs-on", on);
+    this.renderTabBtn();
+    if (!on) this.setTabs([]);
+    this.refresh();
+  }
+  getTabType() { return this.tabType; }
+  setTabType(t: TabType) {
+    if (!TAB_TYPES.includes(t) || t === this.tabType) return;
+    this.tabType = t;
+    this.renderTabBtn();
+    this.opts.emit?.("ruler:tab-type", { type: t });
+  }
+  getTabs(): TabMarker[] { return this.tabMarkers.map(t => ({ ...t })); }
+  /** Ganti seluruh penanda tab (mis. saat kursor pindah paragraf). Tidak memancarkan event. */
+  setTabs(list: TabMarker[]) {
+    this.tabMarkers = list.map(t => ({ ...t }));
+    const keep = new Set(list.map(t => t.id));
+    for (const [id, e] of this.tabEls) if (!keep.has(id)) { e.remove(); this.tabEls.delete(id); }
+    for (const t of this.tabMarkers) {
+      let e = this.tabEls.get(t.id);
+      if (!e) {
+        e = el("div", "rk-tab", this.tabLayer);
+        e.dataset.tab = t.id;
+        const self = e;
+        e.addEventListener("dblclick", ev => { ev.stopPropagation(); const m = this.tabMarkers.find(x => x.id === self.dataset.tab); if (m) this.opts.emit?.("ruler:tab-edit", { id: m.id, pos: m.pos, type: m.type }); });
+        this.tabEls.set(t.id, e);
+      }
+      e.dataset.type = t.type;
+      e.title = `${this.opts.labels?.tabs?.[t.type] ?? t.type} · ${this.format(t.pos)}`;
+    }
+    this.refresh();
+  }
+  private renderTabBtn() {
+    this.tabBtn.dataset.type = this.tabType;
+    this.tabBtn.title = `${this.opts.labels?.tabType ?? "Jenis tab stop (klik untuk ganti)"}: ${this.opts.labels?.tabs?.[this.tabType] ?? this.tabType}`;
+  }
+  private positionTabs(g: RulerGeometry) {
+    for (const t of this.tabMarkers) {
+      const e = this.tabEls.get(t.id);
+      if (e) e.style.left = `${g.originX + (g.zeroX + t.pos) * g.scale}px`;
+    }
+  }
+  private onHDown(e: PointerEvent) {
+    if (e.button !== 0 || !this.visible) return;
+    const tgt = e.target as HTMLElement;
+    if (tgt.closest(".rk-tabtype")) return;
+    const mk = tgt.closest<HTMLElement>(".rk-tab");
+    if (mk && this.tabsOn) { this.dragTab(e, mk); return; }
+    if (!this.tabsOn) { this.startGuideFromRuler(e, "y"); return; }
+    // mode tab: klik menambah tab stop; seret ke bawah (>6 px) tetap membuat garis bantu
+    e.preventDefault();
+    const sx = e.clientX, sy = e.clientY;
+    const off = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", off); };
+    const move = (ev: PointerEvent) => { if (Math.abs(ev.clientY - sy) > 6) { off(); this.startGuideFromRuler(ev, "y"); } };
+    const up = () => {
+      off();
+      const g = this.opts.getGeometry();
+      const pos = this.toDoc(sx, 0).x - g.zeroX;
+      if (pos <= 0) return;
+      this.opts.emit?.("ruler:tab-add", { pos, type: this.tabType });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", off);
+  }
+  private dragTab(e: PointerEvent, markerEl: HTMLElement) {
+    e.preventDefault(); e.stopPropagation();
+    const m = this.tabMarkers.find(x => x.id === markerEl.dataset.tab);
+    if (!m) return;
+    const sx = e.clientX, sy = e.clientY, from = m.pos;
+    let pos = from, moved = false, out = false;
+    const g = () => this.opts.getGeometry();
+    const move = (ev: PointerEvent) => {
+      if (Math.abs(ev.clientX - sx) > 2 || Math.abs(ev.clientY - sy) > 2) moved = true;
+      out = Math.abs(ev.clientY - sy) > 26;
+      pos = Math.max(1, this.toDoc(ev.clientX, 0).x - g().zeroX);
+      markerEl.style.left = `${g().originX + (g().zeroX + pos) * g().scale}px`;
+      markerEl.classList.toggle("rk-tab-out", out);
+      this.showTip("x", g().zeroX + pos, ev.clientX, ev.clientY);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
+      this.tip.hidden = true;
+      markerEl.classList.remove("rk-tab-out");
+      if (out) { this.opts.emit?.("ruler:tab-remove", { id: m.id, pos: from, type: m.type }); return; }
+      if (moved && Math.abs(pos - from) > 0.5) this.opts.emit?.("ruler:tab-move", { id: m.id, pos, from, type: m.type });
+      else markerEl.style.left = `${g().originX + (g().zeroX + from) * g().scale}px`;
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }
+
   // ───────── alat ukur ─────────
 
   isMeasuring() { return this.measuring; }
@@ -436,7 +560,7 @@ export class RulerKit {
     if (this.raf) (typeof cancelAnimationFrame === "function" ? cancelAnimationFrame : clearTimeout)(this.raf);
     this.ro?.disconnect();
     this.cleanups.forEach(c => c());
-    this.corner.remove(); this.hBox.remove(); this.vBox.remove(); this.layer.remove();
+    this.tabLayer.remove(); this.tabBtn.remove(); this.corner.remove(); this.hBox.remove(); this.vBox.remove(); this.layer.remove();
     this.frame.classList.remove("rk-on");
   }
 }

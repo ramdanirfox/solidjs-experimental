@@ -7,7 +7,7 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import * as P from "@office-kit/pptx";
 import { PptxDeck, PptxLoadError } from "./pptx-model";
-import { PptxView, type FindHit, type PxSelInfo, type Tool } from "./pptx-view";
+import { PptxView, type FindHit, type PptxNavTarget, type PxSelInfo, type Tool } from "./pptx-view";
 import { createSampleDeck } from "./pptx-sample";
 import { createI18n, type Lang } from "./pptx-i18n";
 import { hexDump, isCfb, isZip, readCfb, readVba, streamBytes, type CfbInfo, type VbaInfo } from "../office-shared/ole-core";
@@ -16,18 +16,25 @@ import { listPptxOle, pptxOleBytes, type PptxOle } from "./pptx-ole";
 import { createEventBus, type EditorEventBus } from "../editor-kit/events";
 import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
 import { RulerKit, type RulerEventMap } from "../editor-kit/ruler-kit";
+import { ColorField } from "../editor-kit/ColorField";
+import { LinkPanel, LINK_LABELS_EN, LINK_LABELS_ID } from "../editor-kit/LinkPanel";
+import type { FindMatch, FindResult, FindSpec, NavEvent, OfficeNavEvents, ReplaceReport, ReplaceSpec } from "../editor-kit/find-replace";
+import { normalizeLink, openExternal, type LinkItem, type OfficeLinkEvents } from "../editor-kit/hyperlink";
+import { PPTX_REPLACE_KINDS } from "./pptx-nav";
+import type { DomImportOptions, DomImportResult } from "./pptx-dom-import";
 import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
 import { prepareOle } from "../office-shared/ole-embed";
 import "./pptx-editor.css";
 
 /** Event yang dipancarkan editor PPTX (bus: `api.events`; DOM: CustomEvent `pptx-editor:<tipe>` pada elemen akar). */
-export interface PptxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, RulerEventMap {
+export interface PptxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, RulerEventMap {
   ready: { api: PptxEditorApi };
   selection: { info: PxSelInfo };
   /** Slide aktif berpindah. */
   slide: { index: number; count: number };
-  find: { query: string; count: number };
   tool: { tool: Tool };
+  /** Elemen DOM halaman diimpor ke slide. */
+  "import:dom": { mode: "image" | "shapes"; added: number; slide: number; selector?: string };
 }
 
 /** Handle imperatif yang diberikan lewat `onReady`. */
@@ -48,6 +55,30 @@ export interface PptxEditorApi {
   redo(): Promise<void>;
   goTo(slideIndex: number): void;
   getSlideCount(): number;
+  /** Pindahkan fokus: slide, bentuk, catatan, tautan, atau hasil pencarian. Indeks slide berbasis 0. */
+  goto(target: PptxNavTarget): NavEvent;
+  /** Cari lintas jenis (`text`, `notes`, `link`, `name`). */
+  find(spec: FindSpec): FindResult;
+  findNext(): FindMatch | undefined;
+  findPrev(): FindMatch | undefined;
+  findClear(): void;
+  /** Ganti hasil aktif (atau pertama). Jenis nilai (`font`/`color`/`fill`/`stroke`) selalu mengganti semua. */
+  replace(spec: ReplaceSpec): ReplaceReport;
+  /** Ganti semua, per jenis: `text`, `notes`, `link`, `name`, `font`, `color`, `fill`, `stroke`. */
+  replaceAll(spec: ReplaceSpec): ReplaceReport;
+  replaceKinds(): string[];
+  readonly links: {
+    list(): LinkItem[];
+    /** Pasang tautan pada bentuk terpilih (atau teks terpilih saat menyunting). */
+    set(url: string): boolean;
+    remove(): boolean;
+    update(id: string, patch: { url?: string }): boolean;
+    removeById(id: string): boolean;
+    replace(from: string, to: string, opts?: { regex?: boolean; caseSensitive?: boolean }): number;
+    open(url: string): boolean;
+  };
+  /** Impor elemen DOM (selector CSS atau Element) ke slide sebagai gambar, bentuk asli, atau otomatis. */
+  importDom(source: string | Element, opts?: DomImportOptions): Promise<DomImportResult>;
   setZoom(z: number): void;
   getZoom(): number;
   /** Penggaris (satuan px slide 1280×720), garis bantu yang menjadi target snapping, dan alat ukur. */
@@ -136,7 +167,7 @@ const Ic = (p: { n: string; size?: number }) => (
 );
 
 type Tab = "home" | "insert" | "format" | "table" | "chart" | "picture" | "slide" | "view";
-type Panel = "find" | "info" | "log" | "ole" | "history" | null;
+type Panel = "find" | "info" | "log" | "ole" | "history" | "links" | null;
 type MenuId = "export" | "layout" | "shapes" | "table" | "chart" | "align" | "lang" | "ctx-shape" | "ctx-slide" | "ctx-thumb";
 type SlideLog = { level: "info" | "warn" | "error"; key: string; params?: Record<string, string | number>; time: number };
 
@@ -244,6 +275,10 @@ export default function PptxEditor(props: PptxEditorProps) {
     clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => setToastMsg(null), 2600);
   };
+  const toastRaw = (msg: string) => { setToastMsg(msg); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => setToastMsg(null), 2600); };
+  const cfLabels = () => ({ opacity: t("color.opacity"), none: t("color.none"), hex: t("color.hex"), custom: t("color.custom") });
+  const [domSel, setDomSel] = createSignal("");
+  const [domMode, setDomMode] = createSignal<"auto" | "image" | "shapes">("auto");
   const bump = () => setVer(v => v + 1);
   const modified = () => { ver(); return !!deck()?.modified; };
   const canUndo = () => { ver(); return !!deck()?.canUndo; };
@@ -490,6 +525,14 @@ export default function PptxEditor(props: PptxEditorProps) {
     emit(type, payload as never);
   };
 
+  const doReplace = (spec: ReplaceSpec, onlyCurrent: boolean): ReplaceReport => {
+    const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceSpec["kinds"];
+    const r = view?.replaceKinds({ ...spec, kinds }, onlyCurrent) ?? { total: 0, byKind: {}, skipped: [], error: "no-view" };
+    emit("replace", { ...r, query: spec.query, replacement: spec.replacement, kinds: kinds ?? ["text"] });
+    if (r.total) { toast("toast.replaced", { n: r.total }); if (panel() === "find" && fq()) runSearch(); }
+    return r;
+  };
+
   const buildApi = (): PptxEditorApi => ({
     events: bus, on: bus.on, off: bus.off, once: bus.once, run: (name, ...args) => bus.run(name, ...args),
     getDeck: () => deck(), getView: () => view,
@@ -504,6 +547,59 @@ export default function PptxEditor(props: PptxEditorProps) {
     undo: async () => { await restore(() => deck()!.undo()); emit("history", { action: "undo" }); },
     redo: async () => { await restore(() => deck()!.redo()); emit("history", { action: "redo" }); },
     goTo: i => view?.goTo(i), getSlideCount: () => deck()?.slides.length ?? 0,
+    goto: target => { const r = view?.gotoTarget(target) ?? { target, ok: false }; emit("navigate", r); return r; },
+    find: spec => {
+      const r = view?.findMatches(spec) ?? { query: spec.query, count: 0, matches: [], current: -1 };
+      emit("find", { query: spec.query, count: r.count });
+      if (r.current >= 0) emit("navigate", { target: r.matches[r.current].target, ok: true, label: `${r.current + 1}/${r.count}` });
+      return r;
+    },
+    findNext: () => { const m = view?.findStep(1); if (m) emit("navigate", { target: m.target, ok: true, label: `${(view?.findIndex ?? 0) + 1}` }); return m; },
+    findPrev: () => { const m = view?.findStep(-1); if (m) emit("navigate", { target: m.target, ok: true, label: `${(view?.findIndex ?? 0) + 1}` }); return m; },
+    findClear: () => view?.findClear(),
+    replace: spec => doReplace(spec, true),
+    replaceAll: spec => doReplace(spec, false),
+    replaceKinds: () => [...PPTX_REPLACE_KINDS],
+    links: {
+      list: () => view?.linkItems() ?? [],
+      set: url => {
+        const n = normalizeLink(url);
+        if (!n || !view || ro() || (!view.sel.length && !view.isEditing())) return false;
+        view.setHyperlink(n);
+        emit("link", { action: "set", count: 1, url: n });
+        return true;
+      },
+      remove: () => { if (!view || ro() || (!view.sel.length && !view.isEditing())) return false; view.setHyperlink(null); emit("link", { action: "remove", count: 1 }); return true; },
+      update: (id, patch) => {
+        const n = patch.url !== undefined ? normalizeLink(patch.url) : undefined;
+        if (patch.url !== undefined && !n) return false;
+        const ok = !!view?.updateLink(id, { url: n ?? undefined });
+        if (ok) emit("link", { action: "update", count: 1, url: n ?? undefined });
+        return ok;
+      },
+      removeById: id => { const ok = !!view?.removeLinkById(id); if (ok) emit("link", { action: "remove", count: 1 }); return ok; },
+      replace: (from, to, opts) => {
+        const n = view?.replaceLinks({ query: from, regex: opts?.regex, caseSensitive: opts?.caseSensitive }, to) ?? 0;
+        if (n) emit("link", { action: "replace", count: n, url: to });
+        return n;
+      },
+      open: url => {
+        if (url.startsWith("#")) return false;
+        return openExternal(url);
+      },
+    },
+    importDom: async (source, opts) => {
+      try {
+        const r = await view!.importDom(source, opts);
+        emit("import:dom", { mode: r.mode, added: r.added, slide: r.slide, selector: r.selector });
+        toast("toast.domImported", { n: r.added });
+        return r;
+      } catch (e) {
+        toast("toast.domFail", { msg: e instanceof Error ? e.message : String(e) });
+        emit("error", { scope: "import-dom", error: e });
+        throw e;
+      }
+    },
     setZoom: z => setZoom(z), getZoom: () => zoom(),
     ruler: ruler!,
     ole: {
@@ -518,6 +614,12 @@ export default function PptxEditor(props: PptxEditorProps) {
       undo: () => a.undo(), redo: () => a.redo(), goTo: (i: number) => a.goTo(i), getSlideCount: () => a.getSlideCount(), setZoom: (z: number) => a.setZoom(z), getZoom: () => a.getZoom(),
       load: (i: Uint8Array | ArrayBuffer | File, n?: string) => a.load(i, n), getBytes: () => a.getBytes(), getText: () => a.getText(),
       save: () => savePptx(), setPanel: (p: Panel) => setPanel(p), setLocale: (l: Lang) => setLang(l),
+      goto: (t: PptxNavTarget) => a.goto(t), find: (s: FindSpec) => a.find(s), findNext: () => a.findNext(), findPrev: () => a.findPrev(), findClear: () => a.findClear(),
+      replace: (s: ReplaceSpec) => a.replace(s), replaceAll: (s: ReplaceSpec) => a.replaceAll(s), "replace.kinds": () => a.replaceKinds(),
+      "link.list": () => a.links.list(), "link.set": (u: string) => a.links.set(u), "link.remove": () => a.links.remove(),
+      "link.update": (id: string, p: { url?: string }) => a.links.update(id, p), "link.removeById": (id: string) => a.links.removeById(id),
+      "link.replace": (f: string, to: string, o?: { regex?: boolean; caseSensitive?: boolean }) => a.links.replace(f, to, o), "link.open": (u: string) => a.links.open(u),
+      "import.dom": (src: string | Element, o?: DomImportOptions) => a.importDom(src, o),
       "ole.list": () => a.ole.list(), "ole.insert": (f: FileInput, o?: object) => a.ole.insert(f, o),
       "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o),
       "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
@@ -763,6 +865,8 @@ export default function PptxEditor(props: PptxEditorProps) {
     return out;
   });
   createEffect(() => { if (!tabs().includes(tab())) setTab("home"); });
+  const alphas = createMemo(() => { sel(); ver(); return view?.alphaInfo() ?? { fill: null, stroke: null, text: null }; });
+  const linkItems = createMemo<LinkItem[]>(() => { ver(); return panel() === "links" && view ? view.linkItems() : []; });
   const colorOf = (c: string | null | undefined, d = "#000000") => (c && /^#?[0-9a-f]{6}$/i.test(c) ? (c.startsWith("#") ? c : `#${c}`).toLowerCase() : d);
 
   // ───────── pintasan ─────────
@@ -817,7 +921,7 @@ export default function PptxEditor(props: PptxEditorProps) {
         <Btn title={t("b.italic") + " (Ctrl+I)"} disabled={!hasSel()} on={S()?.fmt?.italic} onClick={() => view?.toggle("italic")}><span class="f-i">I</span></Btn>
         <Btn title={t("b.underline") + " (Ctrl+U)"} disabled={!hasSel()} on={S()?.fmt?.underline} onClick={() => view?.toggle("underline")}><span class="f-u">U</span></Btn>
         <Btn title={t("b.strike")} disabled={!hasSel()} on={S()?.fmt?.strike} onClick={() => view?.toggle("strike")}><span class="f-s">S</span></Btn>
-        <label class="pxe-lbl" title={t("b.color")}>A<input type="color" class="pxe-color" disabled={!hasSel()} value={colorOf(S()?.fmt?.color)} onChange={e => view?.textFormat({ color: e.currentTarget.value as P.Color })} /></label>
+        <ColorField class="pxe-cf" title={t("b.color")} disabled={!hasSel()} value={S()?.fmt?.color ? colorOf(S()?.fmt?.color) : null} alpha={alphas().text ?? 1} fallback="#000000" labels={cfLabels()} note={t("color.textNote")} onChange={v => view?.setTextColor(v ? v.hex : null, v?.alpha)}><b>A</b></ColorField>
       </Grp>
       <Grp cap={t("g.paragraph")}>
         <Btn icon="bullets" title={t("b.bullets")} disabled={!hasSel()} on={S()?.fmt?.bullet === "bullet"} onClick={() => view?.bullets(S()?.fmt?.bullet === "bullet" ? "none" : "bullet")} />
@@ -836,9 +940,9 @@ export default function PptxEditor(props: PptxEditorProps) {
         <Btn label="⤓" title={t("b.anchorBot")} disabled={!hasSel()} onClick={() => view?.textAnchor("bottom")} />
       </Grp>
       <Grp cap={t("g.drawing")}>
-        <label class="pxe-lbl" title={t("b.fill")}><Ic n="fill" size={14} /><input type="color" class="pxe-color" disabled={!hasSel()} value={colorOf(S()?.fill, "#4f81bd")} onChange={e => view?.setFill(e.currentTarget.value)} /></label>
+        <ColorField class="pxe-cf" title={t("b.fill")} disabled={!hasSel()} value={S()?.fill ? colorOf(S()?.fill, "#4f81bd") : null} alpha={alphas().fill ?? 1} fallback="#4F81BD" labels={cfLabels()} onChange={v => (v ? view?.setFill(v.hex, v.alpha) : view?.setFill(null))}><Ic n="fill" size={14} /></ColorField>
         <Btn label="∅" title={t("b.noFill")} disabled={!hasSel()} onClick={() => view?.setFill(null)} />
-        <label class="pxe-lbl" title={t("b.outline")}><Ic n="stroke" size={14} /><input type="color" class="pxe-color" disabled={!hasSel()} value={colorOf(S()?.stroke, "#1f2937")} onChange={e => view?.setStroke({ color: e.currentTarget.value, widthPt: S()?.strokeW ? S()!.strokeW! / 12700 : 1 })} /></label>
+        <ColorField class="pxe-cf" title={t("b.outline")} disabled={!hasSel()} value={S()?.stroke ? colorOf(S()?.stroke, "#1f2937") : null} alpha={alphas().stroke ?? 1} fallback="#1F2937" labels={cfLabels()} onChange={v => (v ? view?.setStroke({ color: v.hex, alpha: v.alpha, widthPt: S()?.strokeW ? S()!.strokeW! / 12700 : 1 }) : view?.setStroke({ color: null }))}><Ic n="stroke" size={14} /></ColorField>
         <select class="pxe-sel" style={{ width: "62px" }} disabled={!hasSel()} title={t("b.outlineW")} onChange={e => { const v = parseFloat(e.currentTarget.value); if (v >= 0) view?.setStroke(v === 0 ? { color: null } : { widthPt: v, color: S()?.stroke ?? "#1f2937" }); e.currentTarget.value = ""; }}>
           <option value="">{S()?.strokeW ? `${Math.round((S()!.strokeW! / 12700) * 10) / 10}pt` : "—"}</option><For each={[0, 0.5, 1, 2, 3, 4.5, 6]}>{v => <option value={v}>{v === 0 ? "∅" : `${v}pt`}</option>}</For>
         </select>
@@ -852,6 +956,14 @@ export default function PptxEditor(props: PptxEditorProps) {
 
   const Insert = () => (
     <>
+      <Grp cap={t("g.importDom")}>
+        <input class="pxe-txt" style={{ width: "170px" }} placeholder={t("dom.selector")} title={t("dom.tip")} value={domSel()} disabled={!edit()} onInput={e => setDomSel(e.currentTarget.value)}
+          onKeyDown={e => { if (e.key === "Enter" && domSel().trim()) void api?.importDom(domSel().trim(), { mode: domMode() }).catch(() => {}); }} />
+        <select class="pxe-sel" style={{ width: "104px" }} value={domMode()} disabled={!edit()} onChange={e => setDomMode(e.currentTarget.value as "auto" | "image" | "shapes")}>
+          <For each={["auto", "image", "shapes"] as const}>{m => <option value={m} selected={m === domMode()}>{t("dom.mode." + m)}</option>}</For>
+        </select>
+        <Btn label={t("dom.import")} title={t("dom.tip")} disabled={!edit() || !domSel().trim()} onClick={() => { void api?.importDom(domSel().trim(), { mode: domMode() }).catch(() => {}); }} />
+      </Grp>
       <Grp cap={t("g.insert")}>
         <Btn icon="textbox" label={t("b.textbox")} disabled={!edit()} on={tool()?.type === "textbox"} onClick={() => view?.setTool(tool()?.type === "textbox" ? null : { type: "textbox" })} />
         <Btn icon="shape" label={t("b.shapes")} disabled={!edit()} menu onClick={e => openMenu("shapes", e)} />
@@ -861,7 +973,7 @@ export default function PptxEditor(props: PptxEditorProps) {
         <Btn icon="object" label={t("ole.insert")} title={t("ole.insertTip")} disabled={!edit() || !deck()} onClick={() => oleInput.click()} />
         <Btn icon="table" label={t("b.table")} disabled={!edit()} menu onClick={e => openMenu("table", e)} />
         <Btn icon="chart" label={t("b.chart")} disabled={!edit()} menu onClick={e => openMenu("chart", e)} />
-        <Btn icon="link" label={t("b.link")} disabled={!hasSel()} onClick={() => { setLinkUrl(S()?.hyperlink ?? "https://"); setDialog("link"); }} />
+        <Btn icon="link" label={t("b.link")} disabled={!hasSel()} onClick={() => { view?.rememberEditSelection(); setLinkUrl(S()?.hyperlink ?? "https://"); setDialog("link"); }} />
       </Grp>
       <Grp cap={t("g.slides")}>
         <Btn icon="plus" label={t("b.newSlide")} disabled={!edit()} onClick={() => view?.addSlide()} />
@@ -924,7 +1036,7 @@ export default function PptxEditor(props: PptxEditorProps) {
           <span class="pxe-lbl">{S()?.cell ? t("t.cellPos", { r: S()!.cell!.row, c: S()!.cell!.col }) : t("t.pickCell")}</span>
         </Grp>
         <Grp cap={t("g.cell")}>
-          <label class="pxe-lbl" title={t("t.shade")}>▨<input type="color" class="pxe-color" disabled={d()} value="#e8eef7" onChange={e => view?.tableOp("fill", e.currentTarget.value)} /></label>
+          <ColorField class="pxe-cf" title={t("t.shade")} disabled={d()} fallback="#E8EEF7" allowAlpha={false} labels={cfLabels()} onChange={v => view?.tableOp("fill", v ? v.hex : null)}>▨</ColorField>
           <Btn label="∅" title={t("t.noShade")} disabled={d()} onClick={op("fill", null)} />
           <Btn label="⤒" title={t("b.anchorTop")} disabled={d()} onClick={op("anchor", "top")} /><Btn label="↕" title={t("b.anchorMid")} disabled={d()} onClick={op("anchor", "center")} /><Btn label="⤓" title={t("b.anchorBot")} disabled={d()} onClick={op("anchor", "bottom")} />
           <Btn label={t("t.borders")} title={t("t.bordersTip")} disabled={d()} onClick={op("border", { color: "#1f2937", widthPt: 1 })} />
@@ -988,7 +1100,7 @@ export default function PptxEditor(props: PptxEditorProps) {
         <Btn icon="arrowDown" title={t("s.moveDown")} disabled={!edit() || slideIdx() >= slideCount() - 1} onClick={() => view?.moveSlide(slideIdx(), slideIdx() + 1)} />
       </Grp>
       <Grp cap={t("g.background")}>
-        <label class="pxe-lbl" title={t("s.bgColor")}><Ic n="fill" size={14} /><input type="color" class="pxe-color" disabled={!edit()} value="#ffffff" onChange={e => view?.setBackground(e.currentTarget.value)} /></label>
+        <ColorField class="pxe-cf" title={t("s.bgColor")} disabled={!edit()} fallback="#FFFFFF" allowAlpha={false} labels={cfLabels()} onChange={v => view?.setBackground(v ? v.hex : null)}><Ic n="fill" size={14} /></ColorField>
         <Btn icon="image" label={t("s.bgImage")} disabled={!edit()} onClick={() => bgInput.click()} />
         <Btn label={t("s.bgClear")} disabled={!edit()} onClick={() => view?.setBackground(null)} />
       </Grp>
@@ -1073,6 +1185,11 @@ export default function PptxEditor(props: PptxEditorProps) {
           <Show when={(fRes()?.hits.length ?? 0) > fLimit()}><Btn label={t("find.more", { n: Math.min(200, fRes()!.hits.length - fLimit()) })} onClick={() => setFLimit(n => n + 200)} /></Show>
         </Show>
 
+        <Show when={panel() === "links"}>
+          <LinkPanel items={linkItems()} readonly={ro()} labels={lang() === "id" ? LINK_LABELS_ID : LINK_LABELS_EN}
+            onGoto={i => api?.goto(i.target as PptxNavTarget)} onUpdate={(i, p) => api?.links.update(i.id, p)} onRemove={i => api?.links.removeById(i.id)}
+            onReplace={(from, to) => api?.links.replace(from, to) ?? 0} onOpen={i => api?.links.open(i.url)} onNotify={toastRaw} />
+        </Show>
         <Show when={panel() === "history"}>
           <div class="pxe-note">{(ver(), t("hist.count", { n: Math.max(0, (deck()?.hist.length ?? 1) - 1), i: deck()?.histIdx ?? 0 }))}</div>
           <label class="pxe-field"><span>{t("hist.max")}</span><input class="pxe-num-in" type="number" min="1" max="1000" style={{ width: "90px" }} value={histMax()} onChange={e => setHistMax(Math.max(1, Math.floor(+e.currentTarget.value || 1)))} /></label>
@@ -1246,6 +1363,7 @@ export default function PptxEditor(props: PptxEditorProps) {
         <div class="pxe-grp">
           <Btn icon="play" label={t("b.present")} title={t("b.present") + " (F5)"} disabled={!deck()} onClick={startPresent} />
           <Btn icon="search" label={t("b.find")} title={t("b.find") + " (Ctrl+F)"} on={panel() === "find"} onClick={() => (panel() === "find" ? setPanel(null) : openFind())} />
+          <Btn icon="link" title={t("b.links")} on={panel() === "links"} onClick={() => setPanel(p => (p === "links" ? null : "links"))} />
           <Btn icon="info" title={t("b.info")} on={panel() === "info"} onClick={() => setPanel(p => (p === "info" ? null : "info"))} />
           <Btn icon="log" title={t("b.log")} on={panel() === "log"} badge={counts().error || counts().warn} badgeKind={counts().error ? "" : "w"} onClick={() => setPanel(p => (p === "log" ? null : "log"))} />
           <Btn icon="clip" title={t("b.ole")} on={panel() === "ole"} badge={oleParts().length || undefined} badgeKind="i" onClick={() => setPanel(p => (p === "ole" ? null : "ole"))} />

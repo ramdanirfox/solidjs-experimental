@@ -636,3 +636,9 @@
 .mgx-primary:hover:not(:disabled) {
     background: #1d4ed8 !important;
 }
+
+/* pemilih warna bersama (editor-kit/ColorField) & dialog tautan */
+.mgx-cf .ck-btn { height: 28px; min-width: 28px; border: 1px solid var(--mgx-border, rgba(127, 127, 127, 0.4)); border-radius: 6px; background: transparent; color: inherit; }
+.mgx-cf .ck-btn:hover:not(:disabled) { background: rgba(127, 127, 127, 0.18); }
+.mgx-cf-ic { display: inline-block; min-width: 14px; text-align: center; line-height: 14px; }
+.mgx-input { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--mgx-border, rgba(127, 127, 127, 0.5)); border-radius: 6px; background: transparent; color: inherit; font: inherit; }

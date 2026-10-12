@@ -94,6 +94,11 @@ const en: Dict = {
   "log.preset": "Shape “{prst}” has no drawing — a rectangle is shown instead.", "log.imgFormat": "Picture format {fmt} cannot be shown by the browser.", "log.frame": "Graphic frame “{name}” is shown as a placeholder.",
   "log.shapeFail": "Shape “{name}” could not be drawn: {msg}", "log.layoutFail": "Layout shapes could not be drawn: {msg}", "log.opFail": "Operation “{op}” failed: {msg}", "log.imgInsertFail": "Could not insert the picture: {msg}",
   "log.saveFail": "Could not build the .pptx: {msg}", "log.oleFail": "Could not read object {part}: {msg}",
+  // hyperlink, color, DOM import
+  "panel.links": "Hyperlinks", "b.links": "Hyperlinks",
+  "color.opacity": "Opacity", "color.none": "No color", "color.hex": "Hex", "color.custom": "Custom", "color.textNote": "While editing text, opacity is not applied; select the shape and pick the color again to apply it to all of its text.",
+  "g.importDom": "Import from page", "dom.selector": "CSS selector, e.g. #chart", "dom.import": "Import", "dom.tip": "Import a DOM element of this page into the current slide", "dom.mode.auto": "Auto", "dom.mode.image": "As image", "dom.mode.shapes": "As shapes",
+  "toast.domImported": "Imported from page ({n})", "toast.domFail": "Import failed: {msg}", "hist.import": "Import DOM",
 };
 
 const id: Dict = {
@@ -172,6 +177,11 @@ const id: Dict = {
   "log.preset": "Bentuk “{prst}” belum memiliki gambar — ditampilkan sebagai persegi panjang.", "log.imgFormat": "Format gambar {fmt} tidak dapat ditampilkan browser.", "log.frame": "Bingkai grafis “{name}” ditampilkan sebagai placeholder.",
   "log.shapeFail": "Bentuk “{name}” tidak dapat digambar: {msg}", "log.layoutFail": "Bentuk tata letak tidak dapat digambar: {msg}", "log.opFail": "Operasi “{op}” gagal: {msg}", "log.imgInsertFail": "Gagal menyisipkan gambar: {msg}",
   "log.saveFail": "Gagal membuat .pptx: {msg}", "log.oleFail": "Gagal membaca objek {part}: {msg}",
+  // hyperlink, color, DOM import
+  "panel.links": "Hyperlink", "b.links": "Hyperlink",
+  "color.opacity": "Opasitas", "color.none": "Tanpa warna", "color.hex": "Hex", "color.custom": "Kustom", "color.textNote": "Saat menyunting teks, opasitas tidak diterapkan; pilih bentuknya lalu pilih warna lagi untuk menerapkannya ke seluruh teks.",
+  "g.importDom": "Impor dari halaman", "dom.selector": "Selektor CSS, mis. #chart", "dom.import": "Impor", "dom.tip": "Impor elemen DOM halaman ini ke slide aktif", "dom.mode.auto": "Otomatis", "dom.mode.image": "Sebagai gambar", "dom.mode.shapes": "Sebagai bentuk",
+  "toast.domImported": "Diimpor dari halaman ({n})", "toast.domFail": "Impor gagal: {msg}", "hist.import": "Impor DOM",
 };
 
 export const DICTS: Record<Lang, Dict> = { en, id };

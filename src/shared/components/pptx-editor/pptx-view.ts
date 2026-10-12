@@ -9,6 +9,12 @@ import { PptxDeck } from "./pptx-model";
 import { PX, renderShape, renderSlide, themeColor, topShapes, type RenderCtx } from "./pptx-render";
 import { insertOleFrame, readOleFrame, updateOleFrame, type InsertedOleFrame, type OleFrameBounds, type UpdatedOleFrame } from "./pptx-ole";
 import type { PreparedOle } from "../office-shared/ole-embed";
+import { setFillAlpha, setRunAlpha, setStrokeAlpha, setTextAlpha, textAlphaOf } from "./pptx-alpha";
+import { PPTX_REPLACE_KINDS, collectUnits, countValues, listLinks, replaceValues, type PptxUnit } from "./pptx-nav";
+import { elementToPng, loadImageBytes, planDom, type DomImportOptions, type DomImportResult } from "./pptx-dom-import";
+import { compileFind, createFindCursor, isValueKind, makeReport, matchRanges, replaceInString, snippet, type FindMatch, type FindResult, type FindSpec, type NavEvent, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
+import { parseCssColor } from "../editor-kit/color-util";
+import type { LinkItem } from "../editor-kit/hyperlink";
 
 export interface PxSelInfo {
   slideIndex: number; slideCount: number; layout: string | null; hidden: boolean;
@@ -24,6 +30,16 @@ export interface PxSelInfo {
   editing: boolean;
   tool: string | null;
 }
+
+/** Target `goto` untuk editor PPTX. Indeks slide berbasis 0. */
+export type PptxNavTarget =
+  | { kind: "slide"; index: number }
+  | { kind: "first" } | { kind: "last" } | { kind: "next" } | { kind: "prev" }
+  | { kind: "shape"; slide?: number; id?: number; name?: string }
+  | { kind: "notes"; slide?: number }
+  | { kind: "link"; id: string }
+  | { kind: "search"; query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean; occurrence?: number }
+  | { kind: "match"; index: number };
 
 export type Tool = { type: "textbox" } | { type: "shape"; preset: PresetShape | string } | { type: "line"; arrow?: boolean } | null;
 
@@ -712,12 +728,21 @@ export class PptxView {
   }
 
   // formatting / properti bentuk
-  setFill(color: string | null) { this.apply("hist.fill", s => { if (color === null) P.setShapeNoFill(s); else P.setShapeFill(s, color as P.Color); }); }
+  setFill(color: string | null, alpha?: number) { this.apply("hist.fill", s => { if (color === null) P.setShapeNoFill(s); else { P.setShapeFill(s, color as P.Color); setFillAlpha(s, alpha !== undefined && alpha < 1 ? alpha : null); } }); }
+  /** Opasitas isi solid (0–1) tanpa mengganti warna. */
+  setFillOpacity(alpha: number) { this.apply("hist.fill", s => { setFillAlpha(s, alpha < 1 ? alpha : null); }); }
+  /** Warna teks seluruh bentuk terpilih (null = hapus warna eksplisit) dengan opasitas opsional. Saat mengedit teks, hanya warna yang berlaku pada seleksi. */
+  setTextColor(color: string | null, alpha?: number) {
+    if (this.editing) { this.execFormat({ color: color as P.Color | null, alpha } as TextFormat & { alpha?: number }); return; }
+    this.textFormat({ color: color as P.Color | null });
+    if (color !== null) this.apply("hist.format", s => { setTextAlpha(s, alpha !== undefined && alpha < 1 ? alpha : null); });
+  }
   setGradient(c1: string, c2: string, angle = 90) { this.apply("hist.fill", s => P.setShapeGradientFill(s, { stops: [{ offset: 0, color: c1 as P.Color }, { offset: 1, color: c2 as P.Color }], angleDeg: angle })); }
-  setStroke(o: { color?: string | null; widthPt?: number; dash?: P.LineDash }) {
+  setStroke(o: { color?: string | null; widthPt?: number; dash?: P.LineDash; alpha?: number }) {
     this.apply("hist.stroke", s => {
       if (o.color === null) { P.setShapeNoStroke(s); return; }
       if (o.color || o.widthPt) P.setShapeStroke(s, { ...(o.color ? { color: o.color as P.Color } : {}), ...(o.widthPt ? { widthEmu: Math.round(o.widthPt * 12700) } : {}) });
+      if (o.alpha !== undefined) setStrokeAlpha(s, o.alpha < 1 ? o.alpha : null);
       if (o.dash) P.setShapeStrokeDash(s, o.dash);
     });
   }
@@ -740,7 +765,22 @@ export class PptxView {
   rename(name: string) { this.apply("hist.props", s => P.renameShape(s, name), { merge: "hist.props" }); }
   setAlt(text: string) { this.apply("hist.props", s => P.setShapeDescription(s, text || null), { merge: "hist.props" }); }
   setHidden(h: boolean) { this.apply("hist.props", s => P.setShapeHidden(s, h)); }
-  setHyperlink(url: string | null) { this.apply("hist.link", s => P.setShapeHyperlink(s, url)); }
+  private editRange: Range | null = null;
+  /** Simpan seleksi teks yang sedang disunting (sebelum dialog mengambil fokus). */
+  rememberEditSelection() {
+    const s = window.getSelection();
+    this.editRange = this.editing && s && s.rangeCount && this.editing.host.contains(s.anchorNode) ? s.getRangeAt(0).cloneRange() : null;
+  }
+  setHyperlink(url: string | null) {
+    if (this.editing && !this.editing.cell) {
+      // teks yang sedang disunting: tautan pada seleksi (disimpan sebagai hyperlink run saat commit)
+      if (this.editRange) { this.editing.host.focus(); const s = window.getSelection(); s?.removeAllRanges(); s?.addRange(this.editRange); }
+      document.execCommand(url ? "createLink" : "unlink", false, url ?? undefined);
+      this.editing.changed = true;
+      return;
+    }
+    this.apply("hist.link", s => P.setShapeHyperlink(s, url));
+  }
   setAnimation(effect: P.AnimationEffect | null, ms = 600) { this.apply("hist.anim", s => { if (effect) P.setShapeAnimation(s, { effect, durationMs: ms }); else P.clearSlideAnimations(this.slide!); }); }
 
   // teks
@@ -846,7 +886,7 @@ export class PptxView {
   private rgbHex(c: string): string | null { const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c); return m ? "#" + [m[1], m[2], m[3]].map(x => (+x).toString(16).padStart(2, "0")).join("").toUpperCase() : null; }
 
   /** DOM yang disunting → daftar paragraf berformat (hanya selisih terhadap format dasar). */
-  private parseEdit(host: HTMLElement, base: ReadTextFormat | null, scale = 1): { align: string | null; runs: { text: string; format: TextFormat }[] }[] {
+  private parseEdit(host: HTMLElement, base: ReadTextFormat | null, scale = 1): { align: string | null; runs: { text: string; format: TextFormat; href?: string; alpha?: number }[] }[] {
     const root = host;
     const paras: HTMLElement[] = [];
     const loose: Node[] = [];
@@ -857,10 +897,9 @@ export class PptxView {
       else loose.push(n);
     }
     flushLoose();
-    const baseSize = base?.size ?? 18;
-    const result: { align: string | null; runs: { text: string; format: TextFormat }[] }[] = [];
+    const result: { align: string | null; runs: { text: string; format: TextFormat; href?: string; alpha?: number }[] }[] = [];
     for (const p of paras) {
-      const runs: { text: string; format: TextFormat }[] = [];
+      const runs: { text: string; format: TextFormat; href?: string; alpha?: number }[] = [];
       const cs = getComputedStyle(p);
       const align = p.style.textAlign || (cs.textAlign && cs.textAlign !== "start" ? cs.textAlign : null);
       const walk = (n: Node) => {
@@ -871,19 +910,34 @@ export class PptxView {
           if (!text) return;
           const st = getComputedStyle(n.parentElement!);
           const f: TextFormat = {};
+          // Setiap run ditulis dengan format efektifnya (ukuran, huruf, warna, gaya): `setShapeParagraphs` mereset properti run,
+          // jadi format yang hanya "sama dengan run pertama" akan hilang dan jatuh ke bawaan layout.
           const px = parseFloat(st.fontSize);
-          const size = Math.round(((px * 72) / 96 / scale) * 10) / 10;
-          if (Math.abs(size - baseSize) > 0.3) f.size = size;
-          const bold = parseInt(st.fontWeight) >= 600, italic = st.fontStyle === "italic";
-          if (bold !== !!base?.bold) f.bold = bold;
-          if (italic !== !!base?.italic) f.italic = italic;
-          const ul = /underline/.test(st.textDecorationLine), stk = /line-through/.test(st.textDecorationLine);
-          if (ul !== !!base?.underline) f.underline = ul;
-          if (stk !== (!!base?.strike && base.strike !== "noStrike")) f.strike = stk;
+          if (px > 0) f.size = Math.round(((px * 72) / 96 / scale) * 10) / 10;
+          const src = n.parentElement!.closest<HTMLElement>("[data-font],[data-clr]");
+          const fam = (st.fontFamily.split(",")[0] ?? "").trim().replace(/^['"]|['"]$/g, "");
+          if (fam) {
+            const orig = src?.dataset.font;
+            const origName = orig?.startsWith("+mj") ? this.ctx.fonts?.majorLatin ?? "Calibri Light" : orig?.startsWith("+mn") ? this.ctx.fonts?.minorLatin ?? "Calibri" : orig;
+            f.font = orig && origName === fam ? orig : fam;
+          }
+          f.bold = parseInt(st.fontWeight) >= 600;
+          f.italic = st.fontStyle === "italic";
+          f.underline = /underline/.test(st.textDecorationLine);
+          f.strike = /line-through/.test(st.textDecorationLine);
           const col = this.rgbHex(st.color);
-          if (col && col !== (base?.color ? themeColor(this.ctx, base.color)?.toUpperCase() : "#000000")) f.color = col as P.Color;
+          if (col) {
+            const tok = src?.dataset.clr;
+            f.color = (tok && themeColor(this.ctx, tok)?.toUpperCase() === col ? tok : col) as P.Color;
+          }
+          const al = parseCssColor(st.color)?.alpha;
+          const alpha = al !== undefined && al < 1 ? Math.round(al * 1000) / 1000 : undefined;
+          const lk = n.parentElement!.closest<HTMLElement>("a[href],[data-href]");
+          const href = lk?.getAttribute("href") ?? lk?.dataset.href ?? undefined;
+          // run bertautan memakai tampilan tautan dari tema: jangan membakar warna/garis bawah ke dalam run
+          if (href) { delete f.underline; delete f.color; }
           const prev = runs[runs.length - 1];
-          if (prev && JSON.stringify(prev.format) === JSON.stringify(f)) prev.text += text; else runs.push({ text, format: f });
+          if (prev && JSON.stringify(prev.format) === JSON.stringify(f) && prev.href === href && prev.alpha === alpha) prev.text += text; else runs.push({ text, format: f, href, alpha });
           return;
         }
         n.childNodes.forEach(walk);
@@ -911,7 +965,13 @@ export class PptxView {
           const cell = P.getTableCell(ed.shape, ed.cell.row, ed.cell.col);
           P.setTableCellParagraphs(cell, parsed.map(p => ({ align: this.toAlign(p.align), runs: p.runs.length ? p.runs : [{ text: "", format: {} }] })));
         } else {
-          P.setShapeParagraphs(ed.shape, parsed.map(p => ({ align: this.toAlign(p.align), runs: p.runs })));
+          P.setShapeParagraphs(ed.shape, parsed.map(p => ({ align: this.toAlign(p.align), runs: p.runs.map(r => ({ text: r.text, format: r.format })) })));
+          parsed.forEach((p, pi) => p.runs.forEach((r, ri) => {
+            try {
+              if (r.href) P.setShapeRunHyperlink(ed.shape, pi, ri, r.href);
+              if (r.alpha !== undefined) setRunAlpha(ed.shape, pi, ri, r.alpha);
+            } catch { /* abaikan */ }
+          }));
           // pulihkan properti paragraf (bullet, level, spasi, perataan)
           parsed.forEach((p, i) => {
             const pr = ed.props[Math.min(i, ed.props.length - 1)];
@@ -940,7 +1000,14 @@ export class PptxView {
     if (f.italic !== undefined && f.italic !== document.queryCommandState("italic")) ex("italic");
     if (f.underline !== undefined && !!f.underline !== document.queryCommandState("underline")) ex("underline");
     if (f.strike !== undefined && !!f.strike !== document.queryCommandState("strikeThrough")) ex("strikeThrough");
-    if (f.color) { ex("styleWithCSS", "true"); ex("foreColor", f.color as string); }
+    const fa = f as TextFormat & { alpha?: number };
+    if (f.color === null) { ex("styleWithCSS", "true"); ex("foreColor", getComputedStyle(this.editing.host).color || "#000000"); }
+    else if (f.color) {
+      ex("styleWithCSS", "true");
+      const a = fa.alpha !== undefined && fa.alpha < 1 ? fa.alpha : null;
+      const p = /^#?([0-9a-f]{6})$/i.exec(String(f.color));
+      ex("foreColor", a !== null && p ? `rgba(${parseInt(p[1].slice(0, 2), 16)}, ${parseInt(p[1].slice(2, 4), 16)}, ${parseInt(p[1].slice(4, 6), 16)}, ${a})` : String(f.color));
+    }
     if (f.size) {
       ex("fontSize", "7");
       this.editing.host.querySelectorAll<HTMLElement>("font[size='7']").forEach(el => { el.removeAttribute("size"); el.style.fontSize = `${(f.size! * 96) / 72}px`; });
@@ -1092,6 +1159,257 @@ export class PptxView {
     } catch (e) { this.hooks.log("error", "log.opFail", { op: "painter", msg: e instanceof Error ? e.message : String(e) }); }
     this.cancelPainter();
     this.changed("hist.painter"); this.rerenderShape(target); this.select([target]); this.hooks.thumbs([this.slideIdx]);
+  }
+
+  // ───────── navigasi & cari/ganti lintas jenis (event bus) ─────────
+
+  private fcur = createFindCursor<{ m: FindMatch; unit: PptxUnit; start: number; end: number }>();
+  private resolveColor = (c: string | null | undefined) => themeColor(this.ctx, c);
+
+  /** Cari lintas jenis: `text` (run/sel tabel), `notes`, `link` (URL), `name`. Hasil pertama disorot kecuali `select === false`. */
+  findMatches(spec: FindSpec): FindResult {
+    const empty: FindResult = { query: spec.query, count: 0, matches: [], current: -1 };
+    if (!this.deck || !spec.query) { this.clearSearch(); this.fcur.clear(); return empty; }
+    const all: ReplaceKind[] = ["text", "notes", "link", "name"];
+    const kinds = (spec.kinds?.length ? spec.kinds.filter(k => all.includes(k)) : all) as ReplaceKind[];
+    const { re, error } = compileFind(spec);
+    if (!re) return { ...empty, error };
+    const limit = spec.limit ?? 2000;
+    const items: { m: FindMatch; unit: PptxUnit; start: number; end: number }[] = [];
+    let truncated = false;
+    outer: for (const u of collectUnits(this.slides, kinds, topShapes)) {
+      for (const r of matchRanges(u.text, re)) {
+        if (items.length >= limit) { truncated = true; break outer; }
+        items.push({
+          m: { index: items.length, kind: u.kind, text: u.text.slice(r.start, r.end), ...snippet(u.text, r.start, r.end), location: `Slide ${u.slide + 1} · ${u.where}`, target: u.kind === "notes" ? { kind: "notes", slide: u.slide } : { kind: "shape", slide: u.slide, id: u.shapeId } },
+          unit: u, start: r.start, end: r.end,
+        });
+      }
+    }
+    this.fcur.set(items, -1);
+    this.hits = items.map((it, i) => ({ index: i, slide: it.unit.slide, shapeId: it.unit.shapeId, where: it.unit.where, text: it.m.text, before: it.m.before, after: it.m.after, start: it.start, end: it.end }));
+    this.hitCur = -1; this.markHits();
+    const res: FindResult = { query: spec.query, count: items.length, matches: items.map(i => i.m), truncated, current: -1 };
+    if (spec.select !== false && items.length) res.current = this.findStep(1)?.index ?? -1;
+    return res;
+  }
+  findStep(dir: 1 | -1): FindMatch | undefined {
+    const it = this.fcur.step(dir);
+    if (!it) return undefined;
+    this.gotoHit(this.fcur.index);
+    return it.m;
+  }
+  findClear() { this.fcur.clear(); this.clearSearch(); }
+  get findIndex() { return this.fcur.index; }
+
+  /** Pindahkan fokus ke slide/bentuk/catatan/tautan/hasil cari. */
+  gotoTarget(t: PptxNavTarget): NavEvent {
+    const fail = (): NavEvent => ({ target: t, ok: false });
+    if (!this.deck) return fail();
+    const n = this.slides.length;
+    const toSlide = (i: number): boolean => { if (!Number.isInteger(i) || i < 0 || i >= n) return false; this.goTo(i); return true; };
+    const toShape = (si: number, id?: number, name?: string): SlideShapeData | undefined => {
+      const slide = this.slides[si];
+      if (!slide) return undefined;
+      let sh: SlideShapeData | undefined = id !== undefined && id >= 0 ? P.findShapeById(slide, id) ?? undefined : undefined;
+      if (!sh && name) sh = P.getSlideShapes(slide).find(s => P.getShapeName(s).toLowerCase() === name.toLowerCase()) ?? P.getSlideShapes(slide).find(s => P.getShapeName(s).toLowerCase().includes(name.toLowerCase()));
+      return sh;
+    };
+    const focus = (si: number, sh?: SlideShapeData): boolean => {
+      if (!toSlide(si)) return false;
+      if (sh) { const top = topShapes(this.slide!).find(x => x === sh || (P.getShapeKind(x) === "group" && P.getGroupChildren(x).includes(sh))); if (top && this.ctx.domOf.has(top)) this.select([top]); }
+      else this.select([]);
+      return true;
+    };
+    switch (t.kind) {
+      case "slide": return toSlide(t.index) ? { target: t, ok: true, label: `${t.index + 1}/${n}` } : fail();
+      case "first": return toSlide(0) ? { target: t, ok: true, label: `1/${n}` } : fail();
+      case "last": return toSlide(n - 1) ? { target: t, ok: true, label: `${n}/${n}` } : fail();
+      case "next": return toSlide(Math.min(n - 1, this.slideIdx + 1)) ? { target: t, ok: true, label: `${this.slideIdx + 1}/${n}` } : fail();
+      case "prev": return toSlide(Math.max(0, this.slideIdx - 1)) ? { target: t, ok: true, label: `${this.slideIdx + 1}/${n}` } : fail();
+      case "shape": {
+        const si = t.slide ?? this.slideIdx;
+        const sh = toShape(si, t.id, t.name);
+        return sh && focus(si, sh) ? { target: t, ok: true, label: `${si + 1}/${n} · ${P.getShapeName(sh)}` } : fail();
+      }
+      case "notes": { const si = t.slide ?? this.slideIdx; return focus(si) ? { target: t, ok: true, label: `${si + 1}/${n} · notes` } : fail(); }
+      case "link": {
+        const l = listLinks(this.slides, topShapes).find(x => x.id === t.id);
+        const tg = l?.target as { slide?: number; id?: number } | undefined;
+        if (!l || tg?.slide === undefined) return fail();
+        return focus(tg.slide, toShape(tg.slide, tg.id)) ? { target: t, ok: true, label: l.url } : fail();
+      }
+      case "search": {
+        const r = this.findMatches({ query: t.query, regex: t.regex, caseSensitive: t.caseSensitive, wholeWord: t.wholeWord, select: false });
+        const i = t.occurrence ?? 0;
+        if (!r.count || i < 0 || i >= r.count) return fail();
+        this.fcur.index = i - 1;
+        this.findStep(1);
+        return { target: t, ok: true, label: `${i + 1}/${r.count}` };
+      }
+      case "match": {
+        if (!this.fcur.items[t.index]) return fail();
+        this.fcur.index = t.index - 1;
+        this.findStep(1);
+        return { target: t, ok: true, label: `${t.index + 1}/${this.fcur.items.length}` };
+      }
+    }
+  }
+
+  /**
+   * Ganti berdasarkan jenis, satu entri riwayat. `text`/`notes`/`link`/`name`: `query` teks/regex (cocokkan per run — teks yang terbelah
+   * antar run tidak terganti). `font`/`color`/`fill`/`stroke`: `query` nilai persis, `replacement` kosong = hapus warna.
+   */
+  replaceKinds(spec: ReplaceSpec, onlyCurrent = false): ReplaceReport {
+    const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceKind[];
+    const rep = (counts: Partial<Record<ReplaceKind, number>>) => makeReport(kinds, PPTX_REPLACE_KINDS, counts);
+    if (!this.deck || this.readonly || !spec.query) return { ...rep({}), error: this.readonly ? "readonly" : undefined };
+    this.commitEdit();
+    const supported = kinds.filter(k => PPTX_REPLACE_KINDS.includes(k));
+    const strKinds = supported.filter(k => !isValueKind(k));
+    const valKinds = supported.filter(isValueKind) as ("font" | "color" | "fill" | "stroke")[];
+    const counts: Partial<Record<ReplaceKind, number>> = {};
+    const { re } = compileFind(spec);
+    const sub = (text: string) => (re ? replaceInString(text, re, spec.replacement, !!spec.regex) : { text, count: 0 });
+    if (onlyCurrent && !valKinds.length) {
+      if (!this.fcur.items.length) this.findMatches({ ...spec, kinds: strKinds, select: false });
+      const cur = this.fcur.current ?? this.fcur.items[0];
+      if (!cur || !re) return rep({});
+      const single = new RegExp(re.source, re.flags.replace("g", ""));
+      const seg = cur.unit.text.slice(cur.start, cur.end);
+      const out = cur.unit.text.slice(0, cur.start) + (spec.regex ? seg.replace(single, spec.replacement) : spec.replacement) + cur.unit.text.slice(cur.end);
+      if ((cur.unit.kind === "link" || cur.unit.kind === "name") && !out.trim()) return rep({});
+      cur.unit.set(out);
+      counts[cur.unit.kind] = 1;
+    } else {
+      if (strKinds.length && re) {
+        for (const u of collectUnits(this.slides, strKinds, topShapes)) {
+          const r = sub(u.text);
+          if (!r.count || r.text === u.text) continue;
+          if ((u.kind === "link" || u.kind === "name") && !r.text.trim()) continue;
+          u.set(r.text);
+          counts[u.kind] = (counts[u.kind] ?? 0) + r.count;
+        }
+      }
+      for (const k of valKinds) counts[k] = replaceValues(this.deck.pres, this.slides, topShapes, this.resolveColor, k, spec.query, spec.replacement);
+    }
+    const report = rep(counts);
+    if (report.total) { this.changed("hist.replace"); this.fcur.clear(); this.clearSearch(); this.render(); this.hooks.thumbs("all"); }
+    return report;
+  }
+  countValue(kind: "font" | "color" | "fill" | "stroke", value: string): number {
+    return this.deck ? countValues(this.deck.pres, this.slides, topShapes, this.resolveColor, kind, value) : 0;
+  }
+
+  // ───────── hyperlink ─────────
+
+  linkItems(): LinkItem[] { return this.deck ? listLinks(this.slides, topShapes) : []; }
+  private linkUnit(id: string): PptxUnit | undefined {
+    const units = collectUnits(this.slides, ["link"], topShapes);
+    const i = Number(id.split(":")[2]);
+    const u = units[i];
+    return u && id.startsWith(`${u.slide}:${u.shapeId}:`) ? u : undefined;
+  }
+  updateLink(id: string, patch: { url?: string }): boolean {
+    if (this.readonly || !patch.url) return false;
+    const u = this.linkUnit(id);
+    if (!u) return false;
+    u.set(patch.url);
+    this.changed("hist.link"); this.render(false); this.hooks.thumbs([u.slide]);
+    return true;
+  }
+  removeLinkById(id: string): boolean {
+    if (this.readonly) return false;
+    const u = this.linkUnit(id);
+    if (!u) return false;
+    u.set("");
+    this.changed("hist.link"); this.render(false); this.hooks.thumbs([u.slide]);
+    return true;
+  }
+  /** Ganti URL massal. Mengembalikan jumlah tautan yang berubah. */
+  replaceLinks(spec: { query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean }, replacement: string): number {
+    if (this.readonly) return 0;
+    const r = this.replaceKinds({ ...spec, replacement, kinds: ["link"] });
+    return r.byKind.link ?? 0;
+  }
+
+  // ───────── impor elemen DOM ─────────
+
+  /**
+   * Impor elemen DOM (selector CSS atau Element) ke slide sebagai gambar (`image`), bentuk asli (`shapes`), atau otomatis.
+   * Tanpa `x/y/w/h`, hasil dimuat ke slide dengan margin 5% dan di tengah.
+   */
+  async importDom(source: string | Element, o: DomImportOptions = {}): Promise<DomImportResult> {
+    if (this.readonly) throw new Error("Mode baca-saja: impor DOM tidak diizinkan.");
+    if (!this.deck) throw new Error("Tidak ada presentasi yang terbuka.");
+    const el = typeof source === "string" ? document.querySelector(source) : source;
+    if (!el) throw new Error(`Elemen tidak ditemukan: ${String(source)}`);
+    this.commitEdit();
+    const si = o.slide ?? this.slideIdx;
+    if (si < 0 || si >= this.slides.length) throw new Error(`Slide ${si} tidak ada.`);
+    if (si !== this.slideIdx) this.goTo(si);
+    const slide = this.slide!;
+    const size = P.getSlideSize(this.deck.pres)!;
+    const SW = size.width / PX, SH = size.height / PX;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) throw new Error("Elemen tidak terlihat (ukuran 0).");
+    const bw = o.w ?? SW * 0.9, bh = o.h ?? SH * 0.9;
+    const fit = o.fit !== false;
+    const kx = bw / rect.width, ky = bh / rect.height;
+    const k = fit ? Math.min(kx, ky) : kx;
+    const w = rect.width * k, h = fit ? rect.height * k : rect.height * ky;
+    const x = o.x ?? (SW - w) / 2, y = o.y ?? (SH - h) / 2;
+    const emu = (v: number) => Math.round(v * PX) as P.Emu;
+    const maxShapes = o.maxShapes ?? 250;
+    let mode: "image" | "shapes";
+    const plan = o.mode === "image" ? null : planDom(el, maxShapes);
+    if (o.mode === "image") mode = "image";
+    else if (o.mode === "shapes") mode = "shapes";
+    else mode = plan && !plan.complex && plan.items.length > 0 && plan.items.length <= maxShapes ? "shapes" : "image";
+    const added: SlideShapeData[] = [];
+    const sel = typeof source === "string" ? source : undefined;
+    if (mode === "image") {
+      const png = await elementToPng(el, { pixelRatio: o.pixelRatio, background: o.background });
+      added.push(P.addSlideImage(slide, png.bytes, { x: emu(x), y: emu(y), w: emu(w), h: emu(h), name: o.name ?? (sel ? `DOM ${sel}` : "DOM") }));
+    } else {
+      for (const it of plan!.items) {
+        const ix = x + it.x * k, iy = y + it.y * (fit ? k : ky), iw = Math.max(1, it.w * k), ih = Math.max(1, it.h * (fit ? k : ky));
+        try {
+          if (it.type === "rect") {
+            const s = P.addSlideShape(slide, { preset: it.round ? "roundRect" : "rect", x: emu(ix), y: emu(iy), w: emu(iw), h: emu(ih) });
+            if (it.fill) { P.setShapeFill(s, it.fill as P.Color); if (it.fillAlpha < 1) setFillAlpha(s, it.fillAlpha); } else P.setShapeNoFill(s);
+            if (it.stroke) P.setShapeStroke(s, { color: it.stroke as P.Color, widthEmu: Math.max(3175, Math.round(it.strokeW * k * PX)) }); else P.setShapeNoStroke(s);
+            added.push(s);
+          } else if (it.type === "text") {
+            const s = P.addSlideTextBox(slide, { x: emu(ix), y: emu(iy), w: emu(iw), h: emu(ih), text: it.text });
+            added.push(s);
+            P.setShapeTextFormat(s, { size: Math.max(6, Math.round(it.sizePt * k * 2) / 2), bold: it.bold, italic: it.italic, underline: it.underline, color: it.color as P.Color, ...(it.font ? { font: it.font } : {}) });
+            P.setShapeAlignment(s, it.align);
+          } else if (it.type === "image") {
+            const bytes = await loadImageBytes(it.src, it.svg, iw, ih);
+            if (bytes) added.push(P.addSlideImage(slide, bytes, { x: emu(ix), y: emu(iy), w: emu(iw), h: emu(ih), name: "DOM image" }));
+          } else if (it.type === "table") {
+            const cols = Math.max(...it.rows.map(r => r.length), 1);
+            const rows = it.rows.map(r => Array.from({ length: cols }, (_, c) => r[c] ?? ""));
+            added.push(P.addSlideTable(slide, { x: emu(ix), y: emu(iy), w: emu(iw), h: emu(ih), rows, firstRow: true, bandRow: true }));
+          }
+        } catch (e) { this.hooks.log("error", "log.opFail", { op: "import-dom", msg: e instanceof Error ? e.message : String(e) }); }
+      }
+      if (!added.length) throw new Error("Tidak ada konten yang dapat diimpor dari elemen ini.");
+    }
+    const ids = added.map(s => P.getShapeId(s));
+    let result: SlideShapeData[] = added;
+    if (mode === "shapes" && added.length > 1 && o.group !== false) { try { result = [P.groupShapes(added)]; } catch { /* biarkan tanpa grup */ } }
+    this.changed("hist.import"); this.render(false);
+    this.sel = result.filter(s => this.ctx.domOf.has(s)); this.updateOverlay(); this.emit(); this.hooks.thumbs([this.slideIdx]);
+    return { mode, added: added.length, slide: this.slideIdx, selector: sel, ids };
+  }
+
+  /** Opasitas isi / garis / teks bentuk terpilih (null = opak atau tidak seragam). */
+  alphaInfo(): { fill: number | null; stroke: number | null; text: number | null } {
+    const s = this.sel[0];
+    if (!s) return { fill: null, stroke: null, text: null };
+    return { fill: P.getShapeFillOpacity(s) ?? null, stroke: P.getShapeStrokeOpacity(s) ?? null, text: textAlphaOf(s) };
   }
 
   // ───────── cari & ganti ─────────

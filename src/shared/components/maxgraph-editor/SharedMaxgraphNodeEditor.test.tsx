@@ -407,3 +407,126 @@ describe("SharedMaxgraphNodeEditor — kelompok, label HTML, layar penuh, zoom",
     expect(api.getZoom()).toBeCloseTo(2.25, 1);
   });
 });
+
+
+describe("SharedMaxgraphNodeEditor — navigasi, cari/ganti lintas jenis, warna & tautan", () => {
+  const load = async (api: MaxgraphNodeEditorApi) => { await api.importDrawio(DRAWIO); };
+
+  it("goto: node, edge, halaman, pencarian, titik; salah → ok=false; event navigate", async () => {
+    const { api } = mount();
+    await load(api);
+    const nav = vi.fn();
+    api.on("navigate", nav);
+    expect(await api.goto({ kind: "node", id: "a" })).toMatchObject({ ok: true });
+    expect(api.getSelection().map(c => c.getId())).toEqual(["a"]);
+    expect((await api.goto({ kind: "edge", id: "a" })).ok).toBe(false); // a bukan edge
+    expect((await api.goto({ kind: "edge", id: "e" })).ok).toBe(true);
+    expect((await api.goto({ kind: "node", id: "zzz" })).ok).toBe(false);
+    expect((await api.goto({ kind: "page", page: "Dua" })).ok).toBe(true);
+    expect(api.getInfo().page.name).toBe("Dua");
+    expect((await api.goto({ kind: "page", page: 0 })).ok).toBe(true);
+    expect((await api.goto({ kind: "page", page: 9 })).ok).toBe(false);
+    const r = await api.goto({ kind: "search", query: "B", caseSensitive: true });
+    expect(r.ok).toBe(true);
+    expect(api.getSelection()[0].getId()).toBe("b");
+    expect((await api.goto({ kind: "all" })).ok).toBe(true);
+    expect(nav.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("find/replace: label plain & HTML (tag tidak disentuh), data, regex, satu langkah undo", async () => {
+    const { api } = mount();
+    await load(api);
+    const a = api.graph.getDataModel().getCell("a")!;
+    api.setLabel(a, "Halo <b>dunia</b> halo", { html: true });
+    const f = api.find({ query: "halo", select: false });
+    expect(f.count).toBe(2);
+    expect(f.matches.every(m => m.kind === "text")).toBe(true);
+    const un = vi.fn();
+    api.on("replace", un);
+    const rep = api.replaceAll({ query: "halo", replacement: "hai", kinds: ["text", "formula" as never] });
+    expect(rep.skipped).toEqual(["formula"]);
+    expect(rep.byKind.text).toBe(2);
+    expect(api.getLabel(a)!.value).toBe("hai <b>dunia</b> hai");
+    expect(un).toHaveBeenCalled();
+    api.undo();
+    expect(api.getLabel(a)!.value).toBe("Halo <b>dunia</b> halo");
+    // satu kemunculan saja
+    const one = api.replace({ query: "halo", replacement: "hai", kinds: ["text"] });
+    expect(one.total).toBe(1);
+    expect(api.find({ query: "halo", select: false }).count).toBe(1);
+    // regex dengan grup
+    const rg = api.replaceAll({ query: "(du)nia", regex: true, replacement: "[$1]", kinds: ["text"] });
+    expect(rg.total).toBe(1);
+    expect(api.getLabel(a)!.value).toContain("<b>[du]</b>");
+    // readonly
+  });
+
+  it("replace nilai: fill, stroke, font, warna teks; kosong = hapus; satu undo", async () => {
+    const { api } = mount();
+    await load(api);
+    const g = api.graph;
+    const style = (id: string, k: string) => (g.getCurrentCellStyle(g.getDataModel().getCell(id)!) as Record<string, unknown>)[k];
+    expect(style("a", "fillColor")).toBe("#dae8fc");
+    const r1 = api.replaceAll({ query: "DAE8FC", replacement: "#00ff00", kinds: ["fill"] });
+    expect(r1.byKind.fill).toBe(1);
+    expect(style("a", "fillColor")).toBe("#00ff00");
+    const r2 = api.replaceAll({ query: "#00ff00", replacement: "", kinds: ["fill"] });
+    expect(r2.byKind.fill).toBe(1);
+    // "none" dibaca maxGraph sebagai tanpa isi: nilai gabungan hilang, style milik sel menyimpan "none"
+    expect((g.getDataModel().getCell("a")!.style as Record<string, unknown>).fillColor).toBe("none");
+    expect(style("a", "fillColor")).toBeFalsy();
+    api.undo();
+    expect(style("a", "fillColor")).toBe("#00ff00");
+    g.setCellStyles("strokeColor", "#112233", [g.getDataModel().getCell("b")!]);
+    g.setCellStyles("fontColor", "#445566", [g.getDataModel().getCell("b")!]);
+    g.setCellStyles("fontFamily", "Georgia", [g.getDataModel().getCell("b")!]);
+    expect(api.replaceAll({ query: "112233", replacement: "FF0000", kinds: ["stroke"] }).byKind.stroke).toBe(1);
+    expect(api.replaceAll({ query: "445566", replacement: "", kinds: ["color"] }).byKind.color).toBe(1);
+    expect(style("b", "fontColor")).toBeFalsy();
+    expect(api.replaceAll({ query: "georgia", replacement: "Arial", kinds: ["font"] }).byKind.font).toBe(1);
+    expect(style("b", "fontFamily")).toBe("Arial");
+  });
+
+  it("tautan sel: pasang, daftar, ubah, ganti massal, hapus, undo, round-trip draw.io", async () => {
+    const { api } = mount();
+    await load(api);
+    api.graph.setSelectionCells([api.graph.getDataModel().getCell("a")!, api.graph.getDataModel().getCell("b")!]);
+    const ev = vi.fn();
+    api.on("link", ev);
+    expect(api.links.set("javascript:alert(1)")).toBe(false);
+    expect(api.links.set("example.com/x", { tooltip: "tip" })).toBe(true);
+    const l = api.links.list();
+    expect(l.map(x => x.url)).toEqual(["https://example.com/x", "https://example.com/x"]);
+    expect(l[0]).toMatchObject({ tooltip: "tip", kind: "web" });
+    expect(api.getLabel(api.graph.getDataModel().getCell("a")!)!.value).toBe("A");
+    // draw.io menyimpan sebagai atribut link pada <object>
+    const xml = await api.exportDrawio();
+    expect(xml).toMatch(/<object[^>]*link="https:\/\/example.com\/x"/);
+    expect(api.links.replace("example.com", "example.org")).toBe(2);
+    expect(api.links.update("a", { url: "#b" })).toBe(true);
+    expect(api.links.list().find(x => x.id === "a")!.url).toBe("#b");
+    expect((await api.goto({ kind: "link", id: "a" })).ok).toBe(true);
+    expect(api.links.open("#b")).toBe(true);
+    expect(api.getSelection()[0].getId()).toBe("b");
+    expect(api.links.removeById("a")).toBe(true);
+    expect(api.links.list().map(x => x.id)).toEqual(["b"]);
+    api.undo();
+    expect(api.links.list().map(x => x.id).sort()).toEqual(["a", "b"]);
+    expect(ev).toHaveBeenCalled();
+    // impor ulang mempertahankan tautan
+    await api.importDrawio(xml);
+    expect(api.links.list().length).toBe(2);
+  });
+
+  it("perintah bus + readonly", async () => {
+    const { api, root } = mount();
+    await load(api);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["goto", "find", "replace", "replaceAll", "replace.kinds", "link.list", "link.set", "link.replace"]));
+    expect(((await dispatchCommand(root, "maxgraph-editor", "goto", { kind: "node", id: "b" })) as { ok: boolean }).ok).toBe(true);
+    expect(await dispatchCommand<string[]>(root, "maxgraph-editor", "replace.kinds")).toEqual(expect.arrayContaining(["text", "link", "data", "font", "color", "fill", "stroke"]));
+    const { api: ro } = mount({ readonly: true });
+    await load(ro);
+    expect(ro.replaceAll({ query: "A", replacement: "x" }).error).toBe("readonly");
+    expect(ro.links.set("https://a.b", { ids: ["a"] })).toBe(false);
+  });
+});

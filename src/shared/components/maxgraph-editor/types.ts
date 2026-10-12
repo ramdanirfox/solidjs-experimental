@@ -1,6 +1,8 @@
 import type { Cell, CellStyle, Graph, MaxPopupMenu } from "@maxgraph/core";
 import type { JSX } from "solid-js";
 import type { EditorEventBus } from "../editor-kit/events";
+import type { FindMatch, FindResult, FindSpec, NavEvent, OfficeNavEvents, ReplaceReport, ReplaceSpec } from "../editor-kit/find-replace";
+import type { LinkItem, OfficeLinkEvents } from "../editor-kit/hyperlink";
 import type { DrawioFormat, DrawioImportReport, DrawioPage } from "./drawio";
 import type { LogEntry, LogLevel, MaxgraphLogger } from "./logger";
 import type { ShapeImportReport } from "./shapes";
@@ -71,7 +73,19 @@ export interface MaxgraphContextMenuContext {
 export type MaxgraphExportFormat = "xml" | "svg" | "png" | "drawio" | "drawio-compressed";
 
 /** Event yang dipancarkan editor (lihat `api.events`, prop `onEvent`, dan CustomEvent `maxgraph-editor:<tipe>` pada elemen akar). */
-export interface MaxgraphEventMap {
+/** Target `goto` untuk maxGraph. `id` = id sel; halaman berbasis 0 (indeks) atau id/nama halaman draw.io. */
+export type MaxgraphNavTarget =
+    | { kind: "node"; id: string }
+    | { kind: "edge"; id: string }
+    | { kind: "cell"; id: string }
+    | { kind: "page"; page: number | string }
+    | { kind: "link"; id: string }
+    | { kind: "search"; query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean; occurrence?: number }
+    | { kind: "match"; index: number }
+    | { kind: "all" }
+    | { kind: "point"; x: number; y: number };
+
+export interface MaxgraphEventMap extends OfficeNavEvents, OfficeLinkEvents {
     ready: { api: MaxgraphNodeEditorApi };
     /** Segera setelah model berubah. */
     "model-change": { changes: number };
@@ -240,6 +254,30 @@ export interface MaxgraphNodeEditorApi {
     inspect(cell?: Cell | null): MaxgraphCellInspection | undefined;
     /** Tampilkan / sembunyikan panel Log/Info/Events. */
     showPanel(panel: "log" | "info" | "events" | null): void;
+
+    // ── navigasi, cari & ganti, tautan ──
+    /** Pindahkan fokus: sel (dipilih & ditengahkan), halaman, hasil pencarian, titik, atau seluruh diagram. */
+    goto(target: MaxgraphNavTarget): NavEvent | Promise<NavEvent>;
+    /** Cari lintas jenis: `text` (label), `link` (URL tautan sel), `data` (atribut XML kustom). */
+    find(spec: FindSpec): FindResult;
+    findNext(): FindMatch | undefined;
+    findPrev(): FindMatch | undefined;
+    findClear(): void;
+    /** Ganti hasil aktif (atau pertama). Jenis nilai (`font`/`color`/`fill`/`stroke`) selalu mengganti semua. */
+    replace(spec: ReplaceSpec): ReplaceReport;
+    /** Ganti semua, per jenis: `text`, `link`, `data`, `font`, `color`, `fill`, `stroke`. Satu langkah undo. */
+    replaceAll(spec: ReplaceSpec): ReplaceReport;
+    replaceKinds(): string[];
+    readonly links: {
+        list(): LinkItem[];
+        /** Pasang tautan pada sel (default: seleksi). `url` kosong/null = hapus. */
+        set(url: string | null, opts?: { ids?: string[]; tooltip?: string }): boolean;
+        remove(opts?: { ids?: string[] }): boolean;
+        update(id: string, patch: { url?: string; tooltip?: string }): boolean;
+        removeById(id: string): boolean;
+        replace(from: string, to: string, opts?: { regex?: boolean; caseSensitive?: boolean }): number;
+        open(urlOrId: string): boolean;
+    };
 }
 
 export interface SharedMaxgraphNodeEditorProps {

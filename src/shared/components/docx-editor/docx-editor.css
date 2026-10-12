@@ -233,3 +233,7 @@ textarea.dxe-txt { height: auto; padding: 6px; font-family: ui-monospace, Consol
 /* penggaris (RulerKit) */
 .dxe-rkframe { flex: 1; min-height: 0; }
 .dxe-rkframe > .rk-body > .dxe-host { flex: 1 1 auto; }
+
+/* pemilih warna bersama (editor-kit/ColorField) */
+.dxe-cf .ck-btn { height: 28px; min-width: 30px; border: 1px solid var(--dx-border); border-radius: 6px; background: var(--dx-panel); color: var(--dx-fg, inherit); }
+.dxe-cf .ck-btn:hover:not(:disabled) { background: var(--dx-hover, rgba(127, 127, 127, 0.18)); }

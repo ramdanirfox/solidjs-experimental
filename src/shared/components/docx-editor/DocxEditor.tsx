@@ -5,7 +5,7 @@
  */
 import { For, Show, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { DocxBook, DocxLoadError, PAGE_SIZES } from "./docx-model";
-import { DocxView, type ImgSelInfo, type PainterInfo, type SelInfo } from "./docx-view";
+import { DocxView, type DocxNavTarget, type ImgSelInfo, type PainterInfo, type SelInfo } from "./docx-view";
 import { createSampleBook } from "./docx-sample";
 import { exportHtml, exportText } from "./docx-export";
 import { hexDump, isCfb, listOle, readCfb, readVba, streamBytes, vbaPart, type CfbInfo, type OleObject, type VbaInfo } from "./docx-ole";
@@ -16,20 +16,35 @@ import { formatBytes } from "./docx-util";
 import { oleBytes, oleSize } from "./docx-ole-edit";
 import { createEventBus, type EditorEventBus } from "../editor-kit/events";
 import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
-import { RulerKit, type RulerEventMap, type RulerRegion } from "../editor-kit/ruler-kit";
+import { RulerKit, type RulerEventMap, type RulerRegion, type TabType } from "../editor-kit/ruler-kit";
+import { ColorField, type ColorValue } from "../editor-kit/ColorField";
+import { LinkPanel, LINK_LABELS_EN, LINK_LABELS_ID } from "../editor-kit/LinkPanel";
+import type { FindMatch, FindResult, FindSpec, NavEvent, OfficeNavEvents, ReplaceReport, ReplaceSpec } from "../editor-kit/find-replace";
+import { normalizeLink, openExternal, type LinkItem, type OfficeLinkEvents } from "../editor-kit/hyperlink";
+import { compositeOver } from "../editor-kit/color-util";
+import { unitToPx, pxToUnit } from "../editor-kit/ruler-core";
+import type { TocOptions } from "./docx-toc";
+import { DOCX_REPLACE_KINDS } from "./docx-nav";
 import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
 import { prepareOle } from "../office-shared/ole-embed";
 import { canPreviewOle, prepareOlePreview, type OlePreviewData } from "../office-shared/ole-preview";
 import "./docx-editor.css";
 
 /** Event yang dipancarkan editor DOCX (bus: `api.events`; DOM: CustomEvent `docx-editor:<tipe>` pada elemen akar). */
-export interface DocxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, RulerEventMap {
+export interface DocxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, RulerEventMap {
   /** Editor siap dipakai (dokumen mungkin belum selesai dimuat → tunggu `load`). */
   ready: { api: DocxEditorApi };
   selection: { info: SelInfo };
   pages: { count: number };
-  find: { query: string; count: number };
+  /** Daftar isi disisipkan/diperbarui/dihapus. */
+  toc: { action: "insert" | "update" | "remove"; count: number };
+  /** Tab stop paragraf aktif berubah (posisi dalam pt dari margin kiri). */
+  tabs: { positions: number[] };
 }
+
+/** Tab stop untuk API: posisi dalam pt dari margin kiri. */
+export interface DocxTabStop { pos: number; align: "left" | "center" | "right" | "decimal" | "bar"; leader?: "none" | "dot" | "hyphen" | "underscore" | string }
+export interface DocxTocInfo { index: number; instruction: string; entries: number; options: TocOptions }
 
 /** Handle imperatif yang diberikan lewat `onReady`. */
 export interface DocxEditorApi {
@@ -51,6 +66,44 @@ export interface DocxEditorApi {
   redo(): void;
   setZoom(z: number): void;
   getZoom(): number;
+  /** Pindahkan fokus/viewport: halaman, paragraf, judul, bookmark, tabel/sel, daftar isi, tautan, atau hasil pencarian. */
+  goto(target: DocxNavTarget): NavEvent;
+  /** Cari lintas jenis (`text`, `headerFooter`, `link`). Hasil pertama disorot kecuali `select: false`. */
+  find(spec: FindSpec): FindResult;
+  findNext(): FindMatch | undefined;
+  findPrev(): FindMatch | undefined;
+  findClear(): void;
+  /** Ganti hasil aktif (atau pertama). Jenis nilai (`font`/`color`/`fill`) selalu mengganti semua. */
+  replace(spec: ReplaceSpec): ReplaceReport;
+  /** Ganti semua, per jenis: `text`, `headerFooter`, `link`, `font`, `color`, `fill`. */
+  replaceAll(spec: ReplaceSpec): ReplaceReport;
+  /** Jenis penggantian yang didukung editor ini. */
+  replaceKinds(): string[];
+  readonly links: {
+    list(): LinkItem[];
+    /** Pasang/ubah tautan pada seleksi. */
+    set(url: string, opts?: { tooltip?: string }): boolean;
+    /** Hapus tautan pada seleksi. */
+    remove(): boolean;
+    update(id: string, patch: { url?: string; tooltip?: string }): boolean;
+    removeById(id: string): boolean;
+    /** Ganti URL secara massal; mengembalikan jumlah tautan yang berubah. */
+    replace(from: string, to: string, opts?: { regex?: boolean; caseSensitive?: boolean }): number;
+    open(url: string): boolean;
+  };
+  readonly toc: {
+    list(): DocxTocInfo[];
+    insert(opts?: Partial<TocOptions>): boolean;
+    update(index?: number): number;
+    remove(index?: number): number;
+  };
+  readonly tabs: {
+    get(): DocxTabStop[];
+    set(list: DocxTabStop[]): void;
+    add(posPt: number, align?: DocxTabStop["align"], leader?: string): void;
+    remove(posPt: number): void;
+    clear(): void;
+  };
   /** Penggaris, garis bantu (alignment), dan alat ukur. */
   readonly ruler: RulerKit;
   readonly ole: {
@@ -155,7 +208,7 @@ const Ic = (p: { n: string; size?: number }) => (
 );
 
 type Tab = "home" | "insert" | "table" | "picture" | "layout" | "view";
-type Panel = "find" | "info" | "log" | "ole" | "history" | "outline" | null;
+type Panel = "find" | "info" | "log" | "ole" | "history" | "outline" | "links" | null;
 type MenuId = "export" | "history" | "table" | "borders" | "symbols" | "case" | "lang" | "ctx-text" | "ctx-table" | "ctx-image";
 
 const FONTS = ["Calibri", "Cambria", "Arial", "Times New Roman", "Courier New", "Georgia", "Verdana", "Tahoma", "Segoe UI", "Consolas", "Garamond", "Trebuchet MS", "Comic Sans MS"];
@@ -230,7 +283,7 @@ export default function DocxEditor(props: DocxEditorProps) {
   const [painter, setPainter] = createSignal<PainterInfo | null>(null);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
   const [menu, setMenu] = createSignal<{ id: MenuId; x: number; y: number } | null>(null);
-  const [dialog, setDialog] = createSignal<"debug" | "link" | "ole" | null>(null);
+  const [dialog, setDialog] = createSignal<"debug" | "link" | "ole" | "tabs" | null>(null);
   const [oleView, setOleView] = createSignal<{ relId: string; data: OlePreviewData; url?: string } | null>(null);
   const [dragOver, setDragOver] = createSignal(false);
   const [lockRatio, setLockRatio] = createSignal(true);
@@ -263,6 +316,14 @@ export default function DocxEditor(props: DocxEditorProps) {
     clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => setToastMsg(null), 2600);
   };
+  const toastRaw = (msg: string) => { setToastMsg(msg); clearTimeout(toastTimer); toastTimer = window.setTimeout(() => setToastMsg(null), 2600); };
+  const cfLabels = () => ({ opacity: t("color.opacity"), none: t("color.none"), hex: t("color.hex"), custom: t("color.custom") });
+  /** DOCX tidak punya kanal alfa untuk warna teks/shading: komposit di atas putih. */
+  const flat = (v: ColorValue | null): string | null => (v ? (v.alpha < 1 ? compositeOver(v.hex, v.alpha) : v.hex) : null);
+  const [tocTo, setTocTo] = createSignal(3);
+  const [tocPages, setTocPages] = createSignal(true);
+  const [tocLinks, setTocLinks] = createSignal(true);
+  const [tabDraft, setTabDraft] = createSignal<{ pos: string; align: TabType; leader: string }>({ pos: "", align: "left", leader: "none" });
   const bump = () => setVer(v => v + 1);
   const modified = () => { ver(); return !!book()?.modified; };
   const canUndo = () => { ver(); return !!book()?.canUndo; };
@@ -347,11 +408,12 @@ export default function DocxEditor(props: DocxEditorProps) {
       props.onChange?.(info);
       emit("change", info);
       if (label === "hist.undo" || label === "hist.redo") emit("history", { action: label === "hist.undo" ? "undo" : "redo" });
+      if (label === "hist.tabs") { syncTabs(); emit("tabs", { positions: (view?.tabStopsAtCaret() ?? []).map(x => x.pos / 20) }); }
       ruler?.refresh();
       if (panel() === "find" && fq()) scheduleSearch();
       if (panel() === "outline") bump();
     },
-    selection: (s: SelInfo) => { setSel(s); if (s.image) setLockRatio(s.image.lock); emit("selection", { info: s }); },
+    selection: (s: SelInfo) => { setSel(s); if (s.image) setLockRatio(s.image.lock); emit("selection", { info: s }); syncTabs(); },
     pages: (n: number) => { setPages(n); ruler?.refresh(); emit("pages", { count: n }); },
     painter: (p: PainterInfo | null) => setPainter(p),
     ole: (relId: string) => {
@@ -436,6 +498,13 @@ export default function DocxEditor(props: DocxEditorProps) {
 
   // ───────── penggaris ─────────
 
+  const toTabType = (v: string): TabType => (v === "center" ? "center" : v === "right" || v === "end" ? "right" : v === "decimal" ? "decimal" : v === "bar" ? "bar" : "left");
+  const syncTabs = () => {
+    if (!ruler || !ruler.isTabsEnabled()) return;
+    const st = view?.tabStopsAtCaret() ?? [];
+    ruler.setTabs(st.map(x => ({ id: String(x.pos), pos: x.pos / 15, type: toTabType(x.val), leader: x.leader })));
+  };
+
   const rulerGeometry = () => {
     const s = view?.zoom ?? 1;
     const body = frameEl.querySelector<HTMLElement>(":scope > .rk-body");
@@ -458,8 +527,20 @@ export default function DocxEditor(props: DocxEditorProps) {
     else if (type === "ruler:unit") setRulerUnit((payload as RulerEventMap["ruler:unit"]).unit);
     else if (type === "ruler:measure-mode") { setMeasuring((payload as RulerEventMap["ruler:measure-mode"]).active); if (!(payload as RulerEventMap["ruler:measure-mode"]).active) setMeasureText(""); }
     else if (type === "ruler:measure") setMeasureText((payload as RulerEventMap["ruler:measure"]).text);
+    else if (type === "ruler:tab-add") { const p = payload as RulerEventMap["ruler:tab-add"]; view?.addTabStop(Math.round(p.pos * 15), p.type); }
+    else if (type === "ruler:tab-move") { const p = payload as RulerEventMap["ruler:tab-move"]; view?.moveTabStop(Number(p.id), Math.round(p.pos * 15)); }
+    else if (type === "ruler:tab-remove") { const p = payload as RulerEventMap["ruler:tab-remove"]; view?.removeTabStop(Number(p.id)); }
+    else if (type === "ruler:tab-edit") { setDialog("tabs"); }
     if (type === "ruler:guide-add" || type === "ruler:guide-remove") setGuideCount(ruler?.getGuides().length ?? 0);
     emit(type, payload as never);
+  };
+
+  const doReplace = (spec: ReplaceSpec, onlyCurrent: boolean): ReplaceReport => {
+    const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceSpec["kinds"];
+    const r = view?.replaceKinds({ ...spec, kinds }, onlyCurrent) ?? { total: 0, byKind: {}, skipped: [], error: "no-view" };
+    emit("replace", { ...r, query: spec.query, replacement: spec.replacement, kinds: kinds ?? ["text"] });
+    if (r.total) { toast("toast.replaced", { n: r.total }); if (panel() === "find" && fq()) runSearch(); }
+    return r;
   };
 
   const buildApi = (): DocxEditorApi => ({
@@ -475,6 +556,60 @@ export default function DocxEditor(props: DocxEditorProps) {
     getText: () => book()?.plain() ?? "",
     undo: () => view?.undo(), redo: () => view?.redo(),
     setZoom: z => setZoom(z), getZoom: () => zoom(),
+    goto: target => { const r = view?.gotoTarget(target) ?? { target, ok: false }; emit("navigate", r); return r; },
+    find: spec => {
+      const r = view?.findMatches(spec) ?? { query: spec.query, count: 0, matches: [], current: -1 };
+      emit("find", { query: spec.query, count: r.count });
+      if (r.current >= 0) emit("navigate", { target: r.matches[r.current].target, ok: true, label: `${r.current + 1}/${r.count}` });
+      return r;
+    },
+    findNext: () => { const m = view?.findStep(1); if (m) emit("navigate", { target: m.target, ok: true, label: `${(view?.findIndex ?? 0) + 1}` }); return m; },
+    findPrev: () => { const m = view?.findStep(-1); if (m) emit("navigate", { target: m.target, ok: true, label: `${(view?.findIndex ?? 0) + 1}` }); return m; },
+    findClear: () => view?.findClear(),
+    replace: spec => doReplace(spec, true),
+    replaceAll: spec => doReplace(spec, false),
+    replaceKinds: () => [...DOCX_REPLACE_KINDS],
+    links: {
+      list: () => view?.linkItems() ?? [],
+      set: (url, opts) => {
+        const n = normalizeLink(url);
+        if (!n || !view || ro() || !view.spans().length) return false;
+        view.setLink(n, opts?.tooltip);
+        emit("link", { action: "set", count: 1, url: n });
+        return true;
+      },
+      remove: () => { if (!view || ro() || !view.spans().length) return false; view.setLink(null); emit("link", { action: "remove", count: 1 }); return true; },
+      update: (id, patch) => {
+        const n = patch.url !== undefined ? normalizeLink(patch.url) : undefined;
+        if (patch.url !== undefined && !n) return false;
+        const ok = !!view?.updateLink(id, { url: n ?? undefined, tooltip: patch.tooltip });
+        if (ok) emit("link", { action: "update", count: 1, url: n ?? undefined });
+        return ok;
+      },
+      removeById: id => { const ok = !!view?.removeLinkById(id); if (ok) emit("link", { action: "remove", count: 1 }); return ok; },
+      replace: (from, to, opts) => {
+        const n = view?.replaceLinks({ query: from, regex: opts?.regex, caseSensitive: opts?.caseSensitive }, to) ?? 0;
+        if (n) emit("link", { action: "replace", count: n, url: to });
+        return n;
+      },
+      open: url => {
+        if (url.startsWith("#")) { const r = view?.gotoTarget({ kind: "bookmark", name: url.slice(1) }); return !!r?.ok; }
+        return openExternal(url);
+      },
+    },
+    toc: {
+      list: () => (view?.tocList() ?? []).map(f => ({ index: f.index, instruction: f.instr, entries: f.entries, options: f.options })),
+      insert: opts => { const ok = !!view?.insertToc(opts); if (ok) emit("toc", { action: "insert", count: 1 }); return ok; },
+      update: index => { const n = view?.updateToc(index) ?? 0; if (n) { emit("toc", { action: "update", count: n }); toast("toast.tocUpdated", { n }); } return n; },
+      remove: index => { const n = view?.removeToc(index) ?? 0; if (n) emit("toc", { action: "remove", count: n }); return n; },
+    },
+    tabs: {
+      get: () => (view?.tabStopsAtCaret() ?? []).map(x => ({ pos: x.pos / 20, align: toTabType(x.val), leader: x.leader })),
+      set: list => view?.setTabStops(list.map(x => ({ pos: x.pos * 20, val: x.align, leader: x.leader && x.leader !== "none" ? x.leader : undefined }))),
+      add: (posPt, align = "left", leader) => view?.addTabStop(posPt * 20, align, leader && leader !== "none" ? leader : undefined),
+      remove: posPt => view?.removeTabStop(posPt * 20),
+      clear: () => view?.clearTabStops(),
+    },
     ruler: ruler!,
     ole: {
       list: () => oleList(), insert: oleInsert, update: oleUpdate,
@@ -492,6 +627,14 @@ export default function DocxEditor(props: DocxEditorProps) {
       undo: () => a.undo(), redo: () => a.redo(), setZoom: (z: number) => a.setZoom(z), getZoom: () => a.getZoom(),
       load: (i: Uint8Array | ArrayBuffer | File, n?: string) => a.load(i, n), getBytes: () => a.getBytes(), getText: () => a.getText(),
       save: () => saveDocx(), setPanel: (p: Panel) => setPanel(p), setLocale: (l: Lang) => setLang(l),
+      goto: (t: DocxNavTarget) => a.goto(t), find: (s: FindSpec) => a.find(s), findNext: () => a.findNext(), findPrev: () => a.findPrev(), findClear: () => a.findClear(),
+      replace: (s: ReplaceSpec) => a.replace(s), replaceAll: (s: ReplaceSpec) => a.replaceAll(s), "replace.kinds": () => a.replaceKinds(),
+      "link.list": () => a.links.list(), "link.set": (u: string, o?: { tooltip?: string }) => a.links.set(u, o), "link.remove": () => a.links.remove(),
+      "link.update": (id: string, p: { url?: string; tooltip?: string }) => a.links.update(id, p), "link.removeById": (id: string) => a.links.removeById(id),
+      "link.replace": (f: string, to: string, o?: { regex?: boolean; caseSensitive?: boolean }) => a.links.replace(f, to, o), "link.open": (u: string) => a.links.open(u),
+      "toc.list": () => a.toc.list(), "toc.insert": (o?: Partial<TocOptions>) => a.toc.insert(o), "toc.update": (i?: number) => a.toc.update(i), "toc.remove": (i?: number) => a.toc.remove(i),
+      "tabs.get": () => a.tabs.get(), "tabs.set": (l: DocxTabStop[]) => a.tabs.set(l), "tabs.add": (p: number, al?: DocxTabStop["align"], le?: string) => a.tabs.add(p, al, le),
+      "tabs.remove": (p: number) => a.tabs.remove(p), "tabs.clear": () => a.tabs.clear(),
       "ole.list": () => a.ole.list(), "ole.insert": (f: FileInput, o?: OleInsertOptions) => a.ole.insert(f, o),
       "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o),
       "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
@@ -507,9 +650,11 @@ export default function DocxEditor(props: DocxEditorProps) {
   onMount(async () => {
     view = new DocxView(hostEl, hooks());
     view.readonly = ro();
+    view.tocText = { title: t("toc.title"), empty: t("toc.empty") };
     ruler = new RulerKit({
       frame: frameEl, unit: rulerUnit(), visible: rulerOn(), scrollEl: hostEl, getGeometry: rulerGeometry, getRegions: rulerRegions, emit: onRulerEvent,
-      labels: { corner: t("ruler.corner"), removeGuide: t("ruler.removeGuide") },
+      labels: { corner: t("ruler.corner"), removeGuide: t("ruler.removeGuide"), tabType: t("ruler.tabType"), tabs: { left: t("tabs.left"), center: t("tabs.center"), right: t("tabs.right"), decimal: t("tabs.decimal"), bar: t("tabs.bar") } },
+      tabs: true,
     });
     // gambar mengambang yang diseret menempel ke garis bantu penggaris (tepi kiri/tengah/kanan dan atas/tengah/bawah)
     view.snapGuides = r => {
@@ -544,6 +689,7 @@ export default function DocxEditor(props: DocxEditorProps) {
     } catch (e) { setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: "fetch", name: props.src ?? "" }); setBusy(null); }
   });
 
+  createEffect(() => { if (view) view.tocText = { title: t("toc.title"), empty: t("toc.empty") }; });
   createEffect(on(ro, v => { view?.setReadonly(v); }));
   createEffect(on(marks, v => view?.setMarks(v), { defer: true }));
   createEffect(on(revs, v => view?.setRevisions(v), { defer: true }));
@@ -721,6 +867,16 @@ export default function DocxEditor(props: DocxEditorProps) {
   const logs = createMemo(() => { logVer(); const b = book(); return b ? [...b.log] : []; });
   const counts = createMemo(() => { const l = logs(); return { info: l.filter(x => x.level === "info").length, warn: l.filter(x => x.level === "warn").length, error: l.filter(x => x.level === "error").length }; });
   const outline = createMemo(() => { ver(); return panel() === "outline" && view ? view.outline() : []; });
+  const tocCount = createMemo(() => { ver(); return view?.tocList().length ?? 0; });
+  const linkItems = createMemo<LinkItem[]>(() => { ver(); return panel() === "links" && view ? view.linkItems() : []; });
+  const tabUnit = () => rulerUnit();
+  const tabsHere = createMemo(() => { sel(); ver(); return view?.tabStopsAtCaret() ?? []; });
+  const addTabFromDialog = () => {
+    const d = tabDraft();
+    const v = parseFloat(d.pos);
+    if (!(v > 0)) return;
+    view?.addTabStop(Math.round(unitToPx(v, tabUnit()) * 15), d.align, d.leader !== "none" ? d.leader : undefined);
+  };
   const doc = createMemo(() => {
     ver();
     const b = book();
@@ -773,7 +929,7 @@ export default function DocxEditor(props: DocxEditorProps) {
         <Btn title={t("b.sub")} disabled={!edit()} on={S()?.sub} onClick={() => view?.setVert("subscript")}><span>x<sub>2</sub></span></Btn>
         <Btn title={t("b.sup")} disabled={!edit()} on={S()?.sup} onClick={() => view?.setVert("superscript")}><span>x<sup>2</sup></span></Btn>
         <Btn title={t("b.case")} disabled={!edit()} menu onClick={e => openMenu("case", e)}><span>Aa</span></Btn>
-        <label class="dxe-lbl" title={t("b.color")}>A<input type="color" class="dxe-color" disabled={!edit()} value={S()?.color ? `#${S()!.color}` : "#000000"} onChange={e => view?.setColor(e.currentTarget.value)} /></label>
+        <ColorField class="dxe-cf" title={t("b.color")} disabled={!edit()} value={S()?.color ?? null} fallback="#000000" labels={cfLabels()} note={t("color.noAlphaNote")} onChange={v => view?.setColor(flat(v))}><b>A</b></ColorField>
         <select class="dxe-sel" style={{ width: "54px" }} disabled={!edit()} title={t("b.highlight")} onChange={e => { const v = e.currentTarget.value; if (v) view?.setHighlight(v === "none" ? null : v); e.currentTarget.value = ""; }}>
           <option value="">🖍</option><option value="none">∅</option><For each={HIGHLIGHTS}>{([n, c]) => <option value={n} style={{ background: c }}>{n}</option>}</For>
         </select>
@@ -793,7 +949,8 @@ export default function DocxEditor(props: DocxEditorProps) {
         </select>
         <Btn title={t("b.spaceBefore")} disabled={!edit()} onClick={() => view?.setParaSpacing(S()?.spaceBefore ? null : 12, null)}><small>↥12</small></Btn>
         <Btn title={t("b.spaceAfter")} disabled={!edit()} onClick={() => view?.setParaSpacing(null, S()?.spaceAfter ? null : 8)}><small>↧8</small></Btn>
-        <label class="dxe-lbl" title={t("b.shading")}>▨<input type="color" class="dxe-color" disabled={!edit()} value="#ffffcc" onChange={e => view?.setShading(e.currentTarget.value)} /></label>
+        <Btn label={t("b.tabs")} title={t("tabs.hint")} disabled={!edit() || !S()?.has} onClick={() => setDialog("tabs")} />
+        <ColorField class="dxe-cf" title={t("b.shading")} disabled={!edit()} fallback="#FFFFCC" labels={cfLabels()} note={t("color.noAlphaNote")} onChange={v => view?.setShading(flat(v))}>▨</ColorField>
       </Grp>
       <Grp cap={t("g.styles")}>
         <select class="dxe-sel" style={{ width: "150px" }} disabled={!edit()} value={S()?.styleId ?? ""} onChange={e => view?.setStyle(e.currentTarget.value || null)} title={t("b.style")}>
@@ -813,6 +970,15 @@ export default function DocxEditor(props: DocxEditorProps) {
         <Btn icon="pagebreak" label={t("b.pageBreak")} title={t("b.pageBreak") + " (Ctrl+Enter)"} disabled={!edit() || !S()?.has} onClick={() => view?.insertPageBreakAtCaret()} />
         <Btn label="Ω" title={t("b.symbol")} disabled={!edit() || !S()?.has} menu onClick={e => openMenu("symbols", e)} />
         <Btn icon="object" label={t("ole.insert")} title={t("ole.insertTip")} disabled={!edit() || !book()} onClick={() => oleInput.click()} />
+      </Grp>
+      <Grp cap={t("g.toc")}>
+        <Btn icon="outline" label={t("toc.insert")} title={t("toc.insertTip")} disabled={!edit() || !S()?.has} onClick={() => api?.toc.insert({ to: tocTo(), pageNumbers: tocPages(), hyperlinks: tocLinks(), title: t("toc.title") })} />
+        <Btn icon="replace" label={t("toc.update")} title={t("toc.updateTip")} disabled={!edit() || !tocCount()} onClick={() => { if (!api?.toc.update()) toast("toast.tocNone"); }} />
+        <Btn icon="trash" title={t("toc.remove")} disabled={!edit() || !tocCount()} onClick={() => api?.toc.remove()} />
+        <span class="dxe-lbl">{t("toc.levels")}</span>
+        <select class="dxe-sel" style={{ width: "44px" }} value={tocTo()} onChange={e => setTocTo(+e.currentTarget.value)}><For each={[1, 2, 3, 4, 5, 6]}>{n => <option value={n} selected={n === tocTo()}>{n}</option>}</For></select>
+        <label class="dxe-chk"><input type="checkbox" checked={tocPages()} onChange={e => setTocPages(e.currentTarget.checked)} />{t("toc.pageNumbers")}</label>
+        <label class="dxe-chk"><input type="checkbox" checked={tocLinks()} onChange={e => setTocLinks(e.currentTarget.checked)} />{t("toc.links")}</label>
       </Grp>
       <Grp cap={t("g.review")}>
         <Btn label={t("b.acceptAll")} disabled={!edit()} onClick={() => { const b = book(); if (!b) return; const n = resolveRevisions(b.body, "accept"); if (n) { b.reindex(); view?.renderAll({ sel: null }); view?.commit("hist.revisions"); } toast("toast.revisions", { n }); }} />
@@ -844,7 +1010,7 @@ export default function DocxEditor(props: DocxEditorProps) {
           <Btn label={t("t.selCol")} disabled={d()} onClick={op("selectCol")} />
         </Grp>
         <Grp cap={t("g.cell")}>
-          <label class="dxe-lbl" title={t("t.shade")}>▨<input type="color" class="dxe-color" disabled={d()} value="#e8eef7" onChange={e => view?.table("shade", e.currentTarget.value)} /></label>
+          <ColorField class="dxe-cf" title={t("t.shade")} disabled={d()} fallback="#E8EEF7" labels={cfLabels()} note={t("color.noAlphaNote")} onChange={v => view?.table("shade", flat(v))}>▨</ColorField>
           <Btn label="∅" title={t("t.noShade")} disabled={d()} onClick={op("shade", null)} />
           <Btn label="⤒" title={t("t.vTop")} disabled={d()} onClick={op("valign", "top")} />
           <Btn label="↕" title={t("t.vMid")} disabled={d()} onClick={op("valign", "center")} />
@@ -856,7 +1022,7 @@ export default function DocxEditor(props: DocxEditorProps) {
           <select class="dxe-sel" disabled={d()} title={t("t.borderWidth")} value={borderSpec().sz} onChange={e => setBorderSpec(s => ({ ...s, sz: +e.currentTarget.value }))}>
             <For each={[2, 4, 8, 12, 18, 24]}>{s => <option value={s}>{s / 8} pt</option>}</For>
           </select>
-          <input type="color" class="dxe-color" disabled={d()} title={t("t.borderColor")} value={borderSpec().color} onChange={e => setBorderSpec(s => ({ ...s, color: e.currentTarget.value }))} />
+          <ColorField class="dxe-cf" title={t("t.borderColor")} disabled={d()} value={borderSpec().color} allowAlpha={false} allowNone={false} labels={cfLabels()} onChange={v => v && setBorderSpec(s => ({ ...s, color: v.hex }))}>▢</ColorField>
         </Grp>
         <Grp cap={t("g.table")}>
           <select class="dxe-sel" style={{ width: "130px" }} disabled={d()} title={t("t.style")} onChange={e => view?.table("style", e.currentTarget.value || null)}>
@@ -961,6 +1127,7 @@ export default function DocxEditor(props: DocxEditorProps) {
         <label class="dxe-chk"><input type="checkbox" checked={revs()} onChange={e => setRevs(e.currentTarget.checked)} />{t("v.revisions")}</label>
         <label class="dxe-chk"><input type="checkbox" checked={dark()} onChange={e => setDark(e.currentTarget.checked)} />{t("v.dark")}</label>
         <Btn icon="outline" label={t("v.outline")} on={panel() === "outline"} onClick={() => setPanel(p => (p === "outline" ? null : "outline"))} />
+        <Btn icon="link" label={t("b.links")} on={panel() === "links"} onClick={() => setPanel(p => (p === "links" ? null : "links"))} />
       </Grp>
       <Grp cap={t("g.ruler")}>
         <label class="dxe-chk" title={t("ruler.showTip")}><input type="checkbox" checked={rulerOn()} onChange={e => ruler?.setVisible(e.currentTarget.checked)} />{t("ruler.show")}</label>
@@ -1060,6 +1227,12 @@ export default function DocxEditor(props: DocxEditorProps) {
             )}</For>
           </div>
           <Show when={(fRes()?.hits.length ?? 0) > fLimit()}><Btn label={t("find.more", { n: (fRes()?.hits.length ?? 0) - fLimit() })} onClick={() => setFLimit(l => l + 500)} /></Show>
+        </Show>
+
+        <Show when={panel() === "links"}>
+          <LinkPanel items={linkItems()} readonly={ro()} tooltips labels={lang() === "id" ? LINK_LABELS_ID : LINK_LABELS_EN}
+            onGoto={i => api?.goto(i.target)} onUpdate={(i, p) => api?.links.update(i.id, p)} onRemove={i => api?.links.removeById(i.id)}
+            onReplace={(from, to) => api?.links.replace(from, to) ?? 0} onOpen={i => api?.links.open(i.url)} onNotify={toastRaw} />
         </Show>
 
         <Show when={panel() === "outline"}>
@@ -1428,6 +1601,37 @@ export default function DocxEditor(props: DocxEditorProps) {
             <div class="dxe-modal-h"><Ic n="bug" /> {t("dlg.debug")}<span style={{ flex: 1 }} /><Btn icon="x" onClick={() => setDialog(null)} /></div>
             <div class="dxe-modal-b"><div class="dxe-note">{t("dlg.debugHelp")}</div><textarea class="dxe-txt" readOnly rows={22} style={{ "min-height": "320px" }} value={dbg()} /></div>
             <div class="dxe-modal-f"><Btn label={t("b.refresh")} onClick={openDebug} /><Btn label={t("b.copy")} onClick={() => { void navigator.clipboard?.writeText(dbg()); toast("toast.copied"); }} /><Btn label={t("b.download")} onClick={() => downloadBlob("docx-debug.json", new Blob([dbg()], { type: "application/json" }))} /><Btn primary label={t("b.close")} onClick={() => setDialog(null)} /></div>
+          </div>
+        </div>
+      </Show>
+      <Show when={dialog() === "tabs"}>
+        <div class="dxe-modal-bg" onClick={e => { if (e.target === e.currentTarget) setDialog(null); }}>
+          <div class="dxe-modal sm">
+            <div class="dxe-modal-h">{t("tabs.title")}<span style={{ flex: 1 }} /><Btn icon="x" onClick={() => setDialog(null)} /></div>
+            <div class="dxe-modal-b">
+              <div class="dxe-note">{t("tabs.hint")}</div>
+              <Show when={tabsHere().length} fallback={<div class="dxe-note">{t("tabs.empty")}</div>}>
+                <div class="dxe-list"><For each={tabsHere()}>{x => (
+                  <div class="dxe-row" style={{ cursor: "default" }}>
+                    <span class="lv">{pxToUnit(x.pos / 15, tabUnit()).toFixed(2)} {tabUnit()}</span>
+                    <span style={{ flex: 1 }}>{t("tabs." + toTabType(x.val))}{x.leader && x.leader !== "none" ? ` · ${t("tabs.leader." + x.leader)}` : ""}</span>
+                    <Btn label={t("tabs.clearOne")} disabled={ro()} onClick={() => view?.removeTabStop(x.pos)} />
+                  </div>
+                )}</For></div>
+              </Show>
+              <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-wrap": "wrap", "margin-top": "8px" }}>
+                <label class="dxe-field" style={{ width: "92px" }}><span>{t("tabs.pos")} ({tabUnit()})</span><input class="dxe-txt" type="number" min="0" step="0.1" value={tabDraft().pos} onInput={e => setTabDraft(d => ({ ...d, pos: e.currentTarget.value }))} /></label>
+                <label class="dxe-field"><span>{t("tabs.align")}</span>
+                  <select class="dxe-sel" value={tabDraft().align} onChange={e => setTabDraft(d => ({ ...d, align: e.currentTarget.value as TabType }))}><For each={["left", "center", "right", "decimal", "bar"]}>{k => <option value={k}>{t("tabs." + k)}</option>}</For></select></label>
+                <label class="dxe-field"><span>{t("tabs.leader")}</span>
+                  <select class="dxe-sel" value={tabDraft().leader} onChange={e => setTabDraft(d => ({ ...d, leader: e.currentTarget.value }))}><For each={["none", "dot", "hyphen", "underscore"]}>{k => <option value={k}>{t("tabs.leader." + k)}</option>}</For></select></label>
+                <Btn primary label={t("tabs.set")} disabled={ro()} onClick={addTabFromDialog} />
+              </div>
+            </div>
+            <div class="dxe-modal-f">
+              <Btn label={t("tabs.clearAll")} disabled={ro() || !tabsHere().length} onClick={() => view?.clearTabStops()} />
+              <Btn primary label={t("b.close")} onClick={() => setDialog(null)} />
+            </div>
           </div>
         </div>
       </Show>

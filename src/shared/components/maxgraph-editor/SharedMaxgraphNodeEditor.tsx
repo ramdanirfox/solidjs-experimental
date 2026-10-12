@@ -6,6 +6,7 @@ import {
     ConnectionHandler,
     FastOrganicLayout,
     FitPlugin,
+    CellOverlay,
     Graph,
     GraphDataModel,
     HierarchicalLayout,
@@ -27,6 +28,11 @@ import {
 import "@maxgraph/core/css/common.css"; // style yang dibutuhkan RubberBand, handle, dan popup menu
 import "./SharedMaxgraphNodeEditor.css";
 import { createEventBus, type EditorEventBus } from "../editor-kit/events";
+import { ColorField, type ColorValue } from "../editor-kit/ColorField";
+import { compileFind, createFindCursor, isValueKind, makeReport, matchRanges, snippet, type FindMatch, type FindResult, type FindSpec, type NavEvent, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
+import { normalizeLink, openExternal, type LinkItem } from "../editor-kit/hyperlink";
+import { MAXGRAPH_REPLACE_KINDS, allCells, cellName, collectUnits as gCollectUnits, countStyleValue as gCountStyleValue, linkOf, listLinks as gListLinks, replaceStyleValue as gReplaceStyleValue, setCellAttr, type GUnit } from "./maxgraph-nav";
+import { MaxgraphLinksDialog } from "./MaxgraphLinksDialog";
 import {
     DEFAULT_NODE_SIZE,
     DEFAULT_NODE_TYPES,
@@ -62,6 +68,7 @@ import type {
     MaxgraphExportFormat,
     MaxgraphInfo,
     MaxgraphLayoutKind,
+    MaxgraphNavTarget,
     MaxgraphNodeEditorApi,
     MaxgraphNodeType,
     SharedMaxgraphNodeEditorProps,
@@ -91,6 +98,7 @@ const ICON_PATHS = {
     fullscreen: "M15 3h6v6 M9 21H3v-6 M21 3l-7 7 M3 21l7-7",
     exitFullscreen: "M4 14h6v6 M20 10h-6V4 M14 10l7-7 M3 21l7-7",
     html: "M16 18l6-6-6-6 M8 6l-6 6 6 6 M14 4l-4 16",
+    link: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
 } as const;
 
 const Icon = (p: { name: keyof typeof ICON_PATHS }) => (
@@ -221,6 +229,9 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
 
     const [ready, setReady] = createSignal(false);
     const [selection, setSelection] = createSignal<Cell[]>([]);
+    let refreshLinksFn: (() => void) | undefined;
+    const [linksDlg, setLinksDlg] = createSignal(false);
+    const [linkVer, setLinkVer] = createSignal(0);
     const [canUndo, setCanUndo] = createSignal(false);
     const [canRedo, setCanRedo] = createSignal(false);
     const [zoom, setZoom] = createSignal(1);
@@ -1140,6 +1151,8 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
         g.getView().addListener(InternalEvent.UNDO, onUndoable);
 
         // perubahan model, seleksi, zoom
+        let linkRaf = 0;
+        model.addListener(InternalEvent.CHANGE, () => { cancelAnimationFrame(linkRaf); linkRaf = requestAnimationFrame(() => { refreshLinksFn?.(); setLinkVer(x => x + 1); }); });
         model.addListener(InternalEvent.CHANGE, (_s: unknown, evt: any) => {
             refreshCounts();
             scheduleChange();
@@ -1256,8 +1269,193 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
         keyHandler.bindControlKey(71, () => group()); // Ctrl+G
         keyHandler.bindControlShiftKey(71, () => ungroup()); // Ctrl+Shift+G
         keyHandler.bindShiftKey(113, () => openLabelEditor()); // Shift+F2 = kelola label HTML
+        keyHandler.bindControlKey(75, () => setLinksDlg(true)); // Ctrl+K = kelola tautan
         keyHandler.bindControlKey(187, () => zoomBy(1)); // Ctrl + "="
         keyHandler.bindControlKey(189, () => zoomBy(-1)); // Ctrl + "-"
+
+        // ------------------------------------------------------------------ navigasi, cari/ganti, tautan (bus)
+
+        const fcur = createFindCursor<{ m: FindMatch; unit: GUnit; start: number }>();
+        const centerOn = (cell: Cell) => { g.scrollCellToVisible(cell, true); };
+        const focusCell = (cell: Cell) => { g.setSelectionCell(cell); centerOn(cell); };
+
+        const findMatches = (spec: FindSpec): FindResult => {
+            const empty: FindResult = { query: spec.query, count: 0, matches: [], current: -1 };
+            if (!spec.query) { fcur.clear(); return empty; }
+            const all: ReplaceKind[] = ["text", "link", "data"];
+            const kinds = (spec.kinds?.length ? spec.kinds.filter(k => all.includes(k)) : all) as ReplaceKind[];
+            const { re, error } = compileFind(spec);
+            if (!re) return { ...empty, error };
+            const limit = spec.limit ?? 2000;
+            const items: { m: FindMatch; unit: GUnit; start: number }[] = [];
+            let truncated = false;
+            outer: for (const u of gCollectUnits(g, kinds, (c, v) => setLabelOf(c, v))) {
+                for (const r of matchRanges(u.text, re)) {
+                    if (items.length >= limit) { truncated = true; break outer; }
+                    items.push({
+                        m: { index: items.length, kind: u.kind, text: u.text.slice(r.start, r.end), ...snippet(u.text, r.start, r.end), location: cellName(u.cell) + (u.attr ? ` · ${u.attr}` : ""), target: { kind: u.cell.isEdge() ? "edge" : "node", id: u.cell.getId() ?? "" } },
+                        unit: u, start: r.start,
+                    });
+                }
+            }
+            fcur.set(items, -1);
+            const res: FindResult = { query: spec.query, count: items.length, matches: items.map(i => i.m), truncated, current: -1 };
+            if (spec.select !== false && items.length) res.current = findStep(1)?.index ?? -1;
+            return res;
+        };
+        const findStep = (dir: 1 | -1): FindMatch | undefined => {
+            const it = fcur.step(dir);
+            if (!it) return undefined;
+            focusCell(it.unit.cell);
+            return it.m;
+        };
+
+        const gotoTarget = async (t: MaxgraphNavTarget): Promise<NavEvent> => {
+            const fail = (): NavEvent => ({ target: t, ok: false });
+            switch (t.kind) {
+                case "node": case "edge": case "cell": {
+                    const c = model.getCell(t.id);
+                    if (!c || (t.kind === "node" && !c.isVertex()) || (t.kind === "edge" && !c.isEdge())) return fail();
+                    focusCell(c);
+                    return { target: t, ok: true, label: cellName(c, g) };
+                }
+                case "link": { const c = model.getCell(t.id); if (!c) return fail(); focusCell(c); return { target: t, ok: true, label: linkOf(c) }; }
+                case "page": {
+                    const before = pages().length;
+                    const idx = typeof t.page === "number" ? t.page : pages().findIndex(p => p.id === t.page || p.name === t.page);
+                    if (idx < 0 || idx >= before) return fail();
+                    await setPage(idx);
+                    return { target: t, ok: true, label: pages()[idx]?.name };
+                }
+                case "search": {
+                    const r = findMatches({ query: t.query, regex: t.regex, caseSensitive: t.caseSensitive, wholeWord: t.wholeWord, select: false });
+                    const i = t.occurrence ?? 0;
+                    if (!r.count || i < 0 || i >= r.count) return fail();
+                    fcur.index = i - 1;
+                    findStep(1);
+                    return { target: t, ok: true, label: `${i + 1}/${r.count}` };
+                }
+                case "match": {
+                    if (!fcur.items[t.index]) return fail();
+                    fcur.index = t.index - 1;
+                    findStep(1);
+                    return { target: t, ok: true, label: `${t.index + 1}/${fcur.items.length}` };
+                }
+                case "all": fit(); return { target: t, ok: true };
+                case "point": {
+                    const v = g.getView();
+                    const cw = canvasEl.clientWidth, ch = canvasEl.clientHeight;
+                    g.getContainer().scrollLeft = t.x * v.scale - cw / 2 + v.translate.x * v.scale;
+                    g.getContainer().scrollTop = t.y * v.scale - ch / 2 + v.translate.y * v.scale;
+                    return { target: t, ok: true };
+                }
+            }
+        };
+
+        const replaceKinds = (spec: ReplaceSpec, onlyCurrent: boolean): ReplaceReport => {
+            const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceKind[];
+            const rep = (counts: Partial<Record<ReplaceKind, number>>) => makeReport(kinds, MAXGRAPH_REPLACE_KINDS, counts);
+            if (isReadonly() || !spec.query) return { ...rep({}), error: isReadonly() ? "readonly" : undefined };
+            g.stopEditing(true);
+            const supported = kinds.filter(k => MAXGRAPH_REPLACE_KINDS.includes(k));
+            const strKinds = supported.filter(k => !isValueKind(k));
+            const valKinds = supported.filter(isValueKind) as ("font" | "color" | "fill" | "stroke")[];
+            const counts: Partial<Record<ReplaceKind, number>> = {};
+            const { re } = compileFind(spec);
+            g.batchUpdate(() => {
+                if (onlyCurrent && !valKinds.length) {
+                    if (!fcur.items.length) findMatches({ ...spec, kinds: strKinds, select: false });
+                    const cur = fcur.current ?? fcur.items[0];
+                    if (!cur || !re) return;
+                    // nomor kecocokan di dalam satuan yang sama
+                    const nth = fcur.items.filter(x => x.unit === cur.unit).indexOf(cur);
+                    const n = cur.unit.replace(re, spec.replacement, !!spec.regex, nth);
+                    if (n) counts[cur.unit.kind] = (counts[cur.unit.kind] ?? 0) + n;
+                } else {
+                    if (strKinds.length && re) for (const u of gCollectUnits(g, strKinds, (c, v) => setLabelOf(c, v))) {
+                        const n = u.replace(re, spec.replacement, !!spec.regex);
+                        if (n) counts[u.kind] = (counts[u.kind] ?? 0) + n;
+                    }
+                    for (const k of valKinds) { const n = gReplaceStyleValue(g, k, spec.query, spec.replacement); if (n) counts[k] = n; }
+                }
+            });
+            const report = rep(counts);
+            if (report.total) fcur.clear();
+            return report;
+        };
+
+        // hyperlink sel (atribut `link` pada nilai XML <object>, kompatibel draw.io) + ikon di sudut sel
+        const LINK_ICON = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="11" fill="#fff" stroke="#2563eb" stroke-width="1.4"/><path d="M10 13a4 4 0 0 0 5.5.4l2-2a4 4 0 0 0-5.6-5.6l-1.1 1.1M14 11a4 4 0 0 0-5.5-.4l-2 2a4 4 0 0 0 5.6 5.6l1.1-1.1"/></svg>');
+        const overlayed = new Map<string, CellOverlay>();
+        const openCellLink = (url: string, cell?: Cell) => {
+            emit("link", { action: "set", count: 0, url });
+            if (url.startsWith("#")) { const c = model.getCell(url.slice(1)); if (c) { focusCell(c); return true; } return false; }
+            void cell;
+            return openExternal(url);
+        };
+        const refreshLinkOverlays = () => {
+            const seen = new Set<string>();
+            for (const c of allCells(g)) {
+                const url = linkOf(c);
+                const id = c.getId() ?? "";
+                if (!url) continue;
+                seen.add(id);
+                const old = overlayed.get(id);
+                if (old && (old as unknown as { tooltip?: string }).tooltip === url) continue;
+                if (old) g.removeCellOverlay(c, old);
+                const ov = new CellOverlay(new ImageBox(LINK_ICON, 16, 16), url, "right", "top");
+                (ov as unknown as { cursor: string }).cursor = "pointer";
+                ov.addListener(InternalEvent.CLICK, () => { openCellLink(linkOf(c) || url, c); });
+                g.addCellOverlay(c, ov);
+                overlayed.set(id, ov);
+            }
+            for (const [id, ov] of [...overlayed]) {
+                if (seen.has(id)) continue;
+                const c = model.getCell(id);
+                if (c) g.removeCellOverlay(c, ov);
+                overlayed.delete(id);
+            }
+        };
+        const setLink = (url: string | null, opts?: { ids?: string[]; tooltip?: string }): boolean => {
+            if (isReadonly()) return false;
+            const n = url ? normalizeLink(url) : null;
+            if (url && !n) return false;
+            const cells = opts?.ids ? opts.ids.map(i => model.getCell(i)).filter((c): c is Cell => !!c) : g.getSelectionCells().filter(c => c.isVertex() || c.isEdge());
+            if (!cells.length) return false;
+            g.batchUpdate(() => { for (const c of cells) { setCellAttr(g, c, "link", n); if (opts?.tooltip !== undefined) setCellAttr(g, c, "tooltip", opts.tooltip || null); } });
+            refreshLinkOverlays();
+            emit("link", { action: n ? "set" : "remove", count: cells.length, url: n ?? undefined });
+            return true;
+        };
+        const linkApi: MaxgraphNodeEditorApi["links"] = {
+            list: () => gListLinks(g),
+            set: setLink,
+            remove: opts => setLink(null, opts),
+            update: (id, patch) => {
+                const c = model.getCell(id);
+                if (!c || isReadonly() || !linkOf(c)) return false;
+                const n = patch.url !== undefined ? normalizeLink(patch.url) : undefined;
+                if (patch.url !== undefined && !n) return false;
+                g.batchUpdate(() => { if (n) setCellAttr(g, c, "link", n); if (patch.tooltip !== undefined) setCellAttr(g, c, "tooltip", patch.tooltip || null); });
+                refreshLinkOverlays();
+                emit("link", { action: "update", count: 1, url: n ?? undefined });
+                return true;
+            },
+            removeById: id => setLink(null, { ids: [id] }),
+            replace: (from, to, opts) => {
+                const r = replaceKinds({ query: from, replacement: to, regex: opts?.regex, caseSensitive: opts?.caseSensitive, kinds: ["link"] }, false);
+                if (r.total) { refreshLinkOverlays(); emit("link", { action: "replace", count: r.total, url: to }); }
+                return r.byKind.link ?? 0;
+            },
+            open: urlOrId => { const c = model.getCell(urlOrId); return openCellLink(c ? linkOf(c) : urlOrId, c ?? undefined); },
+        };
+        const doReplaceEmit = (spec: ReplaceSpec, onlyCurrent: boolean): ReplaceReport => {
+            const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceSpec["kinds"];
+            const r = replaceKinds({ ...spec, kinds }, onlyCurrent);
+            emit("replace", { ...r, query: spec.query, replacement: spec.replacement, kinds: kinds ?? ["text"] });
+            return r;
+        };
+        refreshLinksFn = refreshLinkOverlays;
 
         api = {
             graph: g,
@@ -1326,6 +1524,20 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
             getInfo: () => getInfo()!,
             inspect,
             showPanel: p => showPanel(p),
+            goto: async t => { const r = await gotoTarget(t); emit("navigate", r); return r; },
+            find: spec => {
+                const r = findMatches(spec);
+                emit("find", { query: spec.query, count: r.count });
+                if (r.current >= 0) emit("navigate", { target: r.matches[r.current].target, ok: true, label: `${r.current + 1}/${r.count}` });
+                return r;
+            },
+            findNext: () => { const m = findStep(1); if (m) emit("navigate", { target: m.target, ok: true, label: `${fcur.index + 1}` }); return m; },
+            findPrev: () => { const m = findStep(-1); if (m) emit("navigate", { target: m.target, ok: true, label: `${fcur.index + 1}` }); return m; },
+            findClear: () => fcur.clear(),
+            replace: spec => doReplaceEmit(spec, true),
+            replaceAll: spec => doReplaceEmit(spec, false),
+            replaceKinds: () => [...MAXGRAPH_REPLACE_KINDS],
+            links: linkApi,
         };
 
         // perintah bernama untuk bus.run(...) dan CustomEvent "maxgraph-editor:command"
@@ -1357,6 +1569,11 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
             getLogs: (f?: object) => logger.entries(f), clearLogs: () => logger.clear(), setLogLevel: (l: "debug" | "info" | "warn" | "error") => logger.setLevel(l),
             showPanel: (p: DebugTab | null) => showPanel(p),
             registerNodeType: (t: MaxgraphNodeType) => registerNodeType(t),
+            goto: (t: MaxgraphNavTarget) => api!.goto(t), find: (s: FindSpec) => api!.find(s), findNext: () => api!.findNext(), findPrev: () => api!.findPrev(), findClear: () => api!.findClear(),
+            replace: (s: ReplaceSpec) => api!.replace(s), replaceAll: (s: ReplaceSpec) => api!.replaceAll(s), "replace.kinds": () => api!.replaceKinds(),
+            "link.list": () => linkApi.list(), "link.set": (u: string | null, o?: object) => linkApi.set(u, o), "link.remove": (o?: object) => linkApi.remove(o),
+            "link.update": (id: string, p: { url?: string; tooltip?: string }) => linkApi.update(id, p), "link.removeById": (id: string) => linkApi.removeById(id),
+            "link.replace": (f: string, to: string, o?: { regex?: boolean; caseSensitive?: boolean }) => linkApi.replace(f, to, o), "link.open": (u: string) => linkApi.open(u),
         };
         for (const [n, fn] of Object.entries(cmds)) disposers.push(bus.registerCommand(n, fn));
         disposers.push(bus.attach(rootEl));
@@ -1463,6 +1680,27 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
         if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
     };
 
+    const cfLabels = { opacity: "Opasitas", none: "Tanpa warna", hex: "Hex", custom: "Kustom" };
+    const styleOf = (key: string): string | undefined => {
+        const c = selection()[0];
+        const v = c ? (graph?.getCurrentCellStyle(c) as Record<string, unknown> | undefined)?.[key] : undefined;
+        return typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v : undefined;
+    };
+    const opacityOf = (key: string): number => {
+        const c = selection()[0];
+        const v = c ? (graph?.getCurrentCellStyle(c) as Record<string, unknown> | undefined)?.[key] : undefined;
+        return typeof v === "number" ? Math.max(0, Math.min(1, v / 100)) : 1;
+    };
+    const selCells = () => selection().filter(c => c.isVertex() || c.isEdge());
+    /** Terapkan warna + opasitas ke sel terpilih; `null` = hapus (fill/stroke → none, teks → bawaan). */
+    const applyColor = (key: "fillColor" | "strokeColor" | "fontColor", opKey: "fillOpacity" | "strokeOpacity" | "textOpacity", v: ColorValue | null, cells: Cell[]) => {
+        if (!graph || !cells.length || isReadonly()) return;
+        graph.batchUpdate(() => {
+            graph!.setCellStyles(key, (v ? v.hex : key === "fontColor" ? null : "none") as never, cells);
+            graph!.setCellStyles(opKey, (v && v.alpha < 1 ? Math.round(v.alpha * 100) : null) as never, cells);
+        });
+        setLinkVer(x => x + 1);
+    };
     const fillOf = () => {
         const v = selectedVertices()[0];
         const c = v ? graph?.getCurrentCellStyle(v).fillColor : undefined;
@@ -1498,14 +1736,16 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
                                     <Btn icon="ungroup" title="Pisahkan kelompok (Ctrl+Shift+G)" onClick={() => ungroup()} disabled={isReadonly() || !selection().some(c => c.isVertex() && c.getChildCount() > 0)} />
                                 </Show>
                                 <Btn icon="html" title="Kelola label: teks polos / HTML (Shift+F2)" onClick={() => openLabelEditor()} disabled={isReadonly() || selection().length < 1} />
+                                <Btn icon="link" title="Kelola tautan sel (Ctrl+K)" onClick={() => setLinksDlg(true)} disabled={!ready()} />
                                 <Show when={selectedVertices().length && !isReadonly()}>
-                                    <label class="mgx-color" title="Warna node terpilih">
-                                        <input
-                                            type="color"
-                                            value={fillOf()}
-                                            onChange={e => graph!.setCellStyles("fillColor", e.currentTarget.value, selectedVertices())}
-                                        />
-                                    </label>
+                                    <ColorField class="mgx-cf" title="Warna isi node terpilih" value={styleOf("fillColor") ?? null} alpha={opacityOf("fillOpacity")} fallback={fillOf()} labels={cfLabels}
+                                        onChange={v => applyColor("fillColor", "fillOpacity", v, selectedVertices())}><span class="mgx-cf-ic" style={{ background: styleOf("fillColor") ?? "transparent" }}>▨</span></ColorField>
+                                </Show>
+                                <Show when={selCells().length && !isReadonly()}>
+                                    <ColorField class="mgx-cf" title="Warna garis / tepi" value={styleOf("strokeColor") ?? null} alpha={opacityOf("strokeOpacity")} fallback="#1F2937" labels={cfLabels}
+                                        onChange={v => applyColor("strokeColor", "strokeOpacity", v, selCells())}><span class="mgx-cf-ic">▭</span></ColorField>
+                                    <ColorField class="mgx-cf" title="Warna teks" value={styleOf("fontColor") ?? null} alpha={opacityOf("textOpacity")} fallback="#000000" labels={cfLabels}
+                                        onChange={v => applyColor("fontColor", "textOpacity", v, selCells())}><b>A</b></ColorField>
                                 </Show>
                             </div>
                         </Show>
@@ -1711,6 +1951,16 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
                         onCancel={() => { setLabelDlg(null); queueMicrotask(() => canvasEl?.focus({ preventScroll: true })); }}
                     />
                 )}
+            </Show>
+
+            <Show when={linksDlg()}>
+                <MaxgraphLinksDialog
+                    items={(linkVer(), linksDlg() ? gListLinks(graph!) : [])} readonly={isReadonly()} selectionCount={selCells().length}
+                    selectionUrl={selCells().length ? linkOf(selCells()[0]) : ""} selectionTooltip={selCells().length && domUtils.isNode(selCells()[0].value) ? ((selCells()[0].value as Element).getAttribute("tooltip") ?? "") : ""}
+                    onSet={(u, t) => api!.links.set(u, { tooltip: t })} onRemoveSelection={() => api!.links.remove()}
+                    onGoto={i => void api!.goto(i.target as MaxgraphNavTarget)} onUpdate={(i, p) => api!.links.update(i.id, p)} onRemove={i => api!.links.removeById(i.id)}
+                    onReplace={(f, t) => api!.links.replace(f, t)} onOpen={i => api!.links.open(i.url)} onClose={() => { setLinksDlg(false); queueMicrotask(() => canvasEl?.focus({ preventScroll: true })); }}
+                />
             </Show>
 
             <input

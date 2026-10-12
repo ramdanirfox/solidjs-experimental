@@ -587,6 +587,8 @@ export class XlsxBook {
     this.linkMaps.set(ws, m);
     return m;
   }
+  /** Bangun ulang indeks hyperlink/komentar sheet (panggil setelah mengubah `ws.hyperlinks` / `ws.legacyComments`). */
+  invalidateLinks(ws: Worksheet) { this.linkMaps.delete(ws); this.invalidate(); }
   hyperlinkAt(ws: Worksheet, r: number, c: number) { return this.maps(ws).links.get(r * 16385 + c); }
   commentAt(ws: Worksheet, r: number, c: number) { return this.maps(ws).notes.get(r * 16385 + c); }
 

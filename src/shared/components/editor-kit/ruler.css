@@ -53,3 +53,23 @@
 .rk-gy { left: 0; right: 0; height: 1px; cursor: row-resize; }
 .rk-gy::before { left: 0; right: 0; top: -4px; bottom: -4px; }
 .rk-guide:hover { opacity: 1; }
+
+/* tab stop */
+.rk-tabs { position: absolute; inset: 0; pointer-events: none; }
+.rk-tabtype {
+  position: absolute; left: 2px; top: 2px; bottom: 2px; width: 16px; padding: 0; border: 1px solid var(--rk-line); border-radius: 3px; z-index: 2;
+  background: var(--rk-bg); color: var(--rk-fg); cursor: pointer; font: 700 11px/1 system-ui, sans-serif; display: grid; place-items: center;
+}
+.rk-tabtype[hidden] { display: none; }
+.rk-tabtype::after, .rk-tab::after { content: "∟"; }
+.rk-tabtype[data-type="center"]::after, .rk-tab[data-type="center"]::after { content: "⊥"; }
+.rk-tabtype[data-type="right"]::after, .rk-tab[data-type="right"]::after { content: "⅃"; }
+.rk-tabtype[data-type="decimal"]::after, .rk-tab[data-type="decimal"]::after { content: "⊥·"; font-size: 9px; }
+.rk-tabtype[data-type="bar"]::after, .rk-tab[data-type="bar"]::after { content: "│"; }
+.rk-tab {
+  position: absolute; bottom: 1px; width: 12px; margin-left: -6px; height: 14px; display: grid; place-items: center; cursor: ew-resize; pointer-events: auto;
+  color: var(--rk-accent); font: 700 12px/1 system-ui, sans-serif; user-select: none; z-index: 1;
+}
+.rk-tab:hover { background: rgb(127 127 127 / 0.2); border-radius: 2px; }
+.rk-tab.rk-tab-out { opacity: 0.35; }
+.rk-h.rk-tabs-on { cursor: default; }

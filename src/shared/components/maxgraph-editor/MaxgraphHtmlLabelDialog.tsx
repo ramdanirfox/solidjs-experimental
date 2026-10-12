@@ -1,3 +1,5 @@
+import { ColorField } from "../editor-kit/ColorField";
+import { cssRgba } from "../editor-kit/color-util";
 import { Show, createMemo, createSignal } from "solid-js";
 import { htmlToPlain, plainToHtml, sanitizeHtmlLabel } from "./drawio";
 
@@ -70,7 +72,8 @@ export const MaxgraphHtmlLabelDialog = (p: HtmlLabelDialogProps) => {
                             {WRAPS.map(([t, title, o, c]) => <button type="button" class="mgx-btn mgx-txt" title={title} onClick={() => wrapSel(o, c)}>{t}</button>)}
                             <button type="button" class="mgx-btn mgx-txt" title="Baris baru" onClick={() => insert("<br>")}>↵</button>
                             <button type="button" class="mgx-btn mgx-txt" title="Tautan" onClick={link}>🔗</button>
-                            <label class="mgx-fmt-color" title="Warna teks"><input type="color" value="#b91c1c" onChange={e => wrapSel(`<font color="${e.currentTarget.value}">`, "</font>")} />A</label>
+                            <ColorField class="mgx-cf" title="Warna teks" fallback="#B91C1C" allowNone={false} labels={{ opacity: "Opasitas", none: "Tanpa warna", hex: "Hex", custom: "Kustom" }}
+                                onChange={v => { if (!v) return; if (v.alpha < 1) wrapSel(`<span style="color:${cssRgba(v.hex, v.alpha)}">`, "</span>"); else wrapSel(`<font color="${v.hex}">`, "</font>"); }}><b>A</b></ColorField>
                             <select class="mgx-select" title="Ukuran teks" value="" onChange={e => { const v = e.currentTarget.value; e.currentTarget.value = ""; if (v) wrapSel(`<span style="font-size:${v}px">`, "</span>"); }}>
                                 <option value="">Ukuran…</option>
                                 {[10, 12, 14, 18, 24, 32].map(s => <option value={String(s)}>{s}px</option>)}

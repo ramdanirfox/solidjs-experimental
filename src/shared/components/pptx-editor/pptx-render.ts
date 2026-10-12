@@ -3,6 +3,8 @@
  * "Effective" `@office-kit/pptx`, sehingga pewarisan placeholder → layout → master → tema ditangani library.
  * Satuan: 1 px = 9525 EMU (slide 16:9 = 1280 × 720 px).
  */
+import { runAlpha } from "./pptx-alpha";
+import { cssRgba } from "../editor-kit/color-util";
 import * as P from "@office-kit/pptx";
 import type { PresentationData, SlideData, SlideShapeData, ReadTextFormat, TableCellData } from "@office-kit/pptx";
 import { customPath, presetPath } from "./pptx-geom";
@@ -249,8 +251,16 @@ export function renderParagraphs(ctx: RenderCtx, shape: SlideShapeData, host: HT
       let link: string | null = null;
       if (e.kind === "r") { try { link = P.getShapeRunHyperlink(shape, i, runIdx - 1); } catch { /* abaikan */ } }
       let css = runCss(ctx, opt?.forceDefaultSize ? { ...(fmt ?? {}), size: opt.forceDefaultSize } : fmt, scale);
+      if (e.kind === "r") {
+        const ra = runAlpha(shape, i, runIdx - 1);
+        const rc = ra !== null && ra < 1 ? themeColor(ctx, fmt?.color) : null;
+        if (rc && ra !== null) css = css.replace(/(^|;)color:[^;]+/, `$1color:${cssRgba(rc, ra)}`);
+      }
       if (link) { css += ";text-decoration:underline"; if (!/color:/.test(css)) css += `;color:${themeColor(ctx, ctx.theme?.hyperlink) ?? "#0563c1"}`; span.dataset.href = link; span.title = link; }
       span.setAttribute("style", css);
+      // token asli (warna tema / huruf tema) agar penyuntingan teks bisa menuliskannya kembali tanpa mengubah jadi nilai tetap
+      if (fmt?.color) span.dataset.clr = String(fmt.color);
+      if (fmt?.font) span.dataset.font = fmt.font;
       if (e.text) visible = true;
       pEl.appendChild(span);
     }

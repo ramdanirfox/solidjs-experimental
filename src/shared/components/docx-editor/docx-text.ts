@@ -439,6 +439,8 @@ export type PPatch = Partial<{
   keepNext: boolean | null; keepLines: boolean | null; pageBreakBefore: boolean | null;
   shd: string | null; num: { numId: number; ilvl: number } | null; outline: number | null;
   borders: { top?: string; left?: string; bottom?: string; right?: string } | null;
+  /** Tab stop eksplisit paragraf (twip dari margin kiri). `clear` menghapus tab warisan style. `null` = hapus semua tab langsung. */
+  tabs: { pos: number; val: "left" | "center" | "right" | "decimal" | "bar" | "clear"; leader?: string }[] | null;
 }>;
 
 export function applyParaPatch(p: XEl, patch: PPatch) {
@@ -481,6 +483,11 @@ export function applyParaPatch(p: XEl, patch: PPatch) {
   }
   if (patch.shd !== undefined) setChild(pPr, patch.shd === null ? null : mk("shd", { val: "clear", color: "auto", fill: patch.shd.replace("#", "").toUpperCase() }), "shd");
   if (patch.num !== undefined) setChild(pPr, patch.num === null ? null : mk("numPr", undefined, [mk("ilvl", { val: patch.num.ilvl }), mk("numId", { val: patch.num.numId })]), "numPr");
+  if (patch.tabs !== undefined) {
+    const list = patch.tabs ?? [];
+    const tabs = mk("tabs", undefined, [...list].sort((a, b) => a.pos - b.pos).map(t => mk("tab", { val: t.val, ...(t.leader && t.leader !== "none" ? { leader: t.leader } : {}), pos: Math.round(t.pos) })));
+    setChild(pPr, list.length ? tabs : null, "tabs");
+  }
   if (patch.outline !== undefined) setChild(pPr, patch.outline === null ? null : mk("outlineLvl", { val: patch.outline }), "outlineLvl");
   if (patch.borders !== undefined) {
     if (patch.borders === null) setChild(pPr, null, "pBdr");

@@ -23,19 +23,36 @@ import { resolveColor } from "./xlsx-style";
 import { createEventBus, type EditorEventBus } from "../editor-kit/events";
 import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
 import { RulerKit, type RulerEventMap } from "../editor-kit/ruler-kit";
+import { ColorField, type ColorValue } from "../editor-kit/ColorField";
+import { LinkPanel, LINK_LABELS_ID } from "../editor-kit/LinkPanel";
+import { compileFind, createFindCursor, isValueKind, makeReport, matchRanges, replaceInString, snippet, type FindMatch, type FindResult, type FindSpec, type NavEvent, type OfficeNavEvents, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
+import { normalizeLink, openExternal, type LinkItem, type OfficeLinkEvents } from "../editor-kit/hyperlink";
+import { compositeOver } from "../editor-kit/color-util";
+import { XLSX_REPLACE_KINDS, collectUnits, countValue as countStyleValue, listLinks as xListLinks, removeLinkAt, replaceValues as replaceStyleValues, setLink as xSetLink, toLinkItem as xToLinkItem, type XUnit } from "./xlsx-nav";
 import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
 import { prepareOle } from "../office-shared/ole-embed";
 import type { OleAnchor, XlsxOleObject } from "./xlsx-ole";
 import "./xlsx-preview.css";
 
 /** Event yang dipancarkan XLSX Preview (bus: `api.events`; DOM: CustomEvent `xlsx-preview:<tipe>` pada elemen akar). */
-export interface XlsxPreviewEventMap extends Omit<OfficeCommonEvents, "locale">, OfficeOleEvents, RulerEventMap {
+/** Target `goto` untuk XLSX. `sheet` = nama atau indeks (0-based); alamat A1; baris/kolom berbasis 1 mengikuti notasi Excel. */
+export type XlsxNavTarget =
+  | { kind: "cell"; address: string; sheet?: string | number }
+  | { kind: "range"; range: string; sheet?: string | number }
+  | { kind: "sheet"; sheet: string | number }
+  | { kind: "name"; name: string }
+  | { kind: "link"; id: string }
+  | { kind: "search"; query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean; occurrence?: number; scope?: XlsxScope }
+  | { kind: "match"; index: number }
+  | { kind: "start" } | { kind: "end" };
+export type XlsxScope = "sheet" | "book" | "selection";
+
+export interface XlsxPreviewEventMap extends Omit<OfficeCommonEvents, "locale">, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, RulerEventMap {
   ready: { api: XlsxPreviewApi };
   /** Isi/format workbook berubah (kasar: dipicu setiap perubahan model; cek `modified`). */
   "cell-edit": { sheet: string; row: number; col: number; address: string; text: string };
   selection: { sheet: string; range: string; active: string };
   sheet: { index: number; name: string };
-  find: { query: string; count: number };
 }
 
 /** Handle imperatif yang diberikan lewat `onReady`. */
@@ -62,6 +79,28 @@ export interface XlsxPreviewApi {
   redo(): void;
   getZoom(): number;
   setZoom(z: number): void;
+  /** Pindahkan fokus: sel, rentang, sheet, nama terdefinisi, tautan, atau hasil pencarian. */
+  goto(target: XlsxNavTarget): NavEvent;
+  /** Cari lintas jenis: `text` (nilai teks sel), `formula`, `link`, `comment`. Default: `text` + `formula` + `link` + `comment`; cakupan default seluruh workbook. */
+  find(spec: FindSpec & { scope?: XlsxScope }): FindResult;
+  findNext(): FindMatch | undefined;
+  findPrev(): FindMatch | undefined;
+  findClear(): void;
+  /** Ganti hasil aktif (atau pertama). Jenis nilai (`font`/`color`/`fill`) selalu mengganti semua. */
+  replace(spec: ReplaceSpec & { scope?: XlsxScope }): ReplaceReport;
+  /** Ganti semua, per jenis: `text`, `formula`, `link`, `comment`, `font`, `color`, `fill`. */
+  replaceAll(spec: ReplaceSpec & { scope?: XlsxScope }): ReplaceReport;
+  replaceKinds(): string[];
+  readonly links: {
+    list(): LinkItem[];
+    /** Pasang hyperlink pada rentang (default: seleksi). `#Sheet!A1` = tautan internal. */
+    set(url: string, opts?: { range?: string; sheet?: string; tooltip?: string; display?: string }): boolean;
+    remove(opts?: { range?: string; sheet?: string }): boolean;
+    update(id: string, patch: { url?: string; tooltip?: string }): boolean;
+    removeById(id: string): boolean;
+    replace(from: string, to: string, opts?: { regex?: boolean; caseSensitive?: boolean }): number;
+    open(url: string): boolean;
+  };
   /** Penggaris (px dokumen, 96 dpi), garis bantu — gambar yang dipindah menempel ke garis bantu — dan alat ukur. */
   readonly ruler: RulerKit;
   readonly ole: {
@@ -128,8 +167,8 @@ const Ic = (p: { n: string; size?: number }) => (
   <svg width={p.size ?? 16} height={p.size ?? 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={ICONS[p.n]} /></svg>
 );
 
-type Panel = "find" | "info" | "log" | "ole" | "macro" | null;
-type Dialog = "debug" | "eval" | null;
+type Panel = "find" | "info" | "log" | "ole" | "macro" | "links" | null;
+type Dialog = "debug" | "eval" | "link" | null;
 
 function downloadBlob(name: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
@@ -622,6 +661,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
         case "z": e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return;
         case "y": e.preventDefault(); doRedo(); return;
         case "f": e.preventDefault(); openFind(); return;
+        case "k": e.preventDefault(); openLinkDialog(); return;
         case "a": e.preventDefault(); { const L = layout(); setSel({ r1: 1, c1: 1, r2: L.maxRow, c2: L.maxCol }); } return;
         case "s": e.preventDefault(); void saveXlsx(); return;
         case "c": case "x": case "v": return; // ditangani event clipboard
@@ -929,6 +969,234 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     const a = parseAddress(m[2]!);
     return w && a ? { w, r: a.r1, c: a.c1 } : undefined;
   };
+  // ───────── navigasi & cari/ganti lintas jenis (event bus) ─────────
+
+  const xcur = createFindCursor<{ m: FindMatch; unit: XUnit; start: number; end: number }>();
+  const unitScope = (scope?: XlsxScope) => (scope === "sheet" ? { sheet: ws() } : scope === "selection" ? { sheet: ws(), selection: normSel(sel()) } : {});
+  const sheetIndexOf = (ref: string | number | undefined): number => (ref === undefined ? sheetIdx() : sheetByRef(ref));
+
+  const xFind = (spec: FindSpec & { scope?: XlsxScope }): FindResult => {
+    const b = book();
+    const empty: FindResult = { query: spec.query, count: 0, matches: [], current: -1 };
+    if (!b || !spec.query) { xcur.clear(); return empty; }
+    const all: ReplaceKind[] = ["text", "formula", "link", "comment"];
+    const kinds = (spec.kinds?.length ? spec.kinds.filter(k => all.includes(k)) : all) as ReplaceKind[];
+    const { re, error } = compileFind(spec);
+    if (!re) return { ...empty, error };
+    const limit = spec.limit ?? 2000;
+    const items: { m: FindMatch; unit: XUnit; start: number; end: number }[] = [];
+    let truncated = false;
+    outer: for (const u of collectUnits(b, kinds, unitScope(spec.scope))) {
+      for (const r of matchRanges(u.text, re)) {
+        if (items.length >= limit) { truncated = true; break outer; }
+        items.push({ m: { index: items.length, kind: u.kind, text: u.text.slice(r.start, r.end), ...snippet(u.text, r.start, r.end), location: `${u.sheet}!${u.address}`, target: { kind: "cell", sheet: u.sheet, address: addr(u.row, u.col) } }, unit: u, start: r.start, end: r.end });
+      }
+    }
+    xcur.set(items, -1);
+    const res: FindResult = { query: spec.query, count: items.length, matches: items.map(i => i.m), truncated, current: -1 };
+    if (spec.select !== false && items.length) res.current = xStep(1)?.index ?? -1;
+    return res;
+  };
+  const xStep = (dir: 1 | -1): FindMatch | undefined => {
+    const it = xcur.step(dir);
+    if (!it) return undefined;
+    goTo(it.unit.row, it.unit.col, it.unit.sheet);
+    return it.m;
+  };
+
+  const xGoto = (t: XlsxNavTarget): NavEvent => {
+    const b = book();
+    const fail = (): NavEvent => ({ target: t, ok: false });
+    if (!b) return fail();
+    const toSheet = (ref: string | number | undefined): boolean => { const i = sheetIndexOf(ref); if (i < 0) return false; if (i !== sheetIdx()) selectSheet(i); return true; };
+    switch (t.kind) {
+      case "sheet": return toSheet(t.sheet) ? { target: t, ok: true, label: ws()?.title } : fail();
+      case "cell": {
+        const m = /^(?:'?([^'!]+)'?!)?([A-Za-z]+\d+)$/.exec(t.address.trim());
+        const a = m ? parseAddress(m[2]!) : undefined;
+        if (!a || !toSheet(m![1] ?? t.sheet)) return fail();
+        goTo(a.r1, a.c1);
+        return { target: t, ok: true, label: `${ws()?.title}!${addr(a.r1, a.c1)}` };
+      }
+      case "range": {
+        const m = /^(?:'?([^'!]+)'?!)?([A-Za-z]+\d+(?::[A-Za-z]+\d+)?)$/.exec(t.range.trim());
+        const a = m ? parseAddress(m[2]!) : undefined;
+        if (!a || !toSheet(m![1] ?? t.sheet)) return fail();
+        onSelect({ r1: a.r1, c1: a.c1, r2: a.r2, c2: a.c2 }, { row: a.r1, col: a.c1 });
+        queueMicrotask(() => gridApi?.scrollTo(a.r1, a.c1));
+        return { target: t, ok: true, label: `${ws()?.title}!${selAddr({ r1: a.r1, c1: a.c1, r2: a.r2, c2: a.c2 })}` };
+      }
+      case "name": {
+        const dn = (b.wb as unknown as { definedNames?: { name: string; value: string }[] }).definedNames?.find(d => d.name.toLowerCase() === t.name.toLowerCase());
+        if (!dn) return fail();
+        try {
+          const pr = parseSheetRange(dn.value.replace(/\$/g, ""));
+          if (pr.sheet && !toSheet(pr.sheet)) return fail();
+          onSelect({ r1: pr.bounds.minRow, c1: pr.bounds.minCol, r2: pr.bounds.maxRow, c2: pr.bounds.maxCol }, { row: pr.bounds.minRow, col: pr.bounds.minCol });
+          queueMicrotask(() => gridApi?.scrollTo(pr.bounds.minRow, pr.bounds.minCol));
+          return { target: t, ok: true, label: t.name };
+        } catch { return fail(); }
+      }
+      case "link": {
+        const l = xListLinks(b).find(x => x.id === t.id);
+        const a = l ? parseAddress(l.link.ref) : undefined;
+        if (!l || !a || !toSheet(l.ws.title)) return fail();
+        goTo(a.r1, a.c1);
+        return { target: t, ok: true, label: l.link.ref };
+      }
+      case "search": {
+        const r = xFind({ query: t.query, regex: t.regex, caseSensitive: t.caseSensitive, wholeWord: t.wholeWord, scope: t.scope, select: false });
+        const i = t.occurrence ?? 0;
+        if (!r.count || i < 0 || i >= r.count) return fail();
+        xcur.index = i - 1;
+        xStep(1);
+        return { target: t, ok: true, label: `${i + 1}/${r.count}` };
+      }
+      case "match": {
+        if (!xcur.items[t.index]) return fail();
+        xcur.index = t.index - 1;
+        xStep(1);
+        return { target: t, ok: true, label: `${t.index + 1}/${xcur.items.length}` };
+      }
+      case "start": goTo(1, 1); return { target: t, ok: true, label: "A1" };
+      case "end": { const L = layout(); goTo(L.maxRow, L.maxCol); return { target: t, ok: true, label: addr(L.maxRow, L.maxCol) }; }
+    }
+  };
+
+  const xReplace = (spec: ReplaceSpec & { scope?: XlsxScope }, onlyCurrent: boolean): ReplaceReport => {
+    const b = book();
+    const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceKind[];
+    const rep0 = (counts: Partial<Record<ReplaceKind, number>>) => makeReport(kinds, XLSX_REPLACE_KINDS, counts);
+    if (!b || ro() || !spec.query) return { ...rep0({}), error: ro() ? "readonly" : undefined };
+    commitEdit("none");
+    const supported = kinds.filter(k => XLSX_REPLACE_KINDS.includes(k));
+    const strKinds = supported.filter(k => !isValueKind(k));
+    const valKinds = supported.filter(isValueKind) as ("font" | "color" | "fill")[];
+    const counts: Partial<Record<ReplaceKind, number>> = {};
+    const recs: import("./xlsx-model").EditRecord[] = [];
+    let styleOnly = false;
+    const { re } = compileFind(spec);
+    if (onlyCurrent && !valKinds.length) {
+      if (!xcur.items.length) xFind({ ...spec, kinds: strKinds, select: false });
+      const cur = xcur.current ?? xcur.items[0];
+      if (!cur || !re) return rep0({});
+      const single = new RegExp(re.source, re.flags.replace("g", ""));
+      const seg = cur.unit.text.slice(cur.start, cur.end);
+      const out = cur.unit.text.slice(0, cur.start) + (spec.regex ? seg.replace(single, spec.replacement) : spec.replacement) + cur.unit.text.slice(cur.end);
+      if (cur.unit.kind === "link" && !out.trim()) return rep0({});
+      recs.push(cur.unit.set(out));
+      counts[cur.unit.kind] = 1;
+    } else {
+      if (strKinds.length && re) {
+        for (const u of collectUnits(b, strKinds, unitScope(spec.scope))) {
+          const r = replaceInString(u.text, re, spec.replacement, !!spec.regex);
+          if (!r.count || r.text === u.text) continue;
+          if (u.kind === "link" && !r.text.trim()) continue;
+          recs.push(u.set(r.text));
+          counts[u.kind] = (counts[u.kind] ?? 0) + r.count;
+        }
+      }
+      for (const k of valKinds) {
+        const rs = replaceStyleValues(b, k, spec.query, spec.replacement, unitScope(spec.scope));
+        if (rs.length) { recs.push(...rs); counts[k] = rs.length; styleOnly = !strKinds.length; }
+      }
+    }
+    const report = rep0(counts);
+    if (report.total && recs.length) {
+      b.commit(recs, styleOnly ? { styleOnly: true } : undefined);
+      setLive(b.ev.live); bumpLayout();
+      xcur.clear();
+    }
+    return report;
+  };
+
+  // hyperlink
+  const xLinkItems = (): LinkItem[] => { const b = book(); return b ? xListLinks(b).map(l => xToLinkItem(b, l)) : []; };
+  const [linkVer, setLinkVer] = createSignal(0);
+  const linkItemsMemo = createMemo<LinkItem[]>(() => { ver(); linkVer(); return panel() === "links" ? xLinkItems() : []; });
+  const resolveRef = (opts?: { range?: string; sheet?: string }): { w: Worksheet; ref: string } | undefined => {
+    const w = opts?.sheet ? book()?.findSheet(opts.sheet) : ws();
+    if (!w) return undefined;
+    const a = opts?.range ? parseAddress(opts.range) : undefined;
+    return { w, ref: a ? selAddr({ r1: a.r1, c1: a.c1, r2: a.r2, c2: a.c2 }) : selAddr(normSel(sel())) };
+  };
+  const xLinkSet = (url: string, opts?: { range?: string; sheet?: string; tooltip?: string; display?: string }): boolean => {
+    const b = book(); if (!b || ro()) return false;
+    const n = normalizeLink(url);
+    const t = resolveRef(opts);
+    if (!n || !t) return false;
+    commitEdit("none");
+    const recs = [xSetLink(b, t.w, t.ref, n, { tooltip: opts?.tooltip, display: opts?.display })];
+    const a = parseAddress(t.ref);
+    if (a && a.r1 === a.r2 && a.c1 === a.c2) {
+      // seperti Excel: sel kosong diisi teks tampilan (atau URL); tampilan tautan biru bergaris bawah
+      const cell = t.w.rows.get(a.r1)?.get(a.c1);
+      if (!cell || cell.value === null) recs.push(b.setValueRaw(t.w, a.r1, a.c1, opts?.display ?? n));
+      recs.push(...b.applyStyle(t.w, { r1: a.r1, c1: a.c1, r2: a.r2, c2: a.c2 }, { fontColor: "#0563C1", underline: true }));
+    }
+    b.commit(recs);
+    bumpLayout(); setLinkVer(v => v + 1);
+    emit("link", { action: "set", count: 1, url: n });
+    return true;
+  };
+  const xLinkRemove = (opts?: { range?: string; sheet?: string }): boolean => {
+    const b = book(); if (!b || ro()) return false;
+    const t = resolveRef(opts);
+    if (!t) return false;
+    const a = parseAddress(t.ref)!;
+    const recs = (t.w.hyperlinks ?? []).filter(h => { const p = parseAddress(h.ref); return !!p && p.r1 <= a.r2 && p.r2 >= a.r1 && p.c1 <= a.c2 && p.c2 >= a.c1; }).map(h => removeLinkAt(b, t.w, h.ref)).filter((r): r is NonNullable<typeof r> => !!r);
+    if (!recs.length) return false;
+    b.commit(recs); bumpLayout(); setLinkVer(v => v + 1);
+    emit("link", { action: "remove", count: recs.length });
+    return true;
+  };
+  const xLinkUpdate = (id: string, patch: { url?: string; tooltip?: string }): boolean => {
+    const b = book(); if (!b || ro()) return false;
+    const l = xListLinks(b).find(x => x.id === id);
+    const n = patch.url !== undefined ? normalizeLink(patch.url) : undefined;
+    if (!l || (patch.url !== undefined && !n)) return false;
+    commitEdit("none");
+    const rec = xSetLink(b, l.ws, l.link.ref, n ?? (l.link.target ?? `#${l.link.location ?? ""}`), { tooltip: patch.tooltip ?? l.link.tooltip, display: l.link.display });
+    b.commit([rec]); bumpLayout(); setLinkVer(v => v + 1);
+    emit("link", { action: "update", count: 1, url: n ?? undefined });
+    return true;
+  };
+  const xLinkRemoveById = (id: string): boolean => {
+    const b = book(); if (!b || ro()) return false;
+    const l = xListLinks(b).find(x => x.id === id);
+    const rec = l ? removeLinkAt(b, l.ws, l.link.ref) : undefined;
+    if (!rec) return false;
+    b.commit([rec]); bumpLayout(); setLinkVer(v => v + 1);
+    emit("link", { action: "remove", count: 1 });
+    return true;
+  };
+  const xLinkReplace = (from: string, to: string, opts?: { regex?: boolean; caseSensitive?: boolean }): number => {
+    const r = xReplace({ query: from, replacement: to, regex: opts?.regex, caseSensitive: opts?.caseSensitive, kinds: ["link"], scope: "book" }, false);
+    if (r.total) { setLinkVer(v => v + 1); emit("link", { action: "replace", count: r.total, url: to }); }
+    return r.byKind.link ?? 0;
+  };
+  const doReplaceEmit = (spec: ReplaceSpec & { scope?: XlsxScope }, onlyCurrent: boolean): ReplaceReport => {
+    const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceSpec["kinds"];
+    const r = xReplace({ ...spec, kinds }, onlyCurrent);
+    emit("replace", { ...r, query: spec.query, replacement: spec.replacement, kinds: kinds ?? ["text"] });
+    if (r.total) toast(`${r.total} diganti`);
+    return r;
+  };
+  /** Alfa tidak punya padanan pada fill/font XLSX: komposit di atas putih. */
+  const flatColor = (v: ColorValue): string => (v.alpha < 1 ? compositeOver(v.hex, v.alpha) : v.hex);
+  const [lkUrl, setLkUrl] = createSignal("https://");
+  const [lkTip, setLkTip] = createSignal("");
+  const [lkText, setLkText] = createSignal("");
+  const openLinkDialog = () => {
+    const b = book(), w = ws(); if (!b || !w || ro()) return;
+    const a = active();
+    const h = b.hyperlinkAt(w, a.row, a.col);
+    setLkUrl(h ? (h.target ?? (h.location ? `#${h.location}` : "https://")) : "https://");
+    setLkTip(h?.tooltip ?? "");
+    setLkText(h?.display ?? "");
+    setDialog("link");
+  };
+
   const buildApi = (): XlsxPreviewApi => ({
     events: bus, on: bus.on, off: bus.off, once: bus.once, run: (name, ...args) => bus.run(name, ...args),
     getBook: () => book(),
@@ -954,6 +1222,26 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     },
     undo: () => doUndo(), redo: () => doRedo(),
     getZoom: () => zoom(), setZoom: z => setZoom(Math.min(4, Math.max(0.25, z))),
+    goto: target => { const r = xGoto(target); emit("navigate", r); return r; },
+    find: spec => {
+      const r = xFind(spec);
+      emit("find", { query: spec.query, count: r.count });
+      if (r.current >= 0) emit("navigate", { target: r.matches[r.current].target, ok: true, label: `${r.current + 1}/${r.count}` });
+      return r;
+    },
+    findNext: () => { const m = xStep(1); if (m) emit("navigate", { target: m.target, ok: true, label: `${xcur.index + 1}` }); return m; },
+    findPrev: () => { const m = xStep(-1); if (m) emit("navigate", { target: m.target, ok: true, label: `${xcur.index + 1}` }); return m; },
+    findClear: () => xcur.clear(),
+    replace: spec => doReplaceEmit(spec, true),
+    replaceAll: spec => doReplaceEmit(spec, false),
+    replaceKinds: () => [...XLSX_REPLACE_KINDS],
+    links: {
+      list: xLinkItems, set: xLinkSet, remove: xLinkRemove, update: xLinkUpdate, removeById: xLinkRemoveById, replace: xLinkReplace,
+      open: url => {
+        if (url.startsWith("#")) { try { const pr = parseSheetRange(url.slice(1).replace(/\$/g, "")); goTo(pr.bounds.minRow, pr.bounds.minCol, pr.sheet); return true; } catch { return false; } }
+        return openExternal(url);
+      },
+    },
     ruler: ruler!,
     ole: { list: sheet => (sheet ? book()?.oleList().filter(o => o.sheet === sheet) : book()?.oleList()) ?? [], insert: oleInsert, update: oleUpdate, getBytes: id => book()?.oleBytes(id) ?? Promise.resolve(undefined), resize: oleResize },
   });
@@ -964,6 +1252,11 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       load: (i: Uint8Array | ArrayBuffer | File, n?: string) => a.load(i, n), getBytes: () => a.getBytes(), save: () => saveXlsx(),
       getSheets: () => a.getSheets(), setSheet: (r: number | string) => a.setSheet(r), getSelection: () => a.getSelection(), select: (r: string) => a.select(r),
       getCell: (ad: string) => a.getCell(ad), setCell: (ad: string, t: string) => a.setCell(ad, t), setPanel: (p: Panel) => setPanel(p),
+      goto: (t: XlsxNavTarget) => a.goto(t), find: (s: FindSpec & { scope?: XlsxScope }) => a.find(s), findNext: () => a.findNext(), findPrev: () => a.findPrev(), findClear: () => a.findClear(),
+      replace: (s: ReplaceSpec & { scope?: XlsxScope }) => a.replace(s), replaceAll: (s: ReplaceSpec & { scope?: XlsxScope }) => a.replaceAll(s), "replace.kinds": () => a.replaceKinds(),
+      "link.list": () => a.links.list(), "link.set": (u: string, o?: object) => a.links.set(u, o), "link.remove": (o?: object) => a.links.remove(o),
+      "link.update": (id: string, p: { url?: string; tooltip?: string }) => a.links.update(id, p), "link.removeById": (id: string) => a.links.removeById(id),
+      "link.replace": (f: string, to: string, o?: { regex?: boolean; caseSensitive?: boolean }) => a.links.replace(f, to, o), "link.open": (u: string) => a.links.open(u),
       "ole.list": (s?: string) => a.ole.list(s), "ole.insert": (f: FileInput, o?: object) => a.ole.insert(f, o),
       "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o), "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
       "ruler.show": () => a.ruler.setVisible(true), "ruler.hide": () => a.ruler.setVisible(false), "ruler.toggle": () => a.ruler.toggle(),
@@ -1034,6 +1327,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72];
   const FONTS = ["Calibri", "Arial", "Segoe UI", "Times New Roman", "Courier New", "Verdana", "Tahoma", "Georgia", "Consolas", "Cambria", "Trebuchet MS", "Comic Sans MS"];
   const hex = (c?: string) => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : undefined);
+  const cfLabels = { opacity: "Opasitas", none: "Tanpa warna", hex: "Hex", custom: "Kustom" };
+  const cfNote = "Excel menyimpan warna sel tanpa transparansi, sehingga dicampur dengan putih.";
 
   function applyFmt(patch: StylePatch) {
     const b = book(), w = ws(); if (!b || !w || ro()) return;
@@ -1418,6 +1713,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
             </Btn>
           </Show>
           <Btn icon="object" label="OLE" on={panel() === "ole"} disabled={!book()} title="Objek OLE tertanam: lihat, sisipkan, ganti isi" onClick={() => setPanel(p => (p === "ole" ? null : "ole"))} />
+          <Btn icon="code" label="Tautan" on={panel() === "links"} disabled={!book()} title="Kelola hyperlink" onClick={() => setPanel(p => (p === "links" ? null : "links"))} />
           <Btn icon="info" label="Info" on={panel() === "info"} disabled={!book()} title="Informasi workbook & worksheet" onClick={() => setPanel(p => (p === "info" ? null : "info"))} />
           <Btn icon="log" label="Log" on={panel() === "log"} title="Log pembacaan (berhasil / gagal / makro)" onClick={() => setPanel(p => (p === "log" ? null : "log"))}>
             <Show when={countLevel("error") > 0}><span class="badge">{countLevel("error")}</span></Show>
@@ -1442,9 +1738,10 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
           <button class="fb" classList={{ on: curStyle()?.underline !== "none" && !!curStyle() }} title="Garis bawah" onClick={() => applyFmt({ underline: curStyle()?.underline === "none" })}><u>U</u></button>
           <button class="fb" classList={{ on: !!curStyle()?.strike }} title="Coret" onClick={() => applyFmt({ strike: !curStyle()?.strike })}><s>S</s></button>
           <span class="fb-sep" />
-          <label class="fb fb-color" title="Warna teks"><span style={{ "border-bottom": `3px solid ${hex(curStyle()?.color) ?? "#000000"}` }}>A</span><input type="color" value={hex(curStyle()?.color) ?? "#000000"} onChange={e => applyFmt({ fontColor: e.currentTarget.value })} /></label>
-          <label class="fb fb-color" title="Warna isi sel"><span class="fill" style={{ background: hex(curStyle()?.bg) ?? "transparent" }}>▨</span><input type="color" value={hex(curStyle()?.bg) ?? "#ffff00"} onChange={e => applyFmt({ fill: e.currentTarget.value })} /></label>
+          <ColorField class="xl-cf" title="Warna teks" value={hex(curStyle()?.color) ?? null} fallback="#000000" allowNone labels={cfLabels} note={cfNote} onChange={v => applyFmt({ fontColor: v ? flatColor(v) : null })}><span style={{ "border-bottom": `3px solid ${hex(curStyle()?.color) ?? "#000000"}` }}>A</span></ColorField>
+          <ColorField class="xl-cf" title="Warna isi sel" value={hex(curStyle()?.bg) ?? null} fallback="#FFFF00" labels={cfLabels} note={cfNote} onChange={v => applyFmt({ fill: v ? flatColor(v) : null })}><span class="fill" style={{ background: hex(curStyle()?.bg) ?? "transparent" }}>▨</span></ColorField>
           <button class="fb" title="Hapus warna isi" onClick={() => applyFmt({ fill: null })}>∅</button>
+          <button class="fb" title="Hyperlink (Ctrl+K)" disabled={ro() || !ws()} onClick={() => openLinkDialog()}>🔗</button>
           <div class="xl-menu-wrap">
             <button class="fb" title="Border" onClick={() => setMenu(m => (m === "border" ? null : "border"))}>▦ ▾</button>
             <Show when={menu() === "border"}>
@@ -1583,12 +1880,18 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
                 <button classList={{ on: panel() === "find" }} onClick={() => openFind()}>Cari</button>
                 <button classList={{ on: panel() === "info" }} onClick={() => setPanel("info")}>Info</button>
                 <button classList={{ on: panel() === "log" }} onClick={() => setPanel("log")}>Log</button>
+                <button classList={{ on: panel() === "links" }} onClick={() => setPanel("links")}>Tautan</button>
                 <button classList={{ on: panel() === "ole" }} onClick={() => setPanel("ole")}>OLE</button>
                 <Show when={book()?.isMacro}><button classList={{ on: panel() === "macro" }} onClick={() => setPanel("macro")}>Makro</button></Show>
               </div>
               <button class="xl-x" onClick={() => setPanel(null)} title="Tutup">×</button>
             </div>
             <div class="xl-side-body">
+              <Show when={panel() === "links"}>
+                <LinkPanel items={linkItemsMemo()} readonly={ro()} tooltips labels={LINK_LABELS_ID}
+                  onGoto={i => api?.goto(i.target as XlsxNavTarget)} onUpdate={(i, p) => api?.links.update(i.id, p)} onRemove={i => api?.links.removeById(i.id)}
+                  onReplace={(from, to) => api?.links.replace(from, to) ?? 0} onOpen={i => api?.links.open(i.url)} onNotify={m => toast(m)} />
+              </Show>
               {/* OLE */}
               <Show when={panel() === "ole"}>
                 <p style={{ color: "var(--xl-muted)", margin: "0 0 6px" }}>Objek tertanam (Insert → Object). Klik ganda objek di sheet untuk membukanya di sini. Objek tidak pernah dieksekusi.</p>
@@ -1876,6 +2179,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
               <button onClick={() => { setCtx(null); oleInput.click(); }}>Sisipkan objek OLE di sini…</button>
               <Show when={selDrawing()}><button onClick={() => { setCtx(null); deleteSelectedImage(); }}>Hapus objek terpilih</button></Show>
             </Show>
+            <Show when={!ro()}><button onClick={() => { setCtx(null); openLinkDialog(); }}>Hyperlink…</button></Show>
             <button onClick={() => { setDialog("debug"); setCtx(null); }}>Debug sel {addr(c().row, c().col)}</button>
             <button onClick={() => { openEval(); setCtx(null); }}>Evaluasi formula…</button>
             <button onClick={() => { setQ(book()?.textAt(ws()!, c().row, c().col) ?? ""); openFind(); setCtx(null); }}>Cari nilai sel ini</button>
@@ -1889,6 +2193,24 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       </Show>
 
       {/* dialog: evaluasi */}
+      <Show when={dialog() === "link"}>
+        <div class="xl-overlay" onMouseDown={e => { if (e.target === e.currentTarget) setDialog(null); }}>
+          <div class="xl-dialog" style={{ width: "460px" }}>
+            <header><h3>Hyperlink — {ws()?.title}!{selAddr(normSel(sel()))}</h3><button class="xl-x" onClick={() => setDialog(null)}>×</button></header>
+            <div class="body">
+              <label class="xl-field"><span>URL, email, atau lokasi (#Sheet2!A1)</span><input class="xl-input" value={lkUrl()} onInput={e => setLkUrl(e.currentTarget.value)} ref={el => queueMicrotask(() => el.select())}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (xLinkSet(lkUrl(), { tooltip: lkTip() || undefined, display: lkText() || undefined })) setDialog(null); } }} /></label>
+              <label class="xl-field"><span>Teks tampilan (opsional)</span><input class="xl-input" value={lkText()} onInput={e => setLkText(e.currentTarget.value)} /></label>
+              <label class="xl-field"><span>Tooltip (opsional)</span><input class="xl-input" value={lkTip()} onInput={e => setLkTip(e.currentTarget.value)} /></label>
+              <div class="xl-row-inline">
+                <button class="xl-btn primary" onClick={() => { if (xLinkSet(lkUrl(), { tooltip: lkTip() || undefined, display: lkText() || undefined })) setDialog(null); else toast("URL tidak valid atau tidak aman"); }}>Terapkan</button>
+                <Show when={book()?.hyperlinkAt(ws()!, active().row, active().col)}><button class="xl-btn" onClick={() => { xLinkRemove(); setDialog(null); }}>Hapus tautan</button></Show>
+                <button class="xl-btn" onClick={() => setDialog(null)}>Batal</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
       <Show when={dialog() === "eval"}>
         <div class="xl-overlay" onMouseDown={e => { if (e.target === e.currentTarget) setDialog(null); }}>
           <div class="xl-dialog">

@@ -3,7 +3,9 @@
  * (ketik, Enter, hapus, tempel), format, tabel, gambar, format painter, pencarian, dan riwayat undo/redo.
  * UI (toolbar, panel) berada di DocxEditor.tsx dan hanya memanggil metode kelas ini.
  */
-import { attr, cloneEl, descendAll, els, first, isEl, mk, removeNode, serialize, setAttr, val, type XEl } from "./docx-xml";
+import { attr, cloneEl, descendAll, els, first, insertAfter, isEl, mk, removeNode, serialize, setAttr, val, type XEl } from "./docx-xml";
+import { addStyle } from "@office-kit/docx";
+import { DEFAULT_TOC, buildTocParagraphs, buildTocTitle, ensureTocStyles, findTocs, removeTocField, tocHeadings, wrapTocSdt, type TocField, type TocOptions } from "./docx-toc";
 import { DocxBook, walkBlocks, type Section } from "./docx-model";
 import {
   Registry, condForCell, condForParagraph, fillBlocks, fillParagraph, refreshNumbering, renderParagraph, renderTable, type RenderCtx,
@@ -21,8 +23,12 @@ import {
 import { buildGrid, type GCell, type Grid, type Rect } from "./docx-table";
 import * as T from "./docx-table";
 import { cloneDrawing, maxDocPrId, readDrawing, replaceBlip, setAlt, setCrop, setLockAspect, setPosition, setRotation, setSize, setWrapMode, sniffImageSize, type ImgInfo, type WrapMode } from "./docx-image";
+import { compileFind, replaceInString } from "../editor-kit/find-replace";
 import { findAll, replaceHits, type Hit, type SearchOpts, type SearchResult } from "./docx-search";
-import { mergeR, readP, readR, type RProps } from "./docx-style";
+import { DOCX_REPLACE_KINDS, findFills, findFonts, findInHeaderFooter, findTextColors, listLinks, removeLink, replaceFills, replaceFonts, replaceInHeaderFooter, replaceInHeaderFooterAt, replaceLinkUrls, replaceTextColors, setLinkTarget, toLinkItem, type DocxLink } from "./docx-nav";
+import { createFindCursor, isValueKind, makeReport, type FindMatch, type FindResult, type FindSpec, type NavEvent, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
+import type { LinkItem } from "../editor-kit/hyperlink";
+import { mergeP, mergeR, readP, readR, type RProps, type TabStop } from "./docx-style";
 import { createOleRun, findOleObject, oleSize, setOleSize, updateOleObject, type DocxOleRef } from "./docx-ole-edit";
 import type { PreparedOle } from "../office-shared/ole-embed";
 
@@ -70,6 +76,20 @@ export interface ViewHooks {
 }
 
 export interface Point { p: XEl; off: number }
+
+/** Target `goto` untuk editor DOCX. Nomor paragraf/tabel/halaman berbasis 1; indeks judul/daftar isi berbasis 0. */
+export type DocxNavTarget =
+  | { kind: "page"; page: number }
+  | { kind: "paragraph"; index: number; start?: number; end?: number }
+  | { kind: "heading"; index?: number; text?: string }
+  | { kind: "bookmark"; name: string }
+  | { kind: "table"; index: number; row?: number; col?: number }
+  | { kind: "toc"; index?: number }
+  | { kind: "link"; id: string }
+  | { kind: "search"; query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean; occurrence?: number }
+  | { kind: "match"; index: number }
+  | { kind: "start" }
+  | { kind: "end" };
 interface Sel2 { a: Point; b: Point }
 
 const PX_PER_TWIP = 96 / 1440;
@@ -1045,7 +1065,11 @@ export class DocxView {
     }
     const touched = new Set<XEl>();
     for (const s of sp) {
-      if (s.b <= s.a) continue;
+      if (s.b <= s.a) {
+        // paragraf kosong (mis. sel kosong dalam seleksi sel): tandai paragraf agar teks berikutnya mewarisi format
+        if (flatLength(s.p) === 0) { applyMarkPatch(s.p, patch); touched.add(s.p); }
+        continue;
+      }
       for (const r of runsInRange(s.p, s.a, s.b)) applyRunPatch(r.run, patch);
       normalize(s.p);
       touched.add(s.p);
@@ -1111,6 +1135,48 @@ export class DocxView {
   setStyle(id: string | null) { this.paraCmd("hist.style", { style: id }); }
   setLineSpacing(mult: number) { this.paraCmd("hist.spacing", { line: Math.round(mult * 240), lineRule: "auto" }); }
   setParaSpacing(beforePt: number | null, afterPt: number | null) { this.paraCmd("hist.spacing", { before: beforePt === null ? null : Math.round(beforePt * 20), after: afterPt === null ? null : Math.round(afterPt * 20) }); }
+  // ───────── tab stop ─────────
+
+  /** Tab stop efektif paragraf (twip dari margin kiri): style + format langsung, tanpa entri `clear`. */
+  tabStopsOf(p: XEl): TabStop[] {
+    const book = this.book;
+    if (!book) return [];
+    const base = book.styles.paraBase(val(first(p, "pPr"), "pStyle"), condForParagraph(book, p)).p;
+    return (mergeP(base, readP(first(p, "pPr"), book.styles.theme)).tabs ?? []).filter(t => t.val !== "clear");
+  }
+  private styleTabsOf(p: XEl): TabStop[] {
+    const book = this.book!;
+    return book.styles.paraBase(val(first(p, "pPr"), "pStyle"), condForParagraph(book, p)).p.tabs?.filter(t => t.val !== "clear") ?? [];
+  }
+  tabStopsAtCaret(): TabStop[] {
+    const s = this.selPoints();
+    return s ? this.tabStopsOf(s.a.p) : [];
+  }
+  /** Terapkan perubahan daftar tab ke semua paragraf terpilih (`mutate` menerima tab efektif tiap paragraf). */
+  private tabsCmd(label: string, mutate: (cur: TabStop[], p: XEl) => TabStop[]) {
+    this.paraCmd(label, p => {
+      const next = mutate(this.tabStopsOf(p), p).filter(t => t.pos > 0).sort((a, b) => a.pos - b.pos);
+      const styleTabs = this.styleTabsOf(p);
+      const same = (a: TabStop, b: TabStop) => a.pos === b.pos && a.val === b.val && (a.leader ?? "none") === (b.leader ?? "none");
+      const direct = next.filter(t => !styleTabs.some(st => same(st, t)));
+      const clears = styleTabs.filter(st => !next.some(n => n.pos === st.pos)).map(st => ({ pos: st.pos, val: "clear" as const }));
+      const all = [...direct.map(t => ({ pos: t.pos, val: t.val as "left" | "center" | "right" | "decimal" | "bar", leader: t.leader })), ...clears];
+      return { tabs: all.length ? all : null };
+    });
+  }
+  /** Ganti seluruh tab stop paragraf terpilih dengan `list` (twip). */
+  setTabStops(list: TabStop[]) { this.tabsCmd("hist.tabs", () => list.map(t => ({ pos: Math.round(t.pos), val: t.val, leader: t.leader }))); }
+  addTabStop(posTw: number, val: TabStop["val"] = "left", leader?: string) {
+    const pos = Math.round(posTw);
+    this.tabsCmd("hist.tabs", cur => [...cur.filter(t => t.pos !== pos), { pos, val, leader }]);
+  }
+  removeTabStop(posTw: number) { const pos = Math.round(posTw); this.tabsCmd("hist.tabs", cur => cur.filter(t => t.pos !== pos)); }
+  moveTabStop(fromTw: number, toTw: number) {
+    const from = Math.round(fromTw), to = Math.round(toTw);
+    this.tabsCmd("hist.tabs", cur => cur.map(t => (t.pos === from ? { ...t, pos: to } : t)).filter((t, i, a) => a.findIndex(x => x.pos === t.pos) === i));
+  }
+  clearTabStops() { this.tabsCmd("hist.tabs", () => []); }
+
   setShading(color: string | null) { this.paraCmd("hist.color", { shd: color }); }
   setParaBorder(on: boolean) { this.paraCmd("hist.border", { borders: on ? { top: "000000", left: "000000", bottom: "000000", right: "000000" } : null }); }
   setIndent(leftPt: number | null, firstPt: number | null, hangingPt?: number | null) {
@@ -1199,7 +1265,31 @@ export class DocxView {
     const g = buildGrid(tbl);
     const cell = g.cells.find(c => c.el === tc);
     if (!cell) return null;
-    return { tbl, g, cell, rect: { r1: cell.row, c1: cell.col, r2: cell.row + cell.rowspan - 1, c2: cell.col + cell.colspan - 1 } };
+    let rect: Rect = { r1: cell.row, c1: cell.col, r2: cell.row + cell.rowspan - 1, c2: cell.col + cell.colspan - 1 };
+    // seleksi asli yang melintasi beberapa sel pada tabel yang sama → rentang sel (bukan hanya sel di kursor)
+    const fc = s.b.p !== s.a.p ? this.cellInTable(s.b.p, tbl) : undefined;
+    const fcell = fc ? g.cells.find(c => c.el === fc) : undefined;
+    if (fcell && fcell !== cell) {
+      rect = T.expandRect(g, {
+        r1: Math.min(rect.r1, fcell.row), c1: Math.min(rect.c1, fcell.col),
+        r2: Math.max(rect.r2, fcell.row + fcell.rowspan - 1), c2: Math.max(rect.c2, fcell.col + fcell.colspan - 1),
+      });
+    }
+    return { tbl, g, cell, rect };
+  }
+
+  /** Sel (`tc`) milik `tbl` yang memuat paragraf `p` (menembus tabel bersarang), atau undefined. */
+  private cellInTable(p: XEl, tbl: XEl): XEl | undefined {
+    const book = this.book!;
+    let cur: XEl | undefined = p;
+    while (cur) {
+      if (cur.name.local === "tc") {
+        const tr = book.parentOf(cur);
+        if (tr && book.parentOf(tr) === tbl) return cur;
+      }
+      cur = book.parentOf(cur);
+    }
+    return undefined;
   }
 
   private outermostTable(tbl: XEl): XEl {
@@ -1770,6 +1860,321 @@ export class DocxView {
     for (const p of new Set(hits.map(h => h.p))) { normalize(p); this.rerenderPara(p); }
     this.commit("hist.replace"); this.schedulePaginate(30);
     return n;
+  }
+
+  // ───────── daftar isi ─────────
+
+  /** Teks bawaan daftar isi (diisi editor sesuai bahasa). */
+  tocText = { title: "Table of Contents", empty: "No table of contents entries found." };
+
+  tocList(): TocField[] { return this.book ? findTocs(this.book) : []; }
+  private pageOfPara(p: XEl): number | undefined {
+    const n = this.reg.domOf.get(p)?.closest<HTMLElement>(".dx-page")?.dataset.no;
+    return n ? Number(n) : undefined;
+  }
+  private tocContentTw(): number {
+    const sc = this.book!.sections()[0];
+    return Math.max(1440, sc.w - sc.ml - sc.mr);
+  }
+  private ensureTocStyles() {
+    const book = this.book!;
+    if (ensureTocStyles(book, o => addStyle(book.doc, o))) book.rebuildEngines();
+  }
+  /** Sisipkan daftar isi di kursor (setelah paragraf aktif). Mengembalikan false bila tidak ada dokumen / readonly. */
+  insertToc(partial: Partial<TocOptions> = {}): boolean {
+    const book = this.book;
+    if (!book || this.readonly) return false;
+    const o: TocOptions = { ...DEFAULT_TOC, title: this.tocText.title, ...partial };
+    this.ensureTocStyles();
+    const pt = this.selPoints();
+    const ref = pt?.b.p;
+    const container = (ref && book.parentOf(ref)) || book.body;
+    const skip = new Set<XEl>();
+    const headings = tocHeadings(book, this.outline(), o, skip);
+    const paras = buildTocParagraphs({ book, headings, options: o, pageOf: p => this.pageOfPara(p), contentTw: this.tocContentTw(), emptyText: this.tocText.empty });
+    const kids = [...(o.title ? [buildTocTitle(book, o.title)] : []), ...paras];
+    const sdt = wrapTocSdt(kids);
+    if (ref && book.parentOf(ref)) insertAfter(container, ref, sdt);
+    else { container.children.push(sdt); container.selfClosing = false; }
+    book.reindex();
+    this.renderAll({ sel: null });
+    this.refreshTocPages();
+    this.commit("hist.toc");
+    return true;
+  }
+  /** Perbarui daftar isi (semua, atau satu menurut indeks) dari judul saat ini + nomor halaman terbaru. Mengembalikan jumlah yang diperbarui. */
+  updateToc(which?: number): number {
+    const book = this.book;
+    if (!book || this.readonly) return 0;
+    const tocs = findTocs(book);
+    if (!tocs.length || (which !== undefined && !tocs[which])) return 0;
+    this.ensureTocStyles();
+    this.rebuildTocs(which);
+    this.renderAll({ sel: null });
+    this.refreshTocPages(which);
+    this.commit("hist.toc");
+    return which === undefined ? tocs.length : 1;
+  }
+  private rebuildTocs(which?: number) {
+    const book = this.book!;
+    const tocs = findTocs(book);
+    const skip = new Set<XEl>(tocs.flatMap(t => t.paras));
+    const outline = this.outline();
+    for (const f of [...tocs].reverse()) {
+      if (which !== undefined && f.index !== which) continue;
+      const headings = tocHeadings(book, outline, f.options, skip);
+      const paras = buildTocParagraphs({ book, headings, options: f.options, pageOf: p => this.pageOfPara(p), contentTw: this.tocContentTw(), emptyText: this.tocText.empty });
+      const at = f.container.children.indexOf(f.paras[0]);
+      for (const p of f.paras) removeNode(f.container, p);
+      f.container.children.splice(Math.max(0, at), 0, ...paras);
+      f.container.selfClosing = false;
+    }
+    book.reindex();
+  }
+  /** Nomor halaman bergantung pada tata letak; ulangi (maks. 3 kali) sampai stabil. */
+  private refreshTocPages(which?: number) {
+    const book = this.book!;
+    const sig = () => this.outline().map(h => this.pageOfPara(h.p) ?? 0).join(",");
+    let last = sig();
+    for (let i = 0; i < 3; i++) {
+      this.rebuildTocs(which);
+      this.renderAll({ sel: null });
+      const now = sig();
+      if (now === last) break;
+      last = now;
+    }
+    void book;
+  }
+  /** Hapus daftar isi (semua, atau satu menurut indeks). Mengembalikan jumlah yang dihapus. */
+  removeToc(which?: number): number {
+    const book = this.book;
+    if (!book || this.readonly) return 0;
+    const tocs = findTocs(book);
+    let n = 0;
+    for (const f of [...tocs].reverse()) {
+      if (which !== undefined && f.index !== which) continue;
+      removeTocField(book, f); n++;
+    }
+    if (!n) return 0;
+    book.reindex();
+    this.renderAll({ sel: null });
+    this.commit("hist.toc");
+    return n;
+  }
+
+  // ───────── navigasi & cari/ganti lintas jenis (event bus) ─────────
+
+  private findCursor = createFindCursor<{ m: FindMatch; hit?: number; link?: DocxLink }>();
+
+  /** Cari lintas jenis (`text`, `headerFooter`, `link`; default semuanya). Hasil pertama disorot kecuali `select === false`. */
+  findMatches(spec: FindSpec): FindResult {
+    const book = this.book;
+    const empty: FindResult = { query: spec.query, count: 0, matches: [], current: -1 };
+    if (!book || !spec.query) { this.clearSearch(); this.findCursor.clear(); return empty; }
+    const kinds = (spec.kinds?.length ? spec.kinds : ["text", "headerFooter", "link"]) as ReplaceKind[];
+    const limit = spec.limit ?? 2000;
+    const items: { m: FindMatch; hit?: number; link?: DocxLink }[] = [];
+    let error: string | undefined, truncated = false;
+    const add = (m: Omit<FindMatch, "index">, extra: { hit?: number; link?: DocxLink }) => { if (items.length < limit) items.push({ m: { ...m, index: items.length }, ...extra }); else truncated = true; };
+    if (kinds.includes("text")) {
+      const r = this.search({ query: spec.query, regex: !!spec.regex, caseSensitive: !!spec.caseSensitive, wholeWord: !!spec.wholeWord });
+      error = r.error; truncated ||= r.truncated;
+      r.hits.forEach((h, i) => add({
+        kind: "text", text: h.text, before: h.before, after: h.after,
+        location: h.where.kind === "table" ? `¶${h.where.para} · T${h.where.table} r${h.where.row} c${h.where.col}` : `¶${h.where.para}`,
+        target: { kind: "paragraph", index: h.where.para, start: h.start, end: h.end },
+      }, { hit: i }));
+    } else this.clearSearch();
+    if (kinds.includes("headerFooter")) {
+      for (const h of findInHeaderFooter(book, spec, limit)) add({ kind: "headerFooter", text: h.text, before: h.before, after: h.after, location: h.part, target: { kind: "page", page: 1 } }, {});
+    }
+    if (kinds.includes("link")) {
+      const { re } = compileFind(spec);
+      if (re) for (const l of listLinks(book)) {
+        re.lastIndex = 0;
+        if (re.test(l.url)) add({ kind: "link", text: l.url, before: "", after: l.text, location: `¶${l.para}`, target: { kind: "link", id: l.id } }, { link: l });
+      }
+    }
+    this.findCursor.set(items, -1);
+    const res: FindResult = { query: spec.query, count: items.length, matches: items.map(i => i.m), error, truncated, current: -1 };
+    if (spec.select !== false && items.length) res.current = this.findStep(1)?.index ?? -1;
+    return res;
+  }
+  /** Maju/mundur ke hasil cari berikutnya (berputar) dan fokuskan. */
+  findStep(dir: 1 | -1): FindMatch | undefined {
+    const it = this.findCursor.step(dir);
+    if (!it) return undefined;
+    if (it.hit !== undefined) this.gotoHit(it.hit);
+    else if (it.link) { this.focusPara(it.link.p, 0, true); }
+    else this.gotoPage(1);
+    return it.m;
+  }
+  findClear() { this.findCursor.clear(); this.clearSearch(); }
+  get findIndex() { return this.findCursor.index; }
+
+  private gotoPage(n: number): boolean {
+    const pages = [...this.pagesEl.querySelectorAll<HTMLElement>(".dx-page")];
+    const pg = pages.find(p => Number(p.dataset.no) === n);
+    if (!pg) return false;
+    pg.scrollIntoView({ block: "start", behavior: "auto" });
+    const firstP = pg.querySelector<HTMLElement>(".dx-p");
+    const p = firstP ? this.reg.elOf.get(firstP) : undefined;
+    if (p && this.isBodyPara(p)) { this.focusPara(p, 0, false); }
+    return true;
+  }
+  private firstParaOfCell(tc: XEl): XEl | undefined { return this.firstParaIn(tc); }
+
+  /** Pindahkan fokus/viewport ke target. Mengembalikan hasil (ok=false bila target tidak ditemukan). */
+  gotoTarget(t: DocxNavTarget): NavEvent {
+    const book = this.book;
+    const fail = (): NavEvent => ({ target: t, ok: false });
+    if (!book) return fail();
+    const paras = () => [...book.paragraphs()].map(x => x.p);
+    const toPara = (p: XEl | undefined, start?: number, end?: number, label?: string): NavEvent => {
+      if (!p) return fail();
+      if (start !== undefined && end !== undefined && end > start) { this.focusPara(p, start, true); this.selectRange(p, start, end); }
+      else this.focusPara(p, start ?? 0, true);
+      return { target: t, ok: true, label };
+    };
+    switch (t.kind) {
+      case "page": {
+        const n = Math.max(1, Math.min(this.paginator.count || 1, Math.round(t.page)));
+        return this.gotoPage(n) ? { target: t, ok: true, label: `${n}/${this.paginator.count}` } : fail();
+      }
+      case "paragraph": { const l = paras(); return toPara(l[Math.round(t.index) - 1], t.start, t.end, `¶${t.index}/${l.length}`); }
+      case "heading": {
+        const o = this.outline();
+        const h = t.index !== undefined ? o[t.index] : t.text ? o.find(x => x.text.toLowerCase() === t.text!.toLowerCase()) ?? o.find(x => x.text.toLowerCase().includes(t.text!.toLowerCase())) : undefined;
+        return toPara(h?.p, 0, undefined, h?.text);
+      }
+      case "bookmark": {
+        const bs = descendAll(book.body, "bookmarkStart").find(b => attr(b, "name") === t.name);
+        if (!bs) return fail();
+        const p = paras().find(q => descendAll(q, "bookmarkStart").includes(bs));
+        return p ? toPara(p, 0, undefined, t.name) : (this.scrollToBookmark(t.name), { target: t, ok: true, label: t.name });
+      }
+      case "table": {
+        const tbl = book.tables()[Math.round(t.index) - 1];
+        if (!tbl) return fail();
+        const rows = els(tbl, "tr");
+        const tr = rows[Math.max(0, Math.min(rows.length - 1, (t.row ?? 1) - 1))];
+        const cells = tr ? els(tr, "tc") : [];
+        const tc = cells[Math.max(0, Math.min(cells.length - 1, (t.col ?? 1) - 1))];
+        return toPara(tc ? this.firstParaOfCell(tc) : undefined, 0, undefined, `T${t.index}`);
+      }
+      case "toc": { const f = this.tocList()[t.index ?? 0]; return toPara(f?.paras[0], 0, undefined, "TOC"); }
+      case "link": { const l = listLinks(book).find(x => x.id === t.id); return toPara(l?.p, 0, undefined, l?.url); }
+      case "search": {
+        const r = this.findMatches({ query: t.query, regex: t.regex, caseSensitive: t.caseSensitive, wholeWord: t.wholeWord, kinds: ["text"], select: false });
+        const i = t.occurrence ?? 0;
+        if (!r.count || i < 0 || i >= r.count) return fail();
+        this.findCursor.index = i - 1;
+        const m = this.findStep(1);
+        return { target: t, ok: !!m, label: `${i + 1}/${r.count}` };
+      }
+      case "match": {
+        const m = this.findCursor.items[t.index];
+        if (!m) return fail();
+        this.findCursor.index = t.index - 1;
+        this.findStep(1);
+        return { target: t, ok: true, label: `${t.index + 1}/${this.findCursor.items.length}` };
+      }
+      case "start": { const p = paras()[0]; return toPara(p, 0, undefined, "start"); }
+      case "end": { const l = paras(); const p = l[l.length - 1]; return toPara(p, p ? flatLength(p) : 0, undefined, "end"); }
+    }
+  }
+
+  /** Daftar hyperlink dokumen (body). */
+  linkItems(): LinkItem[] { return this.book ? listLinks(this.book).map(toLinkItem) : []; }
+  /** Pasang/ubah tautan pada hyperlink hasil `linkItems()` (id). */
+  updateLink(id: string, patch: { url?: string; tooltip?: string }): boolean {
+    const book = this.book;
+    if (!book || this.readonly) return false;
+    const l = listLinks(book).find(x => x.id === id);
+    if (!l) return false;
+    if (patch.url !== undefined) setLinkTarget(book, l.el, patch.url, patch.tooltip);
+    else if (patch.tooltip !== undefined) { l.el.attrs = l.el.attrs.filter(a => a.name.local !== "tooltip"); if (patch.tooltip) setAttr(l.el, "tooltip", patch.tooltip); }
+    this.rerenderPara(l.p);
+    this.commit("hist.link");
+    return true;
+  }
+  removeLinkById(id: string): boolean {
+    const book = this.book;
+    if (!book || this.readonly) return false;
+    const l = listLinks(book).find(x => x.id === id);
+    if (!l) return false;
+    removeLink(book, l);
+    this.rerenderPara(l.p);
+    this.commit("hist.link");
+    return true;
+  }
+  /** Ganti URL massal (substring/regex pada URL tautan). Mengembalikan jumlah tautan yang berubah. */
+  replaceLinks(spec: { query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean }, replacement: string): number {
+    const book = this.book;
+    if (!book || this.readonly) return 0;
+    const n = replaceLinkUrls(book, spec, replacement);
+    if (n) { this.renderAll({ sel: null }); this.commit("hist.link"); }
+    return n;
+  }
+
+  /**
+   * Ganti berdasarkan jenis (satu riwayat undo untuk seluruh permintaan).
+   * `text`/`headerFooter`/`link`: `query` teks/regex; `font`/`color`/`fill`: `query` nilai persis, `replacement` kosong = hapus (warna).
+   */
+  replaceKinds(spec: ReplaceSpec, onlyCurrent = false): ReplaceReport {
+    const book = this.book;
+    const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceKind[];
+    const rep = (counts: Partial<Record<ReplaceKind, number>>) => makeReport(kinds, DOCX_REPLACE_KINDS, counts);
+    if (!book || this.readonly || !spec.query) return { ...rep({}), error: this.readonly ? "readonly" : undefined };
+    const counts: Partial<Record<ReplaceKind, number>> = {};
+    const touched = new Set<XEl>();
+    let structural = false;
+    const supported = kinds.filter(k => DOCX_REPLACE_KINDS.includes(k));
+    if (onlyCurrent && supported.every(k => !isValueKind(k))) {
+      // satu hasil saja: yang aktif (atau pertama) menurut jenis yang diminta
+      if (!this.findCursor.items.length) this.findMatches({ ...spec, kinds: supported, select: false });
+      const cur = this.findCursor.current ?? this.findCursor.items[0];
+      if (!cur) return rep({});
+      if (cur.hit !== undefined) {
+        const hit = this.findHits[cur.hit];
+        if (hit) { counts.text = replaceHits([hit], spec, spec.replacement); normalize(hit.p); touched.add(hit.p); }
+      } else if (cur.link) {
+        const { re } = compileFind(spec);
+        if (re) { const r = replaceInString(cur.link.url, re, spec.replacement, !!spec.regex); if (r.count && r.text.trim()) { setLinkTarget(book, cur.link.el, r.text); counts.link = 1; structural = true; } }
+      } else if (cur.m.kind === "headerFooter") {
+        // hasil header/footer tunggal: ganti kemunculan pertama pada urutan yang sama dengan pencarian
+        const all = findInHeaderFooter(book, spec);
+        const idx = this.findCursor.items.filter(x => x.m.kind === "headerFooter").indexOf(cur);
+        if (all[idx]) { counts.headerFooter = replaceInHeaderFooterAt(book, all[idx], spec, spec.replacement); structural = true; }
+      }
+    } else {
+      for (const k of supported) {
+        if (k === "text") {
+          const r = findAll(book, spec);
+          counts.text = replaceHits(r.hits, spec, spec.replacement);
+          for (const h of r.hits) { normalize(h.p); touched.add(h.p); }
+        } else if (k === "headerFooter") { counts.headerFooter = replaceInHeaderFooter(book, spec, spec.replacement); structural ||= !!counts.headerFooter; }
+        else if (k === "link") { counts.link = replaceLinkUrls(book, spec, spec.replacement); structural ||= !!counts.link; }
+        else if (k === "font") { counts.font = replaceFonts(book, spec.query, spec.replacement); structural ||= !!counts.font; }
+        else if (k === "color") { counts.color = replaceTextColors(book, spec.query, spec.replacement); structural ||= !!counts.color; }
+        else if (k === "fill") { counts.fill = replaceFills(book, spec.query, spec.replacement); structural ||= !!counts.fill; }
+      }
+    }
+    const report = rep(counts);
+    if (report.total) {
+      if (structural) this.renderAll({ sel: null });
+      else for (const p of touched) this.rerenderPara(p);
+      this.commit("hist.replace");
+      this.schedulePaginate(30);
+      this.findCursor.clear(); this.clearSearch();
+    }
+    return report;
+  }
+  /** Hitungan nilai (font/warna/isi) untuk pratinjau sebelum mengganti. */
+  countValue(kind: "font" | "color" | "fill", value: string): number {
+    const b = this.book;
+    if (!b) return 0;
+    return kind === "font" ? findFonts(b, value) : kind === "color" ? findTextColors(b, value) : findFills(b, value);
   }
 
   // ───────── info ─────────

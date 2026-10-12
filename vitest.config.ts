@@ -7,4 +7,6 @@ export default defineConfig({
   resolve: {
     conditions: ["development", "browser"],
   },
+  // solid-js harus ikut diproses Vite agar `conditions` di atas berlaku; kalau tidak, build server (`server.js`) terpakai di jsdom
+  test: { server: { deps: { inline: [/solid-js/, /@solidjs/] } } },
 });

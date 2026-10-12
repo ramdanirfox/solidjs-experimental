@@ -1,0 +1,22 @@
+.lk-panel { display: flex; flex-direction: column; gap: 6px; font: 12px/1.35 system-ui, sans-serif; }
+.lk-head { display: flex; align-items: baseline; justify-content: space-between; }
+.lk-count { opacity: 0.65; }
+.lk-in { width: 100%; box-sizing: border-box; padding: 3px 6px; border: 1px solid rgba(127, 127, 127, 0.5); border-radius: 4px; background: transparent; color: inherit; font: inherit; }
+.lk-bulk { border: 1px dashed rgba(127, 127, 127, 0.5); border-radius: 6px; padding: 4px 6px; display: flex; flex-direction: column; gap: 4px; }
+.lk-bulk > summary { cursor: pointer; }
+.lk-bulk[open] > summary { margin-bottom: 4px; }
+.lk-empty { opacity: 0.65; padding: 8px 2px; }
+.lk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.lk-item { border: 1px solid rgba(127, 127, 127, 0.35); border-radius: 6px; padding: 5px 6px; display: flex; flex-direction: column; gap: 4px; }
+.lk-main { display: flex; flex-direction: column; cursor: pointer; min-width: 0; }
+.lk-text { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lk-url { color: #2563eb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lk-loc { opacity: 0.6; font-size: 11px; }
+.lk-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.lk-btn { padding: 2px 8px; border: 1px solid rgba(127, 127, 127, 0.55); border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.lk-btn:hover:not(:disabled) { background: rgba(127, 127, 127, 0.18); }
+.lk-btn:disabled { opacity: 0.45; cursor: default; }
+.lk-btn.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+.lk-btn.danger { color: #c0392b; }
+.lk-edit { display: flex; flex-direction: column; gap: 4px; }
+.lk-edit label { display: flex; flex-direction: column; gap: 2px; }
