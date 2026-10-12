@@ -28,6 +28,8 @@ import { LinkPanel, LINK_LABELS_ID } from "../editor-kit/LinkPanel";
 import { compileFind, createFindCursor, isValueKind, makeReport, matchRanges, replaceInString, snippet, type FindMatch, type FindResult, type FindSpec, type NavEvent, type OfficeNavEvents, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
 import { normalizeLink, openExternal, type LinkItem, type OfficeLinkEvents } from "../editor-kit/hyperlink";
 import { compositeOver } from "../editor-kit/color-util";
+import type { SheetRef } from "@office-kit/xlsx/workbook";
+import { splitFormatKeys, type FormatProps, type FormatReport, type FormatSpec, type OfficeFormatEvents, type OfficeStructureEvents } from "../editor-kit/format";
 import { XLSX_REPLACE_KINDS, collectUnits, countValue as countStyleValue, listLinks as xListLinks, removeLinkAt, replaceValues as replaceStyleValues, setLink as xSetLink, toLinkItem as xToLinkItem, type XUnit } from "./xlsx-nav";
 import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
 import { prepareOle } from "../office-shared/ole-embed";
@@ -47,7 +49,7 @@ export type XlsxNavTarget =
   | { kind: "start" } | { kind: "end" };
 export type XlsxScope = "sheet" | "book" | "selection";
 
-export interface XlsxPreviewEventMap extends Omit<OfficeCommonEvents, "locale">, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, RulerEventMap {
+export interface XlsxPreviewEventMap extends Omit<OfficeCommonEvents, "locale">, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, RulerEventMap {
   ready: { api: XlsxPreviewApi };
   /** Isi/format workbook berubah (kasar: dipicu setiap perubahan model; cek `modified`). */
   "cell-edit": { sheet: string; row: number; col: number; address: string; text: string };
@@ -56,6 +58,11 @@ export interface XlsxPreviewEventMap extends Omit<OfficeCommonEvents, "locale">,
 }
 
 /** Handle imperatif yang diberikan lewat `onReady`. */
+/** Target `format.apply` XLSX: rentang A1 (boleh `Sheet!A1:B2`), default seleksi. */
+export interface XlsxFormatTarget { range?: string; sheet?: string | number }
+export const XLSX_FORMAT_KEYS = ["bold", "italic", "underline", "strike", "fontFamily", "fontSize", "color", "colorAlpha", "fill", "fillAlpha", "stroke", "align", "valign", "wrap", "link", "numFmt", "border", "indent", "clear"] as const;
+export interface XlsxSheetInfo { index: number; name: string; kind: string; state: string }
+
 export interface XlsxPreviewApi {
   readonly events: EditorEventBus<XlsxPreviewEventMap>;
   on: EditorEventBus<XlsxPreviewEventMap>["on"];
@@ -91,6 +98,34 @@ export interface XlsxPreviewApi {
   /** Ganti semua, per jenis: `text`, `formula`, `link`, `comment`, `font`, `color`, `fill`. */
   replaceAll(spec: ReplaceSpec & { scope?: XlsxScope }): ReplaceReport;
   replaceKinds(): string[];
+  /** Format sel: umum + khusus XLSX (`numFmt`, `border`, `indent`, `clear`). Alfa warna dikomposit di atas putih (XLSX tak punya kanal alfa). */
+  readonly format: {
+    keys(): string[];
+    apply(spec: FormatSpec<XlsxFormatTarget>): FormatReport;
+    /** Format sel aktif (atau sel pertama target). */
+    get(target?: XlsxFormatTarget): FormatProps | undefined;
+  };
+  /** Struktur sheet (dengan undo). Referensi sheet = nama atau indeks. */
+  readonly sheets: {
+    list(): XlsxSheetInfo[];
+    add(opts?: { name?: string; at?: number }): string | undefined;
+    /** Ganti nama; referensi `Nama!A1` di rumus ikut diperbarui. */
+    rename(ref: string | number, newName: string): boolean;
+    remove(ref: string | number): boolean;
+    move(ref: string | number, toIndex: number): boolean;
+    setVisible(ref: string | number, visible: boolean): boolean;
+  };
+  /** Operasi pada rentang (default: seleksi). */
+  readonly range: {
+    merge(range?: string, opts?: { center?: boolean }): boolean;
+    unmerge(range?: string): boolean;
+    clear(range?: string): number;
+    freeze(rows: number, cols: number): boolean;
+    setColumnWidth(col: string | number, px: number): boolean;
+    setRowHeight(row: number, px: number): boolean;
+    /** AutoFilter pada rentang (default seleksi); `false` = matikan. */
+    autofilter(range?: string | false): boolean;
+  };
   readonly links: {
     list(): LinkItem[];
     /** Pasang hyperlink pada rentang (default: seleksi). `#Sheet!A1` = tautan internal. */
@@ -567,10 +602,31 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       .map((r, i) => ({ sel: { r1: r.r1, c1: r.c1, r2: Math.min(r.r2, layout().maxRow), c2: Math.min(r.c2, layout().maxCol) }, color: REF_COLORS[i % REF_COLORS.length]! }));
   });
 
+  /** Sinkronkan sheet aktif setelah struktur sheet berubah (tambah/hapus/pindah/undo). `prefer` = judul yang ingin diaktifkan. */
+  let activeRef: SheetRef | undefined;
+  function syncSheets(prefer?: string) {
+    const b = book(); if (!b) return;
+    let i = prefer ? b.sheets.findIndex(s => s.sheet.title === prefer && s.kind === "worksheet") : -1;
+    if (i < 0 && activeRef) i = b.sheets.indexOf(activeRef);
+    if (i < 0 || b.sheets[i]?.kind !== "worksheet") {
+      const start = Math.min(untrack(sheetIdx), b.sheets.length - 1);
+      i = -1;
+      for (let d = 0; d < b.sheets.length && i < 0; d++) for (const k of [start - d, start + d]) if (k >= 0 && k < b.sheets.length && b.sheets[k]!.kind === "worksheet" && b.sheets[k]!.state === "visible") { i = k; break; }
+      if (i < 0) i = Math.max(0, b.sheets.findIndex(s => s.kind === "worksheet"));
+    }
+    activeRef = b.sheets[i];
+    batch(() => {
+      if (i !== untrack(sheetIdx)) { setSheetIdx(i); b.wb.activeSheetIndex = i; applySheetView(b, i); setFp(null); }
+      bumpLayout();
+    });
+  }
+  createEffect(() => { activeRef = book()?.sheets[sheetIdx()]; });
+
   function applyRecords(recs: EditRecord[] | undefined) {
     if (!recs?.length) return;
     setLive(book()!.ev.live);
     setSelImage(undefined);
+    syncSheets();
     bumpLayout();
     const last = recs[0]!;
     if (last.row > 0) goTo(last.row, last.col, last.sheet !== ws()?.title ? last.sheet : undefined);
@@ -980,7 +1036,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     const empty: FindResult = { query: spec.query, count: 0, matches: [], current: -1 };
     if (!b || !spec.query) { xcur.clear(); return empty; }
     const all: ReplaceKind[] = ["text", "formula", "link", "comment"];
-    const kinds = (spec.kinds?.length ? spec.kinds.filter(k => all.includes(k)) : all) as ReplaceKind[];
+    const searchable: ReplaceKind[] = [...all, "number", "name"]; // number/name hanya bila diminta lewat `kinds`
+    const kinds = (spec.kinds?.length ? spec.kinds.filter(k => searchable.includes(k)) : all) as ReplaceKind[];
     const { re, error } = compileFind(spec);
     if (!re) return { ...empty, error };
     const limit = spec.limit ?? 2000;
@@ -989,7 +1046,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     outer: for (const u of collectUnits(b, kinds, unitScope(spec.scope))) {
       for (const r of matchRanges(u.text, re)) {
         if (items.length >= limit) { truncated = true; break outer; }
-        items.push({ m: { index: items.length, kind: u.kind, text: u.text.slice(r.start, r.end), ...snippet(u.text, r.start, r.end), location: `${u.sheet}!${u.address}`, target: { kind: "cell", sheet: u.sheet, address: addr(u.row, u.col) } }, unit: u, start: r.start, end: r.end });
+        items.push({ m: { index: items.length, kind: u.kind, text: u.text.slice(r.start, r.end), ...snippet(u.text, r.start, r.end), location: u.kind === "name" ? u.sheet : `${u.sheet}!${u.address}`, target: u.kind === "name" ? { kind: "sheet", sheet: u.sheet } : { kind: "cell", sheet: u.sheet, address: addr(u.row, u.col) } }, unit: u, start: r.start, end: r.end });
       }
     }
     xcur.set(items, -1);
@@ -1000,7 +1057,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   const xStep = (dir: 1 | -1): FindMatch | undefined => {
     const it = xcur.step(dir);
     if (!it) return undefined;
-    goTo(it.unit.row, it.unit.col, it.unit.sheet);
+    if (it.unit.kind === "name") { const i = sheetByRef(it.unit.sheet); if (i >= 0) selectSheet(i); }
+    else goTo(it.unit.row, it.unit.col, it.unit.sheet);
     return it.m;
   };
 
@@ -1084,15 +1142,17 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       const seg = cur.unit.text.slice(cur.start, cur.end);
       const out = cur.unit.text.slice(0, cur.start) + (spec.regex ? seg.replace(single, spec.replacement) : spec.replacement) + cur.unit.text.slice(cur.end);
       if (cur.unit.kind === "link" && !out.trim()) return rep0({});
-      recs.push(cur.unit.set(out));
-      counts[cur.unit.kind] = 1;
+      const rec = cur.unit.set(out);
+      if (rec) { recs.push(rec); counts[cur.unit.kind] = 1; }
     } else {
       if (strKinds.length && re) {
         for (const u of collectUnits(b, strKinds, unitScope(spec.scope))) {
           const r = replaceInString(u.text, re, spec.replacement, !!spec.regex);
           if (!r.count || r.text === u.text) continue;
           if (u.kind === "link" && !r.text.trim()) continue;
-          recs.push(u.set(r.text));
+          const rec = u.set(r.text);
+          if (!rec) continue;
+          recs.push(rec);
           counts[u.kind] = (counts[u.kind] ?? 0) + r.count;
         }
       }
@@ -1105,6 +1165,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     if (report.total && recs.length) {
       b.commit(recs, styleOnly ? { styleOnly: true } : undefined);
       setLive(b.ev.live); bumpLayout();
+      if (counts.name) syncSheets();
       xcur.clear();
     }
     return report;
@@ -1197,6 +1258,88 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     setDialog("link");
   };
 
+  const st = (scope: string, action: string, ok: boolean, detail?: unknown): boolean => { emit("structure", { scope, action, ok, detail }); return ok; };
+
+  /** Resolusi target rentang → worksheet + Sel. Tanpa target: seleksi aktif. */
+  const rangeAt = (range?: string, sheet?: string | number): { w: Worksheet; sel: Sel } | undefined => {
+    const b = book(); if (!b) return undefined;
+    let text = range, ref = sheet;
+    if (text && text.includes("!")) { const k = text.lastIndexOf("!"); ref = ref ?? text.slice(0, k).replace(/^'|'$/g, "").replace(/''/g, "'"); text = text.slice(k + 1); }
+    let w = ws();
+    if (ref !== undefined) { const i = sheetByRef(ref); w = i >= 0 ? b.worksheetAt(i) : undefined; }
+    if (!w) return undefined;
+    if (!text) return { w, sel: sel() };
+    const a = parseAddress(text);
+    return a ? { w, sel: a } : undefined;
+  };
+
+  const formatApply = (spec: FormatSpec<XlsxFormatTarget>): FormatReport => {
+    const props = spec.props ?? {};
+    const { use, skipped } = splitFormatKeys(props, XLSX_FORMAT_KEYS);
+    const b = book(), t = rangeAt(spec.target?.range, spec.target?.sheet);
+    if (!b || !t || ro() || !use.length) return { applied: [], skipped: [...skipped, ...use], targets: 0 };
+    commitEdit("none");
+    const p: StylePatch = {};
+    const ok = new Set<string>();
+    const take = (k: string) => { if (use.includes(k)) ok.add(k); return use.includes(k); };
+    if (take("bold")) p.bold = !!props.bold;
+    if (take("italic")) p.italic = !!props.italic;
+    if (take("underline")) p.underline = !!props.underline;
+    if (take("strike")) p.strike = !!props.strike;
+    if (take("fontFamily") && props.fontFamily) p.fontName = props.fontFamily;
+    if (take("fontSize") && props.fontSize) p.fontSize = props.fontSize;
+    if (use.includes("color") && props.color !== undefined) { ok.add("color"); p.fontColor = props.color === null ? null : props.colorAlpha !== undefined && props.colorAlpha < 1 ? compositeOver(props.color, props.colorAlpha) : props.color; if (props.colorAlpha !== undefined) ok.add("colorAlpha"); }
+    if (use.includes("fill") && props.fill !== undefined) { ok.add("fill"); p.fill = props.fill === null ? null : props.fillAlpha !== undefined && props.fillAlpha < 1 ? compositeOver(props.fill, props.fillAlpha) : props.fill; if (props.fillAlpha !== undefined) ok.add("fillAlpha"); }
+    if (take("align")) p.h = props.align === "justify" ? "justify" : props.align;
+    if (take("valign")) p.v = props.valign === "middle" ? "center" : props.valign;
+    if (take("wrap")) p.wrap = !!props.wrap;
+    if (take("numFmt") && typeof props.numFmt === "string") p.numFmt = props.numFmt;
+    if (take("indent") && typeof props.indent === "number") p.indentDelta = props.indent;
+    if (take("clear") && props.clear) p.clear = true;
+    if (take("border") && props.border && typeof props.border === "object") p.border = props.border as StylePatch["border"];
+    if (use.includes("stroke") && props.stroke !== undefined) {
+      ok.add("stroke");
+      const s = props.stroke;
+      p.border = s === null || s.color === null ? { kind: "none" } : { kind: "outer", style: (s.width ?? 1) >= 3 ? "thick" : (s.width ?? 1) >= 2 ? "medium" : "thin", ...(s.color ? { color: s.color } : {}) };
+    }
+    const n = normSel(t.sel);
+    let targets = (n.r2 - n.r1 + 1) * (n.c2 - n.c1 + 1);
+    if (Object.keys(p).length) {
+      try {
+        const recs = b.applyStyle(t.w, t.sel, p);
+        if (recs.length) { b.commit(recs, { styleOnly: true }); bumpLayout(); }
+        targets = Math.max(targets, 0);
+      } catch (e: any) {
+        pushLog(logEntry("error", "Style", `format.apply gagal: ${e?.message ?? e}`, e?.stack));
+        return { applied: [], skipped: [...skipped, ...use], targets: 0 };
+      }
+    }
+    if (use.includes("link") && props.link !== undefined) {
+      const r = props.link ? api!.links.set(props.link, { range: selAddr(t.sel), sheet: t.w.title }) : api!.links.remove({ range: selAddr(t.sel), sheet: t.w.title });
+      if (r) ok.add("link");
+    }
+    const report = { applied: use.filter(k => ok.has(k)), skipped: [...skipped, ...use.filter(k => !ok.has(k))], targets };
+    return report;
+  };
+  const formatGet = (target?: XlsxFormatTarget): FormatProps | undefined => {
+    const b = book(), t = rangeAt(target?.range, target?.sheet);
+    if (!b || !t) return undefined;
+    const n = normSel(t.sel);
+    const s = b.styleOf(t.w, t.w.rows.get(target?.range ? n.r1 : active().row)?.get(target?.range ? n.c1 : active().col));
+    return { bold: s.bold, italic: s.italic, underline: s.underline !== "none", strike: s.strike, fontFamily: s.fontName, fontSize: s.sizePt, color: s.color ?? null, fill: s.bg ?? null, align: (s.h === "general" ? undefined : s.h === "centerContinuous" ? "center" : s.h) as FormatProps["align"], valign: s.v === "center" ? "middle" : (s.v as FormatProps["valign"]), wrap: s.wrap, numFmt: s.numFmt, indent: s.indent };
+  };
+
+  const sheetTitleOf = (ref: string | number): string | undefined => { const i = sheetByRef(ref); return i < 0 ? undefined : book()?.sheets[i]?.sheet.title; };
+  const sheetStruct = (action: string, run: () => { records: EditRecord[]; [k: string]: any } | { error: string }, prefer?: () => string | undefined, detail?: unknown): boolean => {
+    const b = book(); if (!b || ro()) return st("sheet", action, false, detail);
+    commitEdit("none");
+    const r = run();
+    if ("error" in r) { toast(r.error); return st("sheet", action, false, { ...(detail as object), error: r.error }); }
+    if (r.records.length) b.commit(r.records, { styleOnly: true });
+    syncSheets(prefer?.());
+    return st("sheet", action, true, detail);
+  };
+
   const buildApi = (): XlsxPreviewApi => ({
     events: bus, on: bus.on, off: bus.off, once: bus.once, run: (name, ...args) => bus.run(name, ...args),
     getBook: () => book(),
@@ -1208,6 +1351,55 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     },
     getBytes: async () => { commitEdit("none"); return book()?.toBytes(); },
     getSheets: () => (book()?.sheets ?? []).map((s, index) => ({ index, name: s.sheet.title, kind: s.kind })),
+    format: {
+      keys: () => [...XLSX_FORMAT_KEYS],
+      apply: spec => { const r = formatApply(spec); emit("format", { action: "apply", report: r, target: spec.target }); return r; },
+      get: formatGet,
+    },
+    sheets: {
+      list: () => (book()?.sheets ?? []).map((s, index) => ({ index, name: s.sheet.title, kind: s.kind, state: s.state })),
+      add: o => { let name: string | undefined; const ok = sheetStruct("add", () => { const r = book()!.addSheet(o?.name, o?.at); if (!("error" in r)) name = r.title; return r; }, () => name, o); return ok ? name : undefined; },
+      rename: (ref, nn) => { const old = sheetTitleOf(ref); return old === undefined ? st("sheet", "rename", false, { ref }) : sheetStruct("rename", () => book()!.renameSheetTo(old, nn), () => (activeRef && book()?.sheets.includes(activeRef) ? undefined : nn.trim()), { from: old, to: nn }); },
+      remove: ref => { const t = sheetTitleOf(ref); return t === undefined ? st("sheet", "remove", false, { ref }) : sheetStruct("remove", () => book()!.removeSheetByTitle(t), undefined, { name: t }); },
+      move: (ref, to) => { const t = sheetTitleOf(ref); return t === undefined ? st("sheet", "move", false, { ref }) : sheetStruct("move", () => book()!.moveSheetTo(t, to), undefined, { name: t, to }); },
+      setVisible: (ref, v) => { const t = sheetTitleOf(ref); return t === undefined ? st("sheet", "visible", false, { ref }) : sheetStruct("visible", () => book()!.setSheetVisible(t, v), undefined, { name: t, visible: v }); },
+    },
+    range: {
+      merge: (r, o) => {
+        const b = book(), t = rangeAt(r); if (!b || !t || ro()) return st("range", "merge", false);
+        commitEdit("none");
+        const res = b.mergeSelection(t.w, t.sel);
+        if ("error" in res) { toast(res.error); return st("range", "merge", false, { error: res.error }); }
+        b.commit(res.records, { styleOnly: true });
+        if (o?.center) { const rc = b.applyStyle(t.w, t.sel, { h: "center", v: "center" }); b.commit(rc, { styleOnly: true }); }
+        bumpLayout(); return st("range", "merge", true, { range: selAddr(t.sel) });
+      },
+      unmerge: r => {
+        const b = book(), t = rangeAt(r); if (!b || !t || ro()) return st("range", "unmerge", false);
+        const res = b.unmergeSelection(t.w, t.sel);
+        if ("error" in res) return st("range", "unmerge", false, { error: res.error });
+        b.commit(res.records, { styleOnly: true }); bumpLayout(); return st("range", "unmerge", true, { count: res.count });
+      },
+      clear: r => {
+        const b = book(), t = rangeAt(r); if (!b || !t || ro()) return 0;
+        commitEdit("none");
+        const recs = b.clearRange(t.w, t.sel);
+        b.commit(recs); setLive(b.ev.live); bump(); st("range", "clear", recs.length > 0, { n: recs.length }); return recs.length;
+      },
+      freeze: (rows, cols) => { const b = book(), w = ws(); if (!b || !w || !Number.isInteger(rows) || !Number.isInteger(cols) || rows < 0 || cols < 0) return st("range", "freeze", false); b.freeze(w, rows, cols); bumpLayout(); return st("range", "freeze", true, { rows, cols }); },
+      setColumnWidth: (col, px) => {
+        const w = ws(); const c = typeof col === "number" ? col : parseAddress(`${col}1`)?.c1;
+        if (!w || ro() || c === undefined || !(px > 0)) return st("range", "colWidth", false);
+        resizeColumn(c, px); return st("range", "colWidth", true, { col: c, px });
+      },
+      setRowHeight: (row, px) => { const w = ws(); if (!w || ro() || !Number.isInteger(row) || row < 1 || !(px > 0)) return st("range", "rowHeight", false); resizeRow(row, px); return st("range", "rowHeight", true, { row, px }); },
+      autofilter: r => {
+        const b = book(), w = ws(); if (!b || !w) return false;
+        if (r === false) { b.disableFilter(w); bumpLayout(); return st("range", "autofilter", true, { on: false }); }
+        const t = rangeAt(r); if (!t) return false;
+        const f = b.enableFilter(t.w, t.sel); bumpLayout(); return st("range", "autofilter", !!f, { on: true });
+      },
+    },
     setSheet: ref => { const i = sheetByRef(ref); if (i < 0) throw new Error(`Sheet "${ref}" tidak ditemukan.`); selectSheet(i); },
     getSelection: () => ({ sheet: ws()?.title ?? "", range: selAddr(sel()), active: addr(active().row, active().col) }),
     select: range => { const a = parseAddress(range); if (!a) throw new Error(`Rentang tidak valid: "${range}".`); onSelect({ r1: a.r1, c1: a.c1, r2: a.r2, c2: a.c2 }, { row: a.r1, col: a.c1 }); },
@@ -1252,6 +1444,12 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       load: (i: Uint8Array | ArrayBuffer | File, n?: string) => a.load(i, n), getBytes: () => a.getBytes(), save: () => saveXlsx(),
       getSheets: () => a.getSheets(), setSheet: (r: number | string) => a.setSheet(r), getSelection: () => a.getSelection(), select: (r: string) => a.select(r),
       getCell: (ad: string) => a.getCell(ad), setCell: (ad: string, t: string) => a.setCell(ad, t), setPanel: (p: Panel) => setPanel(p),
+      "format.keys": () => a.format.keys(), "format.apply": (s: FormatSpec<XlsxFormatTarget>) => a.format.apply(s), "format.get": (t?: XlsxFormatTarget) => a.format.get(t),
+      "sheet.list": () => a.sheets.list(), "sheet.add": (o?: { name?: string; at?: number }) => a.sheets.add(o), "sheet.rename": (r: string | number, n: string) => a.sheets.rename(r, n),
+      "sheet.remove": (r: string | number) => a.sheets.remove(r), "sheet.move": (r: string | number, to: number) => a.sheets.move(r, to), "sheet.setVisible": (r: string | number, v: boolean) => a.sheets.setVisible(r, v),
+      "range.merge": (r?: string, o?: { center?: boolean }) => a.range.merge(r, o), "range.unmerge": (r?: string) => a.range.unmerge(r), "range.clear": (r?: string) => a.range.clear(r),
+      "range.freeze": (r: number, c: number) => a.range.freeze(r, c), "range.colWidth": (c: string | number, px: number) => a.range.setColumnWidth(c, px), "range.rowHeight": (r: number, px: number) => a.range.setRowHeight(r, px),
+      "range.autofilter": (r?: string | false) => a.range.autofilter(r),
       goto: (t: XlsxNavTarget) => a.goto(t), find: (s: FindSpec & { scope?: XlsxScope }) => a.find(s), findNext: () => a.findNext(), findPrev: () => a.findPrev(), findClear: () => a.findClear(),
       replace: (s: ReplaceSpec & { scope?: XlsxScope }) => a.replace(s), replaceAll: (s: ReplaceSpec & { scope?: XlsxScope }) => a.replaceAll(s), "replace.kinds": () => a.replaceKinds(),
       "link.list": () => a.links.list(), "link.set": (u: string, o?: object) => a.links.set(u, o), "link.remove": (o?: object) => a.links.remove(o),

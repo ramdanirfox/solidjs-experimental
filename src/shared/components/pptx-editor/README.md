@@ -105,3 +105,21 @@ Satuan dokumen = px slide (1280×720); angka nol = pojok kiri-atas slide.
 `@office-kit/pptx` belum punya API OLE, jadi `pptx-ole.ts` mengubah paket langsung: part `/ppt/embeddings/*`, gambar `/ppt/media/oleprev*.png`, relasi slide, dan `<p:graphicFrame>` + `<p:oleObj>` (bentuk yang sama dengan python-pptx) — lalu `PptxDeck.mutatePackage` memuat ulang model dan mencatat satu langkah riwayat.
 Id objek = `"<indeks slide>:<shapeId>"` (mis. `"0:12"`). **Objek buatan PowerPoint** dibungkus `mc:AlternateContent` sehingga library tidak menampilkannya sebagai shape; editor memindai XML slide sendiri: objek itu **terbaca, tampil (kotak statis, ikon pratinjau), dan dapat diganti isinya**
 (pembungkus dilepas dan cabang VML dibuang agar pratinjau baru yang dipakai), tetapi belum dapat dipindah/diubah ukurannya lewat kanvas. Bingkai hasil sisip bersifat shape biasa: dapat dipilih, dipindah, diubah ukuran, dan di-undo.
+
+## Navigasi, cari/ganti, tautan, warna, impor DOM
+
+Lihat `editor-kit/README.md` untuk kontrak umum. Khusus PPTX:
+
+- `goto` target (indeks slide berbasis 0): `{kind:"slide",index}`, `first|last|next|prev`, `{kind:"shape",slide?,id?|name?}`, `{kind:"notes",slide?}`, `{kind:"link",id}`, `search`, `match`.
+- Ganti: `text` (run & sel tabel; teks yang terbelah antar run tidak terganti), `notes`, `link`, `name`, `font`, `color`, `fill`, `stroke`.
+- **Warna + opasitas**: isi, garis, dan teks (`pptx-alpha.ts` menulis `<a:alpha>` langsung ke XML; renderer membacanya). Saat menyunting teks, opasitas berlaku pada teks yang dipilih (diperiksa di Chrome); di luar mode edit berlaku untuk seluruh teks bentuk. *Tanpa warna*: isi/garis → none, teks → warna bawaan.
+- **Tautan**: bentuk, atau teks terpilih saat menyunting (disimpan sebagai hyperlink run). Panel *Hyperlink*.
+- **Impor elemen DOM**: `api.importDom(selectorOrElement, { mode, x,y,w,h, slide, fit, group, pixelRatio })` atau perintah `import.dom`. `mode`: `image` (SVG foreignObject → PNG), `shapes` (persegi/kotak teks/gambar/tabel asli), `auto`. Font web yang belum dimuat dan sumber lintas-origin tanpa CORS tidak ikut di mode `image`. Event `import:dom`.
+- Perbaikan: ukuran/huruf/warna/gaya tiap run kini dipertahankan saat menyunting teks (sebelumnya jatuh ke bawaan layout).
+
+### Format & struktur lewat bus
+
+- `format.apply({ target?, props })` / `format.get` / `format.keys` — target `{slide?, id?, ids?, name?, all?}` (default seleksi). Kunci umum + khusus: `rotation`, `hidden`, `name`, `alt`, `shadow`, `bounds {x,y,w,h}` (px slide). `fillAlpha`/`colorAlpha`/`stroke.alpha` menulis `<a:alpha>` asli. Tiap kelompok properti berdiri sendiri (mis. teks tidak berlaku pada gambar → kunci itu `skipped` bila gagal pada semua bentuk). Satu langkah undo.
+- Slide: `slide.list/layouts/add({layout?,at?})/duplicate/remove/move/setBackground/setNotes/setHidden/setLayout`. Indeks berbasis 0; tanpa indeks = slide aktif; slide terakhir tidak bisa dihapus.
+- Bentuk: `shape.list/add/remove/duplicate/align/order/group/ungroup`. `shape.add({type:"textbox"|"shape"|"line"|"table"|"chart", x,y,w,h (px), text?, preset?, fill?, rows?, cols?, chart?})` mengembalikan id bentuk.
+

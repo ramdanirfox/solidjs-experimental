@@ -3,6 +3,10 @@ import type { JSX } from "solid-js";
 import type { EditorEventBus } from "../editor-kit/events";
 import type { FindMatch, FindResult, FindSpec, NavEvent, OfficeNavEvents, ReplaceReport, ReplaceSpec } from "../editor-kit/find-replace";
 import type { LinkItem, OfficeLinkEvents } from "../editor-kit/hyperlink";
+import type { RulerKit, RulerEventMap } from "../editor-kit/ruler-kit";
+import type { RulerUnit } from "../editor-kit/ruler-core";
+import type { FormatProps, FormatReport, FormatSpec, OfficeFormatEvents, OfficeStructureEvents } from "../editor-kit/format";
+import type { CellPatch, CellSummary, MaxgraphFormatTarget } from "./maxgraph-format";
 import type { DrawioFormat, DrawioImportReport, DrawioPage } from "./drawio";
 import type { LogEntry, LogLevel, MaxgraphLogger } from "./logger";
 import type { ShapeImportReport } from "./shapes";
@@ -85,7 +89,7 @@ export type MaxgraphNavTarget =
     | { kind: "all" }
     | { kind: "point"; x: number; y: number };
 
-export interface MaxgraphEventMap extends OfficeNavEvents, OfficeLinkEvents {
+export interface MaxgraphEventMap extends OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, RulerEventMap {
     ready: { api: MaxgraphNodeEditorApi };
     /** Segera setelah model berubah. */
     "model-change": { changes: number };
@@ -268,6 +272,22 @@ export interface MaxgraphNodeEditorApi {
     /** Ganti semua, per jenis: `text`, `link`, `data`, `font`, `color`, `fill`, `stroke`. Satu langkah undo. */
     replaceAll(spec: ReplaceSpec): ReplaceReport;
     replaceKinds(): string[];
+    /** Penggaris (px diagram pada zoom 100%) dan garis bantu — referensi visual, tidak menempelkan sel. */
+    readonly ruler: RulerKit;
+    /** Format umum + khusus maxGraph (`rounded`, `shadow`, `dashed`, `startArrow`, `endArrow`, `edgeStyle`, `curved`, `rotation`, `bounds`, `label`). Alfa native (`fillOpacity`/`strokeOpacity`/`textOpacity`). Satu undo. */
+    readonly format: {
+        keys(): string[];
+        apply(spec: FormatSpec<MaxgraphFormatTarget>): FormatReport;
+        get(target?: MaxgraphFormatTarget): FormatProps | undefined;
+    };
+    /** Struktur sel: daftar, ubah, hapus, urutan, ratakan. */
+    readonly cells: {
+        list(filter?: { kind?: "vertex" | "edge" }): CellSummary[];
+        update(id: string, patch: CellPatch): boolean;
+        remove(ids?: string[]): number;
+        order(op: "front" | "back", ids?: string[]): boolean;
+        align(mode: "left" | "center" | "right" | "top" | "middle" | "bottom", ids?: string[]): boolean;
+    };
     readonly links: {
         list(): LinkItem[];
         /** Pasang tautan pada sel (default: seleksi). `url` kosong/null = hapus. */
@@ -303,6 +323,10 @@ export interface SharedMaxgraphNodeEditorProps {
     /** Tampilkan bilah status (zoom, jumlah node/garis, seleksi). Default true. */
     statusBar?: boolean;
 
+    /** Tampilkan penggaris di awal (default false). */
+    ruler?: boolean;
+    /** Satuan penggaris. Default "px" (satuan diagram). */
+    rulerUnit?: RulerUnit;
     /** Grid latar & snap. Default true. */
     grid?: boolean;
     gridSize?: number;

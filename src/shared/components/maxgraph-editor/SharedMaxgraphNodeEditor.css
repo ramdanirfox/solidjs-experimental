@@ -397,6 +397,8 @@
     margin-top: 4px;
 }
 
+.mgx-canvas-wrap > .mgx-rkframe { position: absolute; inset: 0; }
+.mgx-rkframe > .mgx-rkbody { position: relative; }
 .mgx-canvas-wrap {
     position: relative;
     flex: 1;

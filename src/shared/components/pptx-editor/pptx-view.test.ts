@@ -317,7 +317,7 @@ describe("PptxView", () => {
     view.setHyperlink("https://example.com/a");
     const l = view.linkItems().find(x => x.url === "https://example.com/a");
     expect(l).toBeTruthy();
-    expect(view.replaceLinks({ query: "example.com", replacement: "example.org" }, "example.org")).toBeGreaterThan(0);
+    expect(view.replaceLinks({ query: "example.com" }, "example.org")).toBeGreaterThan(0);
     expect(view.linkItems().some(x => x.url === "https://example.org/a")).toBe(true);
     const id = view.linkItems().find(x => x.url === "https://example.org/a")!.id;
     expect(view.updateLink(id, { url: "https://x.test/" })).toBe(true);
@@ -356,5 +356,95 @@ describe("PptxView", () => {
       await expect(view.importDom("#dom-src")).rejects.toThrow(/baca-saja/);
       view.readonly = false;
     } finally { Element.prototype.getBoundingClientRect = orig; src.remove(); }
+  });
+});
+
+
+describe("PptxView — format.* & struktur (bus)", () => {
+  it("formatShapes: teks, isi+alfa, garis, bounds, nama; satu langkah undo; kunci asing dilewati", async () => {
+    const title = byName("Title");
+    const id = P.getShapeId(title);
+    const r = view.formatShapes({ bold: true, fontSize: 31, color: "#FF0000", colorAlpha: 0.5, fill: "#00FF00", fillAlpha: 0.4, stroke: { color: "#0000FF", width: 3, alpha: 0.6 }, rotation: 10, bounds: { x: 100, w: 500 }, name: "Judul", wrap: true, zzz: 1 }, { id });
+    expect(r.targets).toBe(1);
+    expect(r.applied).toEqual(expect.arrayContaining(["bold", "fontSize", "color", "colorAlpha", "fill", "fillAlpha", "stroke", "rotation", "bounds", "name"]));
+    expect(r.skipped).toEqual(expect.arrayContaining(["wrap", "zzz"]));
+    const sh = P.findShapeById(view.slide!, id)!;
+    expect(P.getShapeName(sh)).toBe("Judul");
+    expect(P.getShapeFillOpacity(sh)).toBeCloseTo(0.4, 2);
+    expect(P.getShapeStrokeOpacity(sh)).toBeCloseTo(0.6, 2);
+    expect(P.getShapeRotation(sh)).toBe(10);
+    expect(Math.round(P.getShapeBounds(sh)!.w / 9525)).toBe(500);
+    const g = view.formatGet({ id })!;
+    expect(g.bold).toBe(true);
+    expect(g.fontSize).toBe(31);
+    expect(g.fill?.toLowerCase()).toBe("#00ff00");
+    // satu langkah undo
+    await deck.flushQueue();
+    expect(await deck.undo()).toBe(true);
+    view.afterRestore([id], 0);
+    expect(P.getShapeName(P.findShapeById(view.slide!, id)!)).toBe("Title");
+    // fill null → tanpa isi; color null dipakai sebagai hapus warna
+    view.formatShapes({ fill: null, color: null }, { id });
+    expect(P.getShapeFill(P.findShapeById(view.slide!, id)!)).toEqual({ kind: "none" });
+  });
+
+  it("format: target slide lain / all / tak ada → 0 target; readonly menolak", () => {
+    const n = topShapes(view.slides[1]).length;
+    const r = view.formatShapes({ italic: true }, { slide: 1, all: true });
+    expect(r.targets).toBe(n);
+    expect(view.slideIdx).toBe(1);
+    expect(view.formatShapes({ italic: true }, { slide: 99, all: true })).toEqual({ applied: [], skipped: ["italic"], targets: 0 });
+    expect(view.formatShapes({ italic: true }, { id: 99999 }).targets).toBe(0);
+    view.readonly = true;
+    expect(view.formatShapes({ bold: true }, { all: true }).targets).toBe(0);
+  });
+
+  it("slide.*: tambah/duplikat/pindah/latar/catatan/sembunyi/layout/hapus", () => {
+    const n0 = view.slides.length;
+    expect(view.slideSummaries()).toHaveLength(n0);
+    expect(view.addSlide(undefined, 0)).toBe(true);
+    expect(view.slides).toHaveLength(n0 + 1);
+    expect(view.slideIdx).toBe(0);
+    expect(view.slideDuplicate(2)).toBe(true);
+    expect(view.slides).toHaveLength(n0 + 2);
+    expect(view.slideMove(0, 3)).toBe(true);
+    expect(view.slideSetBackground("#112233", 1)).toBe(true);
+    expect(P.getSlideBackground(view.slides[1])).toBeTruthy();
+    expect(view.slideSetNotes("catatan bus", 1)).toBe(true);
+    expect(P.getSlideNotes(view.slides[1])).toBe("catatan bus");
+    expect(view.slideSetHidden(true, 1)).toBe(true);
+    expect(view.slideSummaries()[1].hidden).toBe(true);
+    const lay = view.layoutNames();
+    expect(lay.length).toBeGreaterThan(1);
+    expect(view.slideSetLayout(lay[0], 1)).toBe(true);
+    expect(view.slideSetLayout("tidak-ada", 1)).toBe(false);
+    expect(view.slideRemove(1)).toBe(true);
+    expect(view.slides).toHaveLength(n0 + 1);
+    expect(view.slideRemove(99)).toBe(false);
+    expect(view.slideMove(0, 99)).toBe(false);
+  });
+
+  it("shape.*: tambah (textbox/shape/line/table), daftar, ratakan, urutan, grup, duplikat, hapus", async () => {
+    view.goTo(1);
+    const before = view.shapeSummaries().length;
+    const t = view.shapeAdd({ type: "textbox", x: 50, y: 60, w: 300, h: 50, text: "Halo bus" })!;
+    const s = view.shapeAdd({ type: "shape", preset: "ellipse", x: 400, y: 300, w: 100, h: 100, fill: "#ff8800" })!;
+    const l = view.shapeAdd({ type: "line", x: 10, y: 10, w: 100, h: 0, arrow: true })!;
+    const tb = view.shapeAdd({ type: "table", rows: 2, cols: 3 })!;
+    expect([t, s, l, tb].every(x => typeof x === "number")).toBe(true);
+    const list = view.shapeSummaries();
+    expect(list.length).toBe(before + 4);
+    expect(list.find(x => x.id === t)).toMatchObject({ kind: "shape", x: 50, y: 60, w: 300, text: "Halo bus" });
+    expect(view.shapeAlign("left", { ids: [t, s] })).toBe(true);
+    expect(view.shapeSummaries().find(x => x.id === s)!.x).toBe(view.shapeSummaries().find(x => x.id === t)!.x);
+    expect(view.shapeOrder("front", { id: t })).toBe(true);
+    expect(view.shapeGroup({ ids: [t, s] })).toBe(true);
+    expect(view.shapeSummaries().filter(x => x.kind === "group").length).toBeGreaterThan(0);
+    expect(view.shapeGroup({ ids: [l] })).toBe(false);
+    expect(view.shapeDuplicate({ id: l })).toBe(1);
+    expect(view.shapeRemove({ id: l })).toBe(1);
+    expect(view.shapeRemove({ id: 987654 })).toBe(0);
+    await deck.flushQueue();
+    expect(await deck.undo()).toBe(true);
   });
 });

@@ -4,7 +4,7 @@
  * Reaktivitas dikelola komponen (signal "version").
  */
 import { loadWorkbook, workbookToBytes, fromArrayBuffer } from "@office-kit/xlsx/io";
-import { setFullCalcOnLoad, type Workbook, type SheetRef } from "@office-kit/xlsx/workbook";
+import { setFullCalcOnLoad, addWorksheet, moveSheet, removeSheet, renameSheet, setSheetState, type Workbook, type SheetRef } from "@office-kit/xlsx/workbook";
 import { addImageAt, loadImage } from "@office-kit/xlsx/drawing";
 import {
   ensureCell, getFreezePanes, setAutoFilter, setFreezePanes, setRowDimension, getCellExtent,
@@ -129,6 +129,16 @@ export function selAddr(s: Sel): string {
   return a === b ? a : `${a}:${b}`;
 }
 export const normSel = (s: Sel): Sel => ({ r1: Math.min(s.r1, s.r2), c1: Math.min(s.c1, s.c2), r2: Math.max(s.r1, s.r2), c2: Math.max(s.c1, s.c2) });
+
+/** Nama sheet untuk dipakai dalam rumus: diberi apostrof bila perlu. */
+export const quoteSheetName = (n: string) => (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(n) && !/^[A-Za-z]{1,3}\d+$/.test(n) ? n : `'${n.replace(/'/g, "''")}'`);
+
+/** Ganti referensi `Lama!` / `'Lama'!` menjadi nama baru pada teks rumus (literal string "..." dibiarkan). */
+export function rewriteSheetRefs(formula: string, oldT: string, newT: string): string {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(^|[^A-Za-z0-9_.'])${esc(oldT)}!|'${esc(oldT.replace(/'/g, "''"))}'!`, "g");
+  return formula.split(/("(?:[^"]|"")*")/).map((part, i) => (i % 2 ? part : part.replace(re, (m, pre) => (m.startsWith("'") ? "" : pre ?? "") + quoteSheetName(newT) + "!"))).join("");
+}
 
 export function parseAddress(text: string): Sel | undefined {
   const t = text.trim().replace(/\$/g, "");
@@ -506,6 +516,94 @@ export class XlsxBook {
     this.dirty = true;
     this.invalidate();
     return recs;
+  }
+
+  // ───── struktur sheet (dengan undo) ─────
+  private nameScopes() { return this.wb.definedNames.map(n => ({ n, scope: n.scope })); }
+  private restoreNames(saved: { n: { scope?: number }; scope: number | undefined }[]) { this.wb.definedNames = saved.map(x => { x.n.scope = x.scope; return x.n as never; }); }
+  private shiftNames(from: number, d: number) { for (const n of this.wb.definedNames) if (n.scope !== undefined && n.scope >= from) n.scope += d; }
+  private sheetRec(sheet: string, apply: () => void, revert: () => void): EditRecord {
+    return { sheet, row: 0, col: 0, before: null, after: null, undo: revert, redo: apply };
+  }
+  private validTitle(t: string, except?: string): string | undefined {
+    const name = t.trim();
+    if (!name) return "Nama sheet kosong";
+    if (name.length > 31) return "Nama sheet maksimal 31 karakter";
+    if (/[\\/?*[\]:]/.test(name)) return "Nama sheet tidak boleh memuat \\ / ? * [ ] :";
+    if (name.startsWith("'") || name.endsWith("'")) return "Nama sheet tidak boleh diawali/diakhiri apostrof";
+    if (this.wb.sheets.some(s => s.sheet.title.toLowerCase() === name.toLowerCase() && s.sheet.title !== except)) return `Sheet "${name}" sudah ada`;
+    return undefined;
+  }
+  /** Tambah worksheet kosong. `title` default "SheetN". */
+  addSheet(title?: string, index?: number): { records: EditRecord[]; title: string } | { error: string } {
+    let name = title?.trim();
+    if (!name) { let n = this.wb.sheets.length + 1; while (this.wb.sheets.some(s => s.sheet.title === `Sheet${n}`)) n++; name = `Sheet${n}`; }
+    const err = this.validTitle(name);
+    if (err) return { error: err };
+    const at = index === undefined ? this.wb.sheets.length : Math.max(0, Math.min(this.wb.sheets.length, Math.floor(index)));
+    let ref: SheetRef | undefined;
+    const apply = () => {
+      if (!ref) { addWorksheet(this.wb, name!, { index: at }); ref = this.wb.sheets[at]; }
+      else this.wb.sheets.splice(at, 0, ref);
+      this.shiftNames(at, 1);
+    };
+    const revert = () => removeSheet(this.wb, name!);
+    apply();
+    return { records: [this.sheetRec(name, apply, revert)], title: name };
+  }
+  /** Ganti nama sheet; referensi `Nama!A1` pada rumus ikut diperbarui. */
+  renameSheetTo(oldTitle: string, newTitle: string): { records: EditRecord[]; formulas: number } | { error: string } {
+    const nt = newTitle.trim();
+    if (!this.wb.sheets.some(s => s.sheet.title === oldTitle)) return { error: `Sheet "${oldTitle}" tidak ditemukan` };
+    if (nt === oldTitle) return { records: [], formulas: 0 };
+    const err = this.validTitle(nt, oldTitle);
+    if (err) return { error: err };
+    const edits: { cell: Cell; before: CellValue; after: CellValue }[] = [];
+    for (const s of this.wb.sheets) {
+      if (s.kind !== "worksheet") continue;
+      for (const row of s.sheet.rows.values()) for (const cell of row.values()) {
+        const v = cell.value as any;
+        if (v && typeof v === "object" && v.kind === "formula" && typeof v.formula === "string") {
+          const f = rewriteSheetRefs(v.formula, oldTitle, nt);
+          if (f !== v.formula) edits.push({ cell, before: cell.value, after: makeFormula(f) });
+        }
+      }
+    }
+    const apply = () => { renameSheet(this.wb, oldTitle, nt); for (const e of edits) e.cell.value = e.after; };
+    const revert = () => { renameSheet(this.wb, nt, oldTitle); for (const e of edits) e.cell.value = e.before; };
+    apply();
+    return { records: [this.sheetRec(nt, apply, revert)], formulas: edits.length };
+  }
+  /** Hapus sheet (minimal satu sheet terlihat tersisa). */
+  removeSheetByTitle(title: string): { records: EditRecord[] } | { error: string } {
+    const i = this.wb.sheets.findIndex(s => s.sheet.title === title);
+    if (i < 0) return { error: `Sheet "${title}" tidak ditemukan` };
+    if (!this.wb.sheets.some((s, k) => k !== i && s.kind === "worksheet" && s.state === "visible")) return { error: "Tidak bisa menghapus satu-satunya sheet yang terlihat" };
+    const ref = this.wb.sheets[i]!;
+    const names = this.nameScopes();
+    const apply = () => removeSheet(this.wb, title);
+    const revert = () => { this.wb.sheets.splice(i, 0, ref); this.restoreNames(names); };
+    apply();
+    return { records: [this.sheetRec(title, apply, revert)] };
+  }
+  moveSheetTo(title: string, to: number): { records: EditRecord[] } | { error: string } {
+    const from = this.wb.sheets.findIndex(s => s.sheet.title === title);
+    if (from < 0) return { error: `Sheet "${title}" tidak ditemukan` };
+    const dest = Math.max(0, Math.min(this.wb.sheets.length - 1, Math.floor(to)));
+    if (dest === from) return { records: [] };
+    const apply = () => moveSheet(this.wb, title, dest);
+    const revert = () => moveSheet(this.wb, title, from);
+    apply();
+    return { records: [this.sheetRec(title, apply, revert)] };
+  }
+  setSheetVisible(title: string, visible: boolean): { records: EditRecord[] } | { error: string } {
+    const ref = this.wb.sheets.find(s => s.sheet.title === title);
+    if (!ref) return { error: `Sheet "${title}" tidak ditemukan` };
+    const was = ref.state;
+    const now = visible ? "visible" : "hidden";
+    if (was === now) return { records: [] };
+    try { setSheetState(this.wb, title, now); } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+    return { records: [this.sheetRec(title, () => setSheetState(this.wb, title, now), () => setSheetState(this.wb, title, was))] };
   }
 
   findSheet(title: string): Worksheet | undefined {

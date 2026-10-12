@@ -15,6 +15,12 @@ import { elementToPng, loadImageBytes, planDom, type DomImportOptions, type DomI
 import { compileFind, createFindCursor, isValueKind, makeReport, matchRanges, replaceInString, snippet, type FindMatch, type FindResult, type FindSpec, type NavEvent, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
 import { parseCssColor } from "../editor-kit/color-util";
 import type { LinkItem } from "../editor-kit/hyperlink";
+import { splitFormatKeys, type FormatProps, type FormatReport } from "../editor-kit/format";
+
+/** Target `format.apply` PPTX: bentuk pada slide (default: seleksi). */
+export interface PptxFormatTarget { slide?: number; id?: number; ids?: number[]; name?: string; all?: boolean }
+/** Kunci `format.*` yang dipahami PPTX (umum + khusus). */
+export const PPTX_FORMAT_KEYS = ["bold", "italic", "underline", "strike", "fontFamily", "fontSize", "color", "colorAlpha", "fill", "fillAlpha", "stroke", "align", "valign", "opacity", "link", "rotation", "hidden", "name", "alt", "shadow", "bounds"] as const;
 
 export interface PxSelInfo {
   slideIndex: number; slideCount: number; layout: string | null; hidden: boolean;
@@ -262,7 +268,8 @@ export class PptxView {
     if (!deck || !sh || !(wPx > 4) || !(hPx > 4)) return false;
     this.commitEdit();
     const b = P.getShapeBounds(sh);
-    P.setShapeBounds(sh, { x: b.x, y: b.y, w: Math.round(wPx * PX), h: Math.round(hPx * PX) });
+    if (!b) return false;
+    P.setShapeBounds(sh, { x: b.x, y: b.y, w: Math.round(wPx * PX) as P.Emu, h: Math.round(hPx * PX) as P.Emu });
     await deck.commit("hist.oleSize");
     this.afterRestore([shapeId], slideIndex);
     this.hooks.changed("hist.oleSize"); // riwayat sudah dicatat oleh mutatePackage/commit
@@ -765,6 +772,102 @@ export class PptxView {
   rename(name: string) { this.apply("hist.props", s => P.renameShape(s, name), { merge: "hist.props" }); }
   setAlt(text: string) { this.apply("hist.props", s => P.setShapeDescription(s, text || null), { merge: "hist.props" }); }
   setHidden(h: boolean) { this.apply("hist.props", s => P.setShapeHidden(s, h)); }
+
+  /** Daftar bentuk dari target `format.*` (berpindah ke slide target bila perlu). */
+  resolveFormatShapes(target?: PptxFormatTarget): SlideShapeData[] {
+    if (!this.deck) return [];
+    if (!target) return [...this.sel];
+    if (target.slide !== undefined) { if (!Number.isInteger(target.slide) || target.slide < 0 || target.slide >= this.slides.length) return []; if (target.slide !== this.slideIdx) this.goTo(target.slide); }
+    const slide = this.slide;
+    if (!slide) return [];
+    if (target.all) return topShapes(slide);
+    const out: SlideShapeData[] = [];
+    for (const id of [...(target.ids ?? []), ...(target.id !== undefined ? [target.id] : [])]) { const s = P.findShapeById(slide, id); if (s && !out.includes(s)) out.push(s); }
+    if (target.name) for (const s of P.getSlideShapes(slide)) if (P.getShapeName(s).toLowerCase() === target.name.toLowerCase() && !out.includes(s)) out.push(s);
+    if (!target.ids && target.id === undefined && !target.name) return [...this.sel];
+    return out;
+  }
+
+  /**
+   * `format.apply` — properti umum + khusus PPTX pada bentuk target. Satu langkah undo. Kunci tak dikenal masuk `skipped`.
+   * `bounds` dalam px slide (1280×720); `colorAlpha`/`fillAlpha`/`stroke.alpha` asli (`<a:alpha>`).
+   */
+  formatShapes(props: FormatProps, target?: PptxFormatTarget): FormatReport {
+    const { use, skipped } = splitFormatKeys(props, PPTX_FORMAT_KEYS);
+    const shapes = this.readonly ? [] : this.resolveFormatShapes(target);
+    if (!shapes.length || !use.length) return { applied: [], skipped: [...skipped, ...use], targets: 0 };
+    const tf: TextFormat = {};
+    if (props.bold !== undefined) tf.bold = !!props.bold;
+    if (props.italic !== undefined) tf.italic = !!props.italic;
+    if (props.underline !== undefined) tf.underline = !!props.underline;
+    if (props.strike !== undefined) tf.strike = !!props.strike;
+    if (props.fontFamily !== undefined) tf.font = props.fontFamily ?? undefined;
+    if (props.fontSize !== undefined && props.fontSize !== null) tf.size = props.fontSize;
+    if (props.color !== undefined) tf.color = (props.color as P.Color | null);
+    const hasText = Object.keys(tf).length > 0;
+    const applied = new Set<string>();
+    this.apply("hist.format", s => {
+      const isTable = P.isTableShape(s);
+      /** Tiap kelompok properti berdiri sendiri: gagal di satu bentuk/kelompok tidak membatalkan yang lain. */
+      const step = (keys: string[], f: () => void) => { const ks = keys.filter(k => use.includes(k)); if (!ks.length) return; try { f(); ks.forEach(k => applied.add(k)); } catch { /* tidak berlaku pada bentuk ini */ } };
+      if (hasText) step(["bold", "italic", "underline", "strike", "fontFamily", "fontSize", "color"], () => {
+        if (isTable) { const d = P.getTableDimensions(s); for (let r = 0; r < d.rows; r++) for (let c = 0; c < d.cols; c++) P.setTableCellTextFormat(P.getTableCell(s, r, c), tf); }
+        else P.setShapeTextFormat(s, tf);
+      });
+      if (!isTable) step(["colorAlpha"], () => setTextAlpha(s, props.colorAlpha! < 1 ? props.colorAlpha! : null));
+      step(["align"], () => {
+        if (isTable) { const d = P.getTableDimensions(s); for (let r = 0; r < d.rows; r++) for (let c = 0; c < d.cols; c++) P.setTableCellAlignment(P.getTableCell(s, r, c), props.align!); } else P.setShapeAlignment(s, props.align!);
+      });
+      if (!isTable) {
+        step(["valign"], () => P.setShapeTextAnchor(s, props.valign === "middle" ? "center" : props.valign!));
+        step(["fill", "fillAlpha"], () => {
+          if (props.fill === null) P.setShapeNoFill(s);
+          else if (props.fill !== undefined) { P.setShapeFill(s, props.fill as P.Color); setFillAlpha(s, props.fillAlpha !== undefined && props.fillAlpha < 1 ? props.fillAlpha : null); }
+          else if (props.fillAlpha !== undefined) setFillAlpha(s, props.fillAlpha < 1 ? props.fillAlpha : null);
+        });
+        step(["stroke"], () => {
+          const o = props.stroke;
+          if (o === null || o?.color === null) { P.setShapeNoStroke(s); return; }
+          if (!o) return;
+          if (o.color || o.width) P.setShapeStroke(s, { ...(o.color ? { color: o.color as P.Color } : {}), ...(o.width ? { widthEmu: Math.round(o.width * 12700) } : {}) });
+          if (o.alpha !== undefined) setStrokeAlpha(s, o.alpha < 1 ? o.alpha : null);
+          if (o.dash) P.setShapeStrokeDash(s, o.dash);
+        });
+        step(["shadow"], () => { if (props.shadow) P.setShapeShadow(s, {}); else P.clearShapeEffects(s); });
+        step(["rotation"], () => P.setShapeRotation(s, Number(props.rotation) || 0));
+        step(["bounds"], () => {
+          const bp = (props.bounds ?? {}) as Partial<{ x: number; y: number; w: number; h: number }>, b = this.boundsOf(s);
+          const e = (v: number | undefined, cur: number) => (v === undefined ? cur : Math.round(v * PX));
+          P.setShapeBounds(s, this.toEmu({ x: e(bp.x, b.x), y: e(bp.y, b.y), w: e(bp.w, b.w), h: e(bp.h, b.h) }));
+        });
+      }
+      if (P.getShapeKind(s) === "picture") step(["opacity"], () => P.setShapeImageOpacity(s, props.opacity! >= 1 ? null : props.opacity!));
+      step(["link"], () => P.setShapeHyperlink(s, props.link || null));
+      step(["hidden"], () => P.setShapeHidden(s, !!props.hidden));
+      if (typeof props.name === "string") step(["name"], () => P.renameShape(s, props.name as string));
+      if (typeof props.alt === "string") step(["alt"], () => P.setShapeDescription(s, (props.alt as string) || null));
+    }, { shapes });
+    // sebuah kunci dianggap diterapkan bila berhasil pada sedikitnya satu bentuk (mis. teks tidak berlaku pada gambar)
+    return { applied: use.filter(k => applied.has(k)), skipped: [...skipped, ...use.filter(k => !applied.has(k))], targets: shapes.length };
+  }
+
+  /** `format.get` — nilai umum dari seleksi (satu bentuk) sebagai `FormatProps`. */
+  formatGet(target?: PptxFormatTarget): FormatProps | undefined {
+    const shapes = this.resolveFormatShapes(target);
+    if (shapes.length !== 1 || !this.deck) return undefined;
+    const keep = this.sel;
+    this.sel = shapes;
+    const sh = this.info().shape;
+    this.sel = keep;
+    if (!sh) return undefined;
+    const f = sh.fmt;
+    const out: FormatProps = { fill: sh.fill, hidden: sh.hidden, name: sh.name, alt: sh.alt, rotation: sh.rot, shadow: sh.shadow, bounds: { x: Math.round(sh.x / PX), y: Math.round(sh.y / PX), w: Math.round(sh.w / PX), h: Math.round(sh.h / PX) }, link: sh.hyperlink };
+    out.stroke = sh.stroke ? { color: sh.stroke, width: sh.strokeW ? sh.strokeW / 12700 : undefined, dash: (sh.dash ?? undefined) as never } : null;
+    if (f) Object.assign(out, { bold: !!f.bold, italic: !!f.italic, underline: !!f.underline, strike: !!f.strike, fontFamily: f.font ?? null, fontSize: f.size ?? null, color: f.color ?? null, align: f.align });
+    const fa = P.getShapeFillOpacity(shapes[0]);
+    if (typeof fa === "number") out.fillAlpha = fa;
+    return out;
+  }
   private editRange: Range | null = null;
   /** Simpan seleksi teks yang sedang disunting (sebelum dialog mengambil fokus). */
   rememberEditSelection() {
@@ -1017,21 +1120,98 @@ export class PptxView {
 
   // ───────── slide ─────────
 
-  addSlide(layoutName?: string) {
-    if (this.readonly || !this.deck) return;
+  addSlide(layoutName?: string, at?: number): boolean {
+    if (this.readonly || !this.deck) return false;
     const pres = this.deck.pres;
     const layouts = P.getSlideLayouts(pres);
     const layout = layoutName ? layouts.find(l => P.getSlideLayoutName(l) === layoutName) : (this.slide ? P.getSlideLayout(this.slide) : null) ?? layouts[layouts.length - 1];
-    if (!layout) return;
-    const s = P.addSlideAt(pres, this.slideIdx + 1, { layout });
-    void s;
+    if (!layout) return false;
+    const pos = at === undefined ? this.slideIdx + 1 : Math.max(0, Math.min(this.slides.length, Math.floor(at)));
+    P.addSlideAt(pres, pos, { layout });
     this.changed("hist.slide");
-    this.slideIdx += 1;
+    this.slideIdx = pos;
     this.hooks.slide(this.slideIdx); this.render(false); this.hooks.thumbs("all");
+    return true;
   }
   duplicateSlide() { if (this.readonly || !this.slide) return; P.duplicateSlideAt(this.deck!.pres, this.slideIdx + 1, this.slide); this.changed("hist.slide"); this.slideIdx += 1; this.hooks.slide(this.slideIdx); this.render(false); this.hooks.thumbs("all"); }
   deleteSlide() { if (this.readonly || !this.slide || this.slides.length < 2) return; P.removeSlide(this.deck!.pres, this.slide); this.changed("hist.slide"); this.slideIdx = Math.min(this.slideIdx, this.slides.length - 1); this.hooks.slide(this.slideIdx); this.render(false); this.hooks.thumbs("all"); }
   moveSlide(from: number, to: number) { if (this.readonly || from === to || !this.deck) return; const s = this.slides[from]; if (!s) return; P.moveSlide(this.deck.pres, s, to); this.changed("hist.slide"); this.slideIdx = to; this.hooks.slide(to); this.render(false); this.hooks.thumbs("all"); }
+  // ── struktur via bus (`slide.*`, `shape.*`) ──
+  slideSummaries(): { index: number; title: string; layout: string | null; hidden: boolean; shapes: number; notes: boolean }[] {
+    return this.slides.map((s, index) => {
+      const l = P.getSlideLayout(s);
+      let title = ""; try { title = P.getSlideTitle(s) ?? ""; } catch { /* abaikan */ }
+      return { index, title, layout: l ? P.getSlideLayoutName(l) : null, hidden: P.isSlideHidden(s), shapes: P.getSlideShapes(s).length, notes: !!(P.getSlideNotes(s) ?? "") };
+    });
+  }
+  layoutNames(): string[] { return this.deck ? P.getSlideLayouts(this.deck.pres).map(l => P.getSlideLayoutName(l)) : []; }
+  /** Pindah ke slide `i` (default: slide aktif); false bila di luar jangkauan. */
+  private slideAt(i?: number): boolean {
+    if (!this.deck || this.readonly) return false;
+    if (i === undefined) return !!this.slide;
+    if (!Number.isInteger(i) || i < 0 || i >= this.slides.length) return false;
+    if (i !== this.slideIdx) this.goTo(i);
+    return true;
+  }
+  slideDuplicate(i?: number): boolean { if (!this.slideAt(i)) return false; this.duplicateSlide(); return true; }
+  slideRemove(i?: number): boolean { if (!this.slideAt(i) || this.slides.length < 2) return false; this.deleteSlide(); return true; }
+  slideMove(from: number, to: number): boolean {
+    const n = this.slides.length;
+    if (!this.deck || this.readonly || !Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= n || to >= n || from === to) return false;
+    this.moveSlide(from, to); return true;
+  }
+  slideSetBackground(color: string | null, i?: number): boolean { if (!this.slideAt(i)) return false; this.setBackground(color); return true; }
+  slideSetNotes(text: string, i?: number): boolean { if (!this.slideAt(i)) return false; this.setNotes(text); return true; }
+  slideSetHidden(h: boolean, i?: number): boolean { if (!this.slideAt(i)) return false; this.hideSlide(h); return true; }
+  slideSetLayout(name: string, i?: number): boolean {
+    if (!this.slideAt(i) || !this.deck) return false;
+    const l = P.getSlideLayouts(this.deck.pres).find(x => P.getSlideLayoutName(x) === name);
+    if (!l) return false;
+    P.setSlideLayout(this.slide!, l); this.changed("hist.slide"); this.render(false); this.hooks.thumbs("all"); return true;
+  }
+
+  shapeSummaries(slide?: number): { id: number; name: string; kind: string; text: string; x: number; y: number; w: number; h: number; hidden: boolean }[] {
+    const s = this.slides[slide ?? this.slideIdx];
+    if (!s || !this.deck) return [];
+    return topShapes(s).map(sh => { const b = this.boundsOf(sh); return { id: P.getShapeId(sh), name: P.getShapeName(sh), kind: P.getShapeKind(sh), text: P.getShapeKind(sh) === "shape" ? P.getShapeText(sh) : "", x: Math.round(b.x / PX), y: Math.round(b.y / PX), w: Math.round(b.w / PX), h: Math.round(b.h / PX), hidden: P.isShapeHidden(sh) }; });
+  }
+  /** Tambah bentuk lewat bus. Posisi/ukuran dalam px slide. Mengembalikan id bentuk baru. */
+  shapeAdd(spec: { type: "textbox" | "shape" | "line" | "table" | "chart"; slide?: number; x?: number; y?: number; w?: number; h?: number; text?: string; preset?: PresetShape; rows?: number; cols?: number; chart?: P.ChartKind; arrow?: boolean; fill?: string; fontSize?: number }): number | undefined {
+    if (!this.slideAt(spec.slide)) return undefined;
+    const slide = this.slide!, px = (v: number) => Math.round(v * PX) as P.Emu;
+    const x = spec.x ?? 100, y = spec.y ?? 100;
+    let shape: SlideShapeData | undefined;
+    if (spec.type === "table") { const before = new Set(topShapes(slide)); this.insertTable(Math.max(1, spec.rows ?? 3), Math.max(1, spec.cols ?? 3)); shape = topShapes(this.slide!).find(s => !before.has(s)); return shape ? P.getShapeId(shape) : undefined; }
+    if (spec.type === "chart") { const before = new Set(topShapes(slide)); this.insertChart(spec.chart ?? "bar"); shape = topShapes(this.slide!).find(s => !before.has(s)); return shape ? P.getShapeId(shape) : undefined; }
+    if (spec.type === "line") {
+      shape = P.addSlideLine(slide, { from: { x: px(x), y: px(y) }, to: { x: px(x + (spec.w ?? 200)), y: px(y + (spec.h ?? 0)) }, color: "#1F2937", widthEmu: 28575 });
+      if (spec.arrow) P.setShapeStrokeArrow(shape, "tail", { type: "triangle" });
+    } else if (spec.type === "textbox") {
+      shape = P.addSlideTextBox(slide, { x: px(x), y: px(y), w: px(spec.w ?? 360), h: px(spec.h ?? 60), text: spec.text ?? "" });
+      P.setShapeTextFormat(shape, { size: spec.fontSize ?? 24 });
+    } else {
+      shape = P.addSlideShape(slide, { preset: spec.preset ?? "rect", x: px(x), y: px(y), w: px(spec.w ?? 220), h: px(spec.h ?? 140), text: spec.text ?? "" });
+      P.setShapeFill(shape, (spec.fill ?? this.ctx.theme?.accent1 ?? "#4F81BD") as P.Color);
+      P.setShapeStroke(shape, { color: "#FFFFFF", widthEmu: 12700 });
+    }
+    this.changed("hist.insert"); this.render(false);
+    this.sel = [shape]; this.updateOverlay(); this.emit(); this.hooks.thumbs([this.slideIdx]);
+    return P.getShapeId(shape);
+  }
+  private shapesFor(t?: PptxFormatTarget): SlideShapeData[] | undefined {
+    if (this.readonly || !this.deck) return undefined;
+    const list = this.resolveFormatShapes(t).filter(s => this.ctx.domOf.has(s));
+    if (!list.length) return undefined;
+    this.select(list);
+    return list;
+  }
+  shapeRemove(t?: PptxFormatTarget): number { const l = this.shapesFor(t); if (!l) return 0; this.deleteSelected(); return l.length; }
+  shapeDuplicate(t?: PptxFormatTarget): number { const l = this.shapesFor(t); if (!l) return 0; this.duplicateSelected(); return l.length; }
+  shapeAlign(mode: Parameters<PptxView["alignShapes"]>[0], t?: PptxFormatTarget): boolean { if (!this.shapesFor(t)) return false; this.alignShapes(mode); return true; }
+  shapeOrder(op: "front" | "back" | "forward" | "backward", t?: PptxFormatTarget): boolean { if (!this.shapesFor(t)) return false; this.zOrder(op); return true; }
+  shapeGroup(t?: PptxFormatTarget): boolean { const l = this.shapesFor(t); if (!l || l.length < 2) return false; this.group(); return true; }
+  shapeUngroup(t?: PptxFormatTarget): boolean { if (!this.shapesFor(t)) return false; this.ungroup(); return true; }
+
   hideSlide(h: boolean) { if (this.readonly || !this.slide) return; P.setSlideHidden(this.slide, h); this.changed("hist.slide"); this.emit(); this.hooks.thumbs([this.slideIdx]); }
   changeLayout(name: string) { if (this.readonly || !this.slide) return; const l = P.findSlideLayout(this.deck!.pres, name); if (!l) return; P.setSlideLayout(this.slide, l); this.changed("hist.layout"); this.render(false); this.hooks.thumbs([this.slideIdx]); }
   setBackground(color: string | null) { if (this.readonly || !this.slide) return; if (color) P.setSlideBackground(this.slide, color as P.Color); else P.clearSlideBackground(this.slide); this.changed("hist.background"); this.render(); this.hooks.thumbs([this.slideIdx]); }

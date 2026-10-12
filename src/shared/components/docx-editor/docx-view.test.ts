@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createSampleBook } from "./docx-sample";
 import { DocxView, type ViewHooks } from "./docx-view";
 import { DocxBook } from "./docx-model";
+import { listInfo, listOf } from "./docx-lists";
 import { findTocs } from "./docx-toc";
 import { flatText } from "./docx-text";
 import { els, first, serialize, type XEl } from "./docx-xml";
@@ -307,8 +308,8 @@ describe("DocxView", () => {
     expect(found.count).toBeGreaterThan(0);
     expect(found.matches.every(m => ["text", "headerFooter", "link"].includes(m.kind))).toBe(true);
     // jenis tidak didukung dilaporkan, bukan galat
-    const r0 = v.replaceKinds({ query: "ribbon", replacement: "bar", kinds: ["text", "comment" as never] });
-    expect(r0.skipped).toEqual(["comment"]);
+    const r0 = v.replaceKinds({ query: "ribbon", replacement: "bar", kinds: ["text", "stroke" as never] });
+    expect(r0.skipped).toEqual(["stroke"]);
     expect(r0.byKind.text).toBeGreaterThan(0);
     expect(book.plain().toLowerCase()).not.toContain("ribbon");
     v.undo();
@@ -320,7 +321,7 @@ describe("DocxView", () => {
     // link: ganti URL massal
     const l0 = v.linkItems();
     expect(l0.length).toBeGreaterThan(0);
-    const n = v.replaceLinks({ query: "office-kit.github.io", replacement: "example.org" }, "example.org");
+    const n = v.replaceLinks({ query: "office-kit.github.io" }, "example.org");
     expect(n).toBeGreaterThan(0);
     expect(v.linkItems().every(l => !l.url.includes("office-kit.github.io"))).toBe(true);
     expect(v.updateLink(v.linkItems()[0].id, { url: "#bm1", tooltip: "t" })).toBe(true);
@@ -330,7 +331,7 @@ describe("DocxView", () => {
     // font & warna & isi (nilai persis)
     const fonts = serialize(book.body).match(/w:ascii="([^"]+)"/g) ?? [];
     expect(fonts.length).toBeGreaterThan(0);
-    const fontName = /w:ascii="([^"]+)"/.exec(fonts[0])![1];
+    const fontName = /w:ascii="([^"]+)"/.exec(fonts[0]!)![1]!;
     expect(v.countValue("font", fontName)).toBeGreaterThan(0);
     const rf = v.replaceKinds({ query: fontName, replacement: "Arial", kinds: ["font"] });
     expect(rf.byKind.font).toBeGreaterThan(0);
@@ -348,6 +349,362 @@ describe("DocxView", () => {
     expect(v.countValue("fill", "112233")).toBe(0);
     v.dispose();
   });
+
+  describe("header & footer", () => {
+    const hdrText = (host: HTMLElement, page: number) => host.querySelectorAll<HTMLElement>(".dx-page")[page - 1]?.querySelector(".dx-hdr")?.textContent ?? "";
+    const ftrText = (host: HTMLElement, page: number) => host.querySelectorAll<HTMLElement>(".dx-page")[page - 1]?.querySelector(".dx-ftr")?.textContent ?? "";
+
+    it("sunting header: dibuat bila belum ada, teks masuk model, salinan di halaman lain ikut, keluar mengunci", async () => {
+      const { v, book, host } = await setup();
+      v.paginate();
+      expect(host.querySelectorAll(".dx-page").length).toBeGreaterThan(1);
+      expect(v.editHeaderFooter("hdr", 1)).toBe(true);
+      expect(v.hfEdit).toMatchObject({ kind: "hdr", page: 1 });
+      const box = host.querySelector<HTMLElement>("[data-edit]")!;
+      expect(box).toBeTruthy();
+      expect(box.closest(".dx-hdr")).toBeTruthy();
+      expect(box.isContentEditable || box.contentEditable === "true").toBe(true);
+      // kursor ada di paragraf header → seleksi, format, dan sisip teks bekerja pada header
+      expect(v.selPoints()).toBeTruthy();
+      v.insertTextAtSel("Laporan Rahasia");
+      const root = book.hf(v.hfEdit!.relId)!;
+      expect(descendAll(root, "t").map(t => (t.children[0] as { value: string }).value).join("")).toContain("Laporan Rahasia");
+      v.emitSelection();
+      expect(v.lastSelection?.region).toBe("header");
+      v.toggleRun("b");   // tanpa seleksi → pending, tapi tidak boleh melempar
+      v.selectRange(v.selPoints()!.a.p, 0, 7);
+      v.toggleRun("b");
+      expect(serialize(root)).toMatch(/<w:b\/>/);
+      v.paginate();
+      expect(hdrText(host, 2)).toContain("Laporan Rahasia");   // salinan statis di halaman lain
+      expect(host.querySelectorAll("[data-edit]").length).toBe(1);
+      v.exitHF();
+      expect(v.hfEdit).toBeNull();
+      expect(host.querySelector("[data-edit]")).toBeNull();
+      expect(hdrText(host, 1)).toContain("Laporan Rahasia");
+      // tersimpan ke paket dan terbaca ulang
+      expect(book.validate().filter(x => x.severity === "error")).toEqual([]);
+      const re = await DocxBook.open(book.toBytes(), "x.docx");
+      const rel = re.sections()[0].hdrRefs.default;
+      expect(rel).toBeTruthy();
+      expect(descendAll(re.hf(rel)!, "t").map(t => (t.children[0] as { value: string }).value).join("")).toContain("Laporan Rahasia");
+      v.dispose();
+    });
+
+    it("undo/redo memulihkan isi header, termasuk saat mode sunting aktif", async () => {
+      const { v, book, host } = await setup();
+      v.editHeaderFooter("ftr", 1);
+      v.insertTextAtSel("ABC");
+      expect(ftrText(host, 1)).toContain("ABC");
+      v.undo();
+      expect(v.hfEdit).toBeTruthy();
+      expect(descendAll(book.hf(v.hfEdit!.relId)!, "t").map(t => (t.children[0] as { value: string }).value).join("")).not.toContain("ABC");
+      v.redo();
+      expect(descendAll(book.hf(v.hfEdit!.relId)!, "t").map(t => (t.children[0] as { value: string }).value).join("")).toContain("ABC");
+      v.exitHF();
+      v.dispose();
+    });
+
+    it("field halaman: sisip PAGE/NUMPAGES, nomor tiap halaman benar, simpan & buka ulang", async () => {
+      const { v, book, host } = await setup();
+      v.paginate();
+      const total = host.querySelectorAll(".dx-page").length;
+      v.editHeaderFooter("ftr", 1);
+      v.insertTextAtSel("Halaman ");
+      expect(v.insertField("PAGE")).toBe(true);
+      v.insertTextAtSel(" dari ");
+      expect(v.insertField("NUMPAGES")).toBe(true);
+      v.exitHF();
+      for (let n = 1; n <= total; n++) expect(ftrText(host, n)).toContain(`Halaman ${n} dari ${total}`);
+      const xml = serialize(book.hf(v.hfEdit?.relId ?? book.sections()[0].ftrRefs.default)!);
+      expect(xml).toMatch(/instrText[^>]*> PAGE </);
+      expect(xml).toMatch(/instrText[^>]*> NUMPAGES </);
+      expect(book.validate().filter(x => x.severity === "error")).toEqual([]);
+      v.dispose();
+    });
+
+    it("penomoran halaman: mulai dari, format romawi/huruf, dan nomor di daftar isi mengikutinya", async () => {
+      const { v, book, host } = await setup();
+      v.paginate();
+      v.editHeaderFooter("ftr", 1);
+      v.insertField("PAGE");
+      v.exitHF();
+      v.setPageNumbering({ start: 5, fmt: "lowerRoman" });
+      expect(ftrText(host, 1)).toContain("v");
+      expect(ftrText(host, 2)).toContain("vi");
+      expect([...host.querySelectorAll<HTMLElement>(".dx-page")].map(p => p.dataset.disp).slice(0, 2)).toEqual(["v", "vi"]);
+      expect(v.hfOptions()).toMatchObject({ pgStart: 5, pgFmt: "lowerRoman" });
+      // daftar isi memakai nomor tampil
+      v.selectRange(findPara(v, "Use the ribbon"), 0, 0);
+      v.removeToc();
+      v.insertToc();
+      expect(serialize(v.tocList()[0].sdt!)).toMatch(/<w:t>(v|vi|vii)<\/w:t>/);
+      // kembali ke desimal, lanjutkan
+      v.setPageNumbering({ start: null, fmt: null });
+      expect([...host.querySelectorAll<HTMLElement>(".dx-page")].map(p => p.dataset.disp).slice(0, 2)).toEqual(["1", "2"]);
+      expect(book.sections()[0].pgNum).toBeUndefined();
+      v.dispose();
+    });
+
+    it("halaman pertama berbeda dan ganjil/genap memilih header berbeda; hapus header", async () => {
+      const { v, book, host } = await setup();
+      v.paginate();
+      v.editHeaderFooter("hdr", 1);
+      v.insertTextAtSel("UMUM");
+      v.exitHF();
+      v.setDifferentFirstPage(true);
+      expect(book.sections()[0].titlePg).toBe(true);
+      expect(hdrText(host, 1)).not.toContain("UMUM");     // halaman 1 memakai header 'first' (kosong)
+      expect(hdrText(host, 2)).toContain("UMUM");
+      v.editHeaderFooter("hdr", 1);
+      expect(v.hfTypeFor(1).type).toBe("first");
+      v.insertTextAtSel("PERTAMA");
+      v.exitHF();
+      expect(hdrText(host, 1)).toContain("PERTAMA");
+      expect(hdrText(host, 2)).not.toContain("PERTAMA");
+      expect(v.hfOptions().has.hdr).toEqual(expect.arrayContaining(["default", "first"]));
+      v.setDifferentFirstPage(false);
+      expect(hdrText(host, 1)).toContain("UMUM");
+      // ganjil/genap
+      if (book.settings()) {
+        expect(v.setDifferentOddEven(true)).toBe(true);
+        expect(v.hfTypeFor(2).type).toBe("even");
+        expect(book.validate().filter(x => x.severity === "error")).toEqual([]);
+        const re = await DocxBook.open(book.toBytes(), "x.docx");
+        expect(re.evenAndOdd()).toBe(true);
+        v.setDifferentOddEven(false);
+      }
+      // hapus
+      expect(v.removeHeaderFooter("hdr", "default")).toBe(true);
+      expect(hdrText(host, 2)).not.toContain("UMUM");
+      v.dispose();
+    });
+  });
+
+  describe("daftar bullet & bernomor", () => {
+    const labels = (host: HTMLElement) => [...host.querySelectorAll<HTMLElement>(".dx-p")].filter(d => d.querySelector(".dx-num")).map(d => d.querySelector(".dx-num")!.textContent!.trim());
+    const listParas = (v: DocxView) => [...v.book!.paragraphs()].map(x => x.p).filter(p => listOf(v.book!, p));
+    /** `n` paragraf body berurutan yang belum berdaftar (seleksi lintas paragraf mencakup semua paragraf di antaranya). */
+    const freeRun = (v: DocxView, n: number, skip = 0): XEl[] => {
+      const book = v.book!;
+      const all = [...book.paragraphs()].map(x => x.p);
+      let found = 0;
+      for (let i = 0; i + n <= all.length; i++) {
+        const w = all.slice(i, i + n);
+        if (w.every(p => book.parentOf(p) === book.body && !listOf(book, p) && flatText(p).length > 0)) { if (found++ === skip) return w; i += n - 1; }
+      }
+      throw new Error("tidak ada rangkaian paragraf bebas");
+    };
+
+    it("galeri: ganti gaya seluruh daftar yang ada, dan buat daftar baru dari paragraf biasa", async () => {
+      const { v, book, host } = await setup();
+      const before = listParas(v);
+      expect(before.length).toBeGreaterThanOrEqual(6); // 3 bullet + 3 bernomor pada contoh
+      const num = before.find(p => listInfo(book, p)!.kind === "number")!;
+      const group = before.filter(p => listOf(book, p)!.numId === listOf(book, num)!.numId);
+      expect(group.length).toBeGreaterThanOrEqual(3);
+      // seleksi sebagian item → seluruh daftar berganti gaya
+      v.selectRange(group[0], 0, 0);
+      expect(v.applyListPreset("roman-upper")).toBe(true);
+      expect(v.listInfoAtCaret()).toMatchObject({ kind: "number", preset: "roman-upper" });
+      const idx = [...host.querySelectorAll<HTMLElement>(".dx-p")].filter(d => d.querySelector(".dx-num")).map(d => d.querySelector(".dx-num")!.textContent!.trim());
+      expect(idx).toEqual(expect.arrayContaining(["I.", "II.", "III."]));
+      v.undo();
+      expect(v.listInfoAtCaret()?.preset).not.toBe("roman-upper");
+      // paragraf biasa → daftar baru bergaya huruf, dimulai dari "a)"
+      const plain = freeRun(v, 2);
+      v.restoreSel({ a: { p: plain[0], off: 0 }, b: { p: plain[1], off: 1 } });
+      expect(v.applyListPreset("alpha-lower")).toBe(true);
+      expect(listOf(book, plain[0])!.numId).toBe(listOf(book, plain[1])!.numId);
+      expect(v.listInfoAtCaret()).toMatchObject({ kind: "number", preset: "alpha-lower" });
+      expect(labels(host)).toEqual(expect.arrayContaining(["a)", "b)"]));
+      // bullet: ✓ dan seluruhnya valid
+      v.restoreSel({ a: { p: plain[0], off: 0 }, b: { p: plain[1], off: 1 } });
+      v.applyListPreset("bullet-check");
+      expect(labels(host)).toEqual(expect.arrayContaining(["✓"]));
+      expect(book.validate().filter(x => x.severity === "error")).toEqual([]);
+      v.dispose();
+    });
+
+    it("mulai ulang, nilai awal, dan lanjutkan penomoran", async () => {
+      const { v, book, host } = await setup();
+      // dua daftar bernomor terpisah dibuat dari 2 + 2 paragraf biasa berurutan
+      const [a1, a2] = freeRun(v, 2, 0);
+      const [b1, b2] = freeRun(v, 2, 1);
+      v.restoreSel({ a: { p: a1, off: 0 }, b: { p: a2, off: 1 } }); v.applyListPreset("num-dot");
+      v.restoreSel({ a: { p: b1, off: 0 }, b: { p: b2, off: 1 } }); v.applyListPreset("num-dot");
+      const nums = () => [a1, a2, b1, b2].map(p => host.querySelector<HTMLElement>(`.dx-p:has(.dx-num)`) && v.reg.domOf.get(p)!.querySelector(".dx-num")!.textContent!.trim());
+      expect(nums()).toEqual(["1.", "2.", "1.", "2."]);   // daftar baru → mulai dari awal
+      // lanjutkan: daftar kedua melanjutkan daftar pertama
+      v.restoreSel({ a: { p: b1, off: 0 }, b: { p: b1, off: 0 } });
+      expect(v.continueList()).toBe(true);
+      expect(nums()).toEqual(["1.", "2.", "3.", "4."]);
+      // mulai ulang dari 1 pada item ke-3 → 3 & 4 menjadi 1 & 2
+      expect(v.restartList()).toBe(true);
+      expect(nums()).toEqual(["1.", "2.", "1.", "2."]);
+      // nilai awal 10
+      v.restoreSel({ a: { p: b1, off: 0 }, b: { p: b1, off: 0 } });
+      expect(v.setListStart(10)).toBe(true);
+      expect(nums()).toEqual(["1.", "2.", "10.", "11."]);
+      expect(v.listInfoAtCaret()?.start).toBe(10);
+      // bukan daftar → false; undo memulihkan; simpan & buka ulang tetap valid
+      const loose = freeRun(v, 1, 0)[0];
+      v.restoreSel({ a: { p: loose, off: 0 }, b: { p: loose, off: 0 } });
+      expect(v.restartList()).toBe(false);
+      expect(book.validate().filter(x => x.severity === "error")).toEqual([]);
+      const re = await DocxBook.open(book.toBytes(), "x.docx");
+      expect(listInfo(re, [...re.paragraphs()].map(x => x.p).find(p => flatText(p) === flatText(b1))!)?.start).toBe(10);
+      expect(labels(host)).toContain("10.");
+      v.undo();   // undo menguraikan ulang body: objek paragraf lama tidak berlaku lagi, periksa lewat DOM
+      expect(labels(host)).not.toContain("10.");
+      expect(labels(host)).toContain("2.");
+      v.dispose();
+    });
+
+    it("multilevel: level dalam memakai format bergantian dan legal 1.1.1", async () => {
+      const { v, book, host } = await setup();
+      const plain = freeRun(v, 3);
+      v.restoreSel({ a: { p: plain[0], off: 0 }, b: { p: plain[2], off: 1 } });
+      v.applyListPreset("multi-legal");
+      v.restoreSel({ a: { p: plain[1], off: 0 }, b: { p: plain[1], off: 0 } });
+      v.indent(1);
+      const lab = (p: XEl) => v.reg.domOf.get(p)!.querySelector(".dx-num")!.textContent!.trim();
+      expect([lab(plain[0]), lab(plain[1]), lab(plain[2])]).toEqual(["1.", "1.1", "2."]);
+      v.restoreSel({ a: { p: plain[0], off: 0 }, b: { p: plain[2], off: 1 } });
+      v.applyListPreset("multi-decimal");
+      expect([lab(plain[0]), lab(plain[1]), lab(plain[2])]).toEqual(["1.", "a.", "2."]);
+      void host;
+      v.dispose();
+    });
+  });
 });
 
 export type { XEl };
+
+
+describe("DocxView — format.* & struktur (bus)", () => {
+  it("formatApply paragraf: run + paragraf + alfa dikomposit; satu langkah undo; kunci asing dilewati", async () => {
+    const { v, book } = await setup();
+    const p = findPara(v, "Use the ribbon");
+    const idx = [...book.paragraphs()].map(x => x.p).indexOf(p) + 1;
+    const before = serialize(p);
+    const hist0 = book.histIdx;
+    const r = v.formatApply({ bold: true, italic: true, fontSize: 18, fontFamily: "Arial", color: "#FF0000", colorAlpha: 0.5, align: "center", spaceAfter: 12, lineSpacing: 1.5, valign: "middle", opacity: 0.5, zzz: 1 }, { kind: "paragraph", index: idx });
+    expect(r.targets).toBe(1);
+    expect(r.applied).toEqual(expect.arrayContaining(["bold", "italic", "fontSize", "fontFamily", "color", "colorAlpha", "align", "spaceAfter", "lineSpacing"]));
+    expect(r.skipped).toEqual(expect.arrayContaining(["valign", "opacity", "zzz"])); // di luar tabel / tak dikenal
+    const x = serialize(findPara(v, "Use the ribbon"));
+    expect(x).toMatch(/<w:b\/>/);
+    expect(x).toMatch(/<w:sz w:val="36"\/>/);
+    expect(x).toMatch(/w:val="FF8080"/);   // merah 50% di atas putih
+    expect(x).toMatch(/<w:jc w:val="center"\/>/);
+    expect(x).toMatch(/w:after="240"/);
+    expect(book.histIdx).toBe(hist0 + 1);   // satu entri riwayat
+    v.undo();
+    expect(serialize(findPara(v, "Use the ribbon"))).toBe(before);
+    const g = (v.formatApply({ bold: true }, { kind: "paragraph", index: idx }), v.formatGet({ kind: "paragraph", index: idx }))!;
+    expect(g.bold).toBe(true);
+  });
+
+  it("target: rentang paragraf + char range, seluruh dokumen, hasil cari; target tak ada → 0", async () => {
+    const { v, book } = await setup();
+    const p = findPara(v, "Use the ribbon");
+    const idx = [...book.paragraphs()].map(x => x.p).indexOf(p) + 1;
+    expect(v.formatApply({ underline: true }, { kind: "paragraph", index: idx, start: 0, end: 3 }).targets).toBe(1);
+    expect(serialize(findPara(v, "Use the ribbon"))).toMatch(/<w:u w:val="single"\/>/);
+    const found = v.formatApply({ highlight: "yellow" }, { kind: "search", query: "ribbon" });
+    expect(found.applied).toContain("highlight");
+    expect(serialize(findPara(v, "Use the ribbon"))).toMatch(/w:highlight w:val="yellow"/);
+    const body = [...book.paragraphs()].map(x => x.p).filter(q => book.parentOf(q) === book.body);
+    const all = v.formatApply({ italic: true }, { kind: "all" });
+    expect(all.targets).toBe(v.paragraphCount()); // termasuk teks di dalam tabel
+    expect(serialize(body[0]) + serialize(body[body.length - 1])).toMatch(/<w:i\/>/);
+    expect(v.formatApply({ bold: true }, { kind: "paragraph", index: 99999 })).toEqual({ applied: [], skipped: ["bold"], targets: 0 });
+    expect(v.formatApply({ bold: true }, { kind: "search", query: "tidak-ada-xyz" }).targets).toBe(0);
+  });
+
+  it("target tabel: fill+bold pada sub-rentang sel saja (bukan hanya sel di kursor); valign sel", async () => {
+    const { v, book } = await setup();
+    const tbl = book.tables()[0];
+    const r = v.formatApply({ fill: "#00FF00", fillAlpha: 0.5, bold: true, valign: "middle" }, { kind: "table", index: 1, row: 1, col: 1, toRow: 2, toCol: 2 });
+    expect(r.applied).toEqual(expect.arrayContaining(["fill", "fillAlpha", "bold", "valign"]));
+    const rows = els(tbl, "tr");
+    const cellOf = (ri: number, ci: number) => els(rows[ri], "tc")[ci];
+    for (const [ri, ci] of [[0, 0], [0, 1], [1, 0], [1, 1]]) expect(serialize(cellOf(ri, ci))).toMatch(/w:fill="80FF80"/);
+    expect(serialize(cellOf(0, 2))).not.toMatch(/w:fill="80FF80"/);
+    expect(serialize(cellOf(2, 0))).not.toMatch(/w:fill="80FF80"/);
+    expect(serialize(cellOf(1, 1))).toMatch(/<w:vAlign w:val="center"\/>/);
+    expect(serialize(cellOf(1, 1))).toMatch(/<w:b\/>/);
+    v.undo();
+    expect(serialize(v.book!.tables()[0])).not.toMatch(/80FF80/);
+  });
+
+  it("struktur: paragraf (sisip/hapus/undo), page break, tabel (sisip + operasi), readonly menolak", async () => {
+    const { v, book } = await setup();
+    const n0 = v.paragraphCount();
+    const i = v.insertParagraphAt({ text: "Paragraf bus", style: "Heading2", after: 3 })!;
+    expect(i).toBe(4);
+    expect(v.paragraphCount()).toBe(n0 + 1);
+    expect(flatText([...book.paragraphs()].map(x => x.p)[3])).toBe("Paragraf bus");
+    expect(v.insertParagraphAt({ after: 9999 })).toBeUndefined();
+    expect(v.insertParagraphAt({ text: "Awal", after: 0 })).toBe(1);
+    expect(v.removeParagraphAt(1)).toBe(true);
+    expect(v.removeParagraphAt(99999)).toBe(false);
+    expect(v.insertPageBreakAt(2)).toBe(true);
+    expect(serialize(book.body)).toMatch(/w:br w:type="page"/);
+    // tabel
+    const list0 = v.tableSummaries();
+    expect(list0).toHaveLength(1);
+    const ti = v.insertTableAfterPara(2, 3, 2)!;
+    expect(ti).toBeGreaterThan(0);
+    expect(v.tableSummaries()).toHaveLength(2);
+    const t = v.tableSummaries().find(x => x.index === ti)!;
+    expect([t.rows, t.cols]).toEqual([2, 3]);
+    expect(v.tableApply({ index: ti, row: 1, op: "insertRowBelow" })).toBe(true);
+    expect(v.tableSummaries().find(x => x.index === ti)!.rows).toBe(3);
+    expect(v.tableApply({ index: ti, row: 1, col: 1, toRow: 1, toCol: 2, op: "merge" })).toBe(true);
+    expect(v.tableApply({ index: ti, op: "unknownOp" })).toBe(false);
+    expect(v.tableApply({ index: 99, op: "insertRowBelow" })).toBe(false);
+    expect(v.tableApply({ index: ti, row: 3, op: "deleteRows" })).toBe(true);
+    expect(v.tableSummaries().find(x => x.index === ti)!.rows).toBe(2);
+    expect(v.tableApply({ index: ti, op: "deleteTable" })).toBe(true);
+    expect(v.tableSummaries()).toHaveLength(1);
+    v.setReadonly(true);
+    expect(v.insertParagraphAt({ text: "x" })).toBeUndefined();
+    expect(v.tableApply({ index: 1, op: "insertRowBelow" })).toBe(false);
+    expect(v.formatApply({ bold: true }, { kind: "all" }).targets).toBe(0);
+  });
+});
+
+describe("DocxView — ganti catatan kaki & komentar", () => {
+  it("find/replace notes & comment: lokasi, tunggal vs semua, satu undo, tersimpan", async () => {
+    const { v, book } = await setup();
+    expect(v.replaceKinds({ query: "x", replacement: "y", kinds: ["notes", "comment"] }).skipped).toEqual([]);
+    const f = v.findMatches({ query: "rendered", kinds: ["notes"], select: false });
+    expect(f.count).toBe(1);
+    expect(f.matches[0].location).toMatch(/^Footnote /);
+    expect(f.matches[0].target).toMatchObject({ kind: "paragraph" });
+    const c = v.findMatches({ query: "re-check", kinds: ["comment"], select: false });
+    expect(c.count).toBe(1);
+    expect(c.matches[0].location).toMatch(/Comment .*Reviewer/);
+    const hist0 = book.histIdx;
+    const r = v.replaceKinds({ query: "rendered", replacement: "shown", kinds: ["notes"] });
+    expect(r.byKind.notes).toBe(1);
+    const r2 = v.replaceKinds({ query: "re-check", replacement: "periksa ulang", kinds: ["comment"] }, true);
+    expect(r2.byKind.comment).toBe(1);
+    expect(book.histIdx).toBe(hist0 + 2);
+    expect(book.comments()[0]?.text ?? "").toBeDefined();
+    // tersimpan: buka ulang dari bytes
+    const book2 = await DocxBook.open(book.toBytes(), "x.docx");
+    const fn = [...book2.notes("footnotes").values()].map(n => descendAll(n, "t").map(t => (t.children[0] as { value?: string } | undefined)?.value ?? "").join("")).join(" ");
+    expect(fn).toContain("shown");
+    expect(book2.comments()[0].text).toContain("periksa ulang");
+    // undo mengembalikan keduanya
+    v.undo(); v.undo();
+    const again = v.findMatches({ query: "rendered", kinds: ["notes"], select: false });
+    expect(again.count).toBe(1);
+    expect(v.findMatches({ query: "re-check", kinds: ["comment"], select: false }).count).toBe(1);
+    // separator bawaan tidak ikut dicari
+    expect(v.findMatches({ query: ".", kinds: ["notes"], select: false, regex: true }).matches.every(m => m.text.length > 0)).toBe(true);
+  });
+});

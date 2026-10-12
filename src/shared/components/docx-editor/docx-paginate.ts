@@ -9,6 +9,7 @@ import { Registry, fillBlocks, type RenderCtx } from "./docx-render";
 import { readDrawing, type ImgInfo } from "./docx-image";
 import { buildGrid, type Grid } from "./docx-table";
 import { emuPx, twipPx } from "./docx-style";
+import { formatNumber } from "./docx-numbering";
 
 export interface Geom { pageW: number; pageH: number; ml: number; mr: number; mt: number; mb: number; contentW: number; hdrDist: number; ftrDist: number }
 export function geomOf(s: Section): Geom {
@@ -33,6 +34,8 @@ export interface PaginatorHost {
   pagesEl: HTMLElement;
   doc: Document;
   makeCtx(contentW: number, source: string): RenderCtx;
+  /** Header/footer yang sedang disunting (hanya satu kotak pada satu halaman yang dapat diedit). */
+  hfEdit?(): { relId: string; kind: "hdr" | "ftr"; page: number } | null;
 }
 
 export class Paginator {
@@ -60,17 +63,18 @@ export class Paginator {
     return refs[t] ?? (t === "first" ? undefined : refs.default);
   }
 
-  private renderHF(relId: string | undefined, contentW: number): HTMLElement | undefined {
+  private renderHF(relId: string | undefined, contentW: number, editable = false): HTMLElement | undefined {
     if (!relId) return undefined;
     const root = this.h.book.hf(relId);
     if (!root) return undefined;
     const ctx = this.h.makeCtx(contentW, this.h.book.hfPart(relId) ?? this.h.book.doc.partName);
-    ctx.editable = false;
+    ctx.editable = editable;
     const box = this.h.doc.createElement("div");
     box.className = "dx-hfc";
     box.dataset.hf = relId; // dipakai view untuk mengenali gambar di header/footer
     box.style.display = "flex"; box.style.flexDirection = "column";
-    fillBlocks(ctx, box, root, true);
+    if (editable) { box.dataset.edit = "1"; box.contentEditable = "true"; box.spellcheck = true; }
+    fillBlocks(ctx, box, root, !editable);
     return box;
   }
 
@@ -173,10 +177,14 @@ export class Paginator {
     const total = plans.length;
     while (this.pages.length > total) { const p = this.pages.pop()!; p.remove(); }
     let pageInSec = 0, lastSec = -1;
+    let dispNo = 0, dispFmt = "decimal";
     plans.forEach((plan, idx) => {
       const g = geoms[plan.sec], sect = sections[plan.sec];
       pageInSec = plan.sec === lastSec && !plan.first ? pageInSec + 1 : 1;
       lastSec = plan.sec;
+      // nomor halaman tampil: `pgNumType` start/format per section; tanpa start → lanjutkan; format diwarisi
+      if (sect.pgNum?.fmt) dispFmt = sect.pgNum.fmt; else if (pageInSec === 1 && sect.pgNum && !sect.pgNum.fmt) dispFmt = "decimal";
+      dispNo = pageInSec === 1 && sect.pgNum?.start !== undefined ? sect.pgNum.start : dispNo + 1;
       let page = this.pages[idx];
       if (!page) {
         page = doc.createElement("div");
@@ -192,6 +200,7 @@ export class Paginator {
       const { top, bot } = availOf(plan.sec);
       page.dataset.sec = String(plan.sec);
       page.dataset.no = String(idx + 1);
+      page.dataset.disp = formatNumber(dispNo, dispFmt);
       page.style.width = `${g.pageW}px`;
       page.style.minHeight = `${g.pageH}px`;
       const body = page.querySelector(":scope > .dx-body") as HTMLElement;
@@ -203,12 +212,17 @@ export class Paginator {
       ftr.style.left = `${g.ml}px`; ftr.style.bottom = `${g.ftrDist}px`; ftr.style.width = `${g.contentW}px`;
       void bot;
       const hk = this.hfKey(sect, "hdr", pageInSec, idx + 1), fk = this.hfKey(sect, "ftr", pageInSec, idx + 1);
-      const sig = `${hk}|${fk}|${idx + 1}|${total}|${g.contentW}|${this.h.book.hfRev}`;
+      const ed = this.h.hfEdit?.() ?? null;
+      const editHdr = !!ed && ed.kind === "hdr" && ed.page === idx + 1 && ed.relId === hk;
+      const editFtr = !!ed && ed.kind === "ftr" && ed.page === idx + 1 && ed.relId === fk;
+      const sig = `${hk}|${fk}|${idx + 1}|${total}|${g.contentW}|${this.h.book.hfRev}|${page.dataset.disp}|${editHdr ? "eh" : ""}${editFtr ? "ef" : ""}`;
       if (page.dataset.hfsig !== sig) {
         page.dataset.hfsig = sig;
-        hdr.textContent = ""; ftr.textContent = "";
-        const hb = this.renderHF(hk, g.contentW); if (hb) hdr.appendChild(hb);
-        const fb = this.renderHF(fk, g.contentW); if (fb) ftr.appendChild(fb);
+        // kotak yang sedang disunting dipertahankan (menggambar ulang akan menghapus kursor)
+        const keepH = editHdr && hdr.firstElementChild?.getAttribute("data-edit") === "1";
+        const keepF = editFtr && ftr.firstElementChild?.getAttribute("data-edit") === "1";
+        if (!keepH) { hdr.textContent = ""; const hb = this.renderHF(hk, g.contentW, editHdr); if (hb) hdr.appendChild(hb); }
+        if (!keepF) { ftr.textContent = ""; const fb = this.renderHF(fk, g.contentW, editFtr); if (fb) ftr.appendChild(fb); }
         this.fillFields(page, idx + 1, total, pageInSec);
       }
       (page.querySelector(":scope > .dx-pgno") as HTMLElement).textContent = `${idx + 1} / ${total}`;
@@ -453,8 +467,9 @@ export class Paginator {
   // ───────── field halaman ─────────
 
   private fillFields(page: HTMLElement, no: number, total: number, inSec: number) {
-    const set = (s: string, v: string) => page.querySelectorAll(`:is(.dx-hdr,.dx-ftr) [data-f="${s}"]`).forEach(e => { e.textContent = v; });
-    set("PAGE", String(no)); set("NUMPAGES", String(total)); set("SECTIONPAGES", String(inSec)); set("SECTION", String(Number(page.dataset.sec ?? 0) + 1));
+    // kotak yang sedang disunting menampilkan hasil cache field (teks DOM harus sama dengan model)
+    const set = (s: string, v: string) => page.querySelectorAll(`:is(.dx-hdr,.dx-ftr) [data-f="${s}"]`).forEach(e => { if (!e.closest("[data-edit]")) e.textContent = v; });
+    set("PAGE", page.dataset.disp ?? String(no)); set("NUMPAGES", String(total)); set("SECTIONPAGES", String(inSec)); set("SECTION", String(Number(page.dataset.sec ?? 0) + 1));
     const now = new Date();
     for (const k of ["DATE", "TIME", "SAVEDATE", "CREATEDATE"]) set(k, k === "TIME" ? now.toLocaleTimeString() : now.toLocaleDateString());
   }

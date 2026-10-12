@@ -163,7 +163,7 @@ export function replaceStyleValue(graph: Graph, kind: "font" | "color" | "fill" 
   if (!cells.length) return 0;
   const key = STYLE_KEY[kind];
   const value = to ? (kind === "font" ? to : to.startsWith("#") ? to : `#${to}`) : kind === "color" || kind === "font" ? null : "none";
-  graph.batchUpdate(() => graph.setCellStyles(key, value as never, cells));
+  graph.batchUpdate(() => graph.setCellStyles(key as never, value as never, cells));
   return cells.length;
 }
 export function countStyleValue(graph: Graph, kind: "font" | "color" | "fill" | "stroke", value: string): number {

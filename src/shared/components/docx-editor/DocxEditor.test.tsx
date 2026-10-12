@@ -222,3 +222,90 @@ describe("DocxEditor — penggaris", () => {
     expect(api.getView()!.pageGeometry()).toMatchObject({ ml: expect.any(Number), mt: expect.any(Number) });
   });
 });
+
+
+describe("DocxEditor — header/footer, penomoran halaman, daftar (bus & UI)", () => {
+  it("hf.* lewat bus: sunting, sisip field, opsi, penomoran, event headerfooter", async () => {
+    const { api, root } = await mount();
+    const ev = vi.fn();
+    api.on("headerfooter", ev);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["hf.edit", "hf.exit", "hf.insertField", "hf.options", "hf.firstPage", "hf.oddEven", "hf.pageNumbering", "hf.remove"]));
+    expect(await api.run("hf.edit", "ftr", 1)).toBe(true);
+    [...root.querySelectorAll<HTMLElement>(".dxe-tab")].find(t => /Insert|Sisip/.test(t.textContent ?? ""))!.click();
+    await new Promise(r => setTimeout(r, 0));
+    expect([...root.querySelectorAll(".dxe-btn.primary")].map(b => b.textContent).join("|")).toMatch(/Close header|Tutup header/);
+    await api.run("hf.insertField", "PAGE");
+    expect((await api.run<{ editing: unknown }>("hf.options")).editing).toMatchObject({ kind: "ftr", page: 1 });
+    await api.run("hf.exit");
+    expect(ev.mock.calls.map(c => c[0].action)).toEqual(expect.arrayContaining(["enter", "field", "exit"]));
+    await api.run("hf.pageNumbering", { start: 3, fmt: "upperRoman" });
+    expect(await api.run("hf.options")).toMatchObject({ pgStart: 3, pgFmt: "upperRoman" });
+    expect(root.querySelector(".dx-page .dx-ftr")?.textContent).toContain("III");
+    await api.run("hf.firstPage", true);
+    expect((await api.run<{ titlePg: boolean }>("hf.options")).titlePg).toBe(true);
+    // via CustomEvent DOM
+    expect(await dispatchCommand<{ section: number }>(root, "docx-editor", "hf.options")).toMatchObject({ section: 0 });
+    // UI: kontrol di tab Sisip
+    api.getView()!.paginate();
+    const btns = [...root.querySelectorAll<HTMLElement>(".dxe-btn")].map(b => b.textContent ?? "");
+    expect(btns.some(t => /Header/.test(t))).toBe(true);
+    expect(btns.some(t => /Footer/.test(t))).toBe(true);
+  });
+
+  it("list.* lewat bus: galeri, restart, nilai awal, info; readonly menolak", async () => {
+    const { api } = await mount();
+    const view = api.getView()!;
+    expect((await api.run<unknown[]>("list.presets")).length).toBeGreaterThanOrEqual(13);
+    const book = api.getBook()!;
+    const p = [...book.paragraphs()].map(x => x.p).find(x => book.parentOf(x) === book.body && !view.listInfoAtCaret() && x.children.length > 1)!;
+    view.selectRange(p, 0, 0);
+    expect(await api.run("list.apply", "alpha-upper")).toBe(true);
+    expect(await api.run<{ preset: string; kind: string }>("list.info")).toMatchObject({ kind: "number", preset: "alpha-upper" });
+    expect(await api.run("list.setStart", 7)).toBe(true);
+    expect((await api.run<{ start: number }>("list.info")).start).toBe(7);
+    expect(await api.run("list.restart")).toBe(true);
+    expect(await api.run("list.apply", "nope")).toBe(false);
+  });
+
+  it("readonly: hf & list menolak", async () => {
+    const { api } = await mount({ readonly: true });
+    expect(api.headerFooter.edit("hdr", 1)).toBe(false);
+    expect(api.lists.apply("num-dot")).toBe(false);
+    expect(api.headerFooter.setDifferentOddEven(true)).toBe(false);
+  });
+});
+
+
+describe("DocxEditor — format.* & struktur lewat bus", () => {
+  it("format.apply/get/keys, paragraph.*, table.*, event format/structure, DOM CustomEvent", async () => {
+    const { api, root } = await mount();
+    const fmt = vi.fn(), st = vi.fn();
+    api.on("format", fmt); api.on("structure", st);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["format.apply", "format.get", "format.keys", "paragraph.insert", "table.apply", "pageBreak.insert"]));
+    expect(await api.run<string[]>("format.keys")).toContain("colorAlpha");
+    const rep = await api.run<{ applied: string[]; targets: number }>("format.apply", { target: { kind: "paragraph", index: 2 }, props: { bold: true, color: "#0000FF", colorAlpha: 0.25, fill: "#FFFF00" } });
+    expect(rep.targets).toBe(1);
+    expect(rep.applied).toEqual(expect.arrayContaining(["bold", "color", "fill"]));
+    expect(fmt).toHaveBeenCalledTimes(1);
+    expect((await api.run<{ bold: boolean }>("format.get", { kind: "paragraph", index: 2 })).bold).toBe(true);
+    const n0 = await api.run<number>("paragraph.count");
+    const idx = await api.run<number>("paragraph.insert", { text: "dari bus", after: 1 });
+    expect(idx).toBe(2);
+    expect(await api.run<number>("paragraph.count")).toBe(n0 + 1);
+    const ti = await dispatchCommand<number>(root, "docx-editor", "table.insert", 2, 2, 1);
+    expect(ti).toBeGreaterThan(0);
+    expect(await api.run("table.apply", { index: ti, op: "insertColRight", col: 1 })).toBe(true);
+    expect((await api.run<{ cols: number; index: number }[]>("table.list")).find(t => t.index === ti)!.cols).toBe(3);
+    expect(await api.run("table.apply", { index: ti, op: "nope" })).toBe(false);
+    expect(await api.run<string[]>("table.ops")).toContain("merge");
+    expect(st.mock.calls.map(c => c[0].scope + "." + c[0].action)).toEqual(expect.arrayContaining(["paragraph.insert", "table.insert", "table.insertColRight"]));
+  });
+
+  it("readonly: format & struktur menolak", async () => {
+    const { api } = await mount({ readonly: true });
+    expect(api.format.apply({ props: { bold: true } }).targets).toBe(0);
+    expect(api.blocks.insertParagraph({ text: "x" })).toBeUndefined();
+    expect(api.tables.insert(2, 2)).toBeUndefined();
+    expect(api.blocks.insertPageBreak()).toBe(false);
+  });
+});

@@ -7,7 +7,8 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import * as P from "@office-kit/pptx";
 import { PptxDeck, PptxLoadError } from "./pptx-model";
-import { PptxView, type FindHit, type PptxNavTarget, type PxSelInfo, type Tool } from "./pptx-view";
+import { PptxView, PPTX_FORMAT_KEYS, type FindHit, type PptxFormatTarget, type PptxNavTarget, type PxSelInfo, type Tool } from "./pptx-view";
+import type { FormatProps, FormatReport, FormatSpec, OfficeFormatEvents, OfficeStructureEvents } from "../editor-kit/format";
 import { createSampleDeck } from "./pptx-sample";
 import { createI18n, type Lang } from "./pptx-i18n";
 import { hexDump, isCfb, isZip, readCfb, readVba, streamBytes, type CfbInfo, type VbaInfo } from "../office-shared/ole-core";
@@ -27,7 +28,7 @@ import { prepareOle } from "../office-shared/ole-embed";
 import "./pptx-editor.css";
 
 /** Event yang dipancarkan editor PPTX (bus: `api.events`; DOM: CustomEvent `pptx-editor:<tipe>` pada elemen akar). */
-export interface PptxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, RulerEventMap {
+export interface PptxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, RulerEventMap {
   ready: { api: PptxEditorApi };
   selection: { info: PxSelInfo };
   /** Slide aktif berpindah. */
@@ -67,6 +68,36 @@ export interface PptxEditorApi {
   /** Ganti semua, per jenis: `text`, `notes`, `link`, `name`, `font`, `color`, `fill`, `stroke`. */
   replaceAll(spec: ReplaceSpec): ReplaceReport;
   replaceKinds(): string[];
+  /** Format umum + khusus PPTX pada bentuk (target: `{slide?, id?, ids?, name?, all?}`; default seleksi). `bounds` dalam px slide. Satu langkah undo. */
+  readonly format: {
+    keys(): string[];
+    apply(spec: FormatSpec<PptxFormatTarget>): FormatReport;
+    get(target?: PptxFormatTarget): FormatProps | undefined;
+  };
+  /** Struktur slide. Indeks berbasis 0; tanpa indeks = slide aktif. */
+  readonly slides: {
+    list(): { index: number; title: string; layout: string | null; hidden: boolean; shapes: number; notes: boolean }[];
+    layouts(): string[];
+    add(opts?: { layout?: string; at?: number }): boolean;
+    duplicate(index?: number): boolean;
+    remove(index?: number): boolean;
+    move(from: number, to: number): boolean;
+    setBackground(color: string | null, index?: number): boolean;
+    setNotes(text: string, index?: number): boolean;
+    setHidden(hidden: boolean, index?: number): boolean;
+    setLayout(name: string, index?: number): boolean;
+  };
+  /** Struktur bentuk pada slide. Target seperti `format` (default seleksi). */
+  readonly shapes: {
+    list(slide?: number): { id: number; name: string; kind: string; text: string; x: number; y: number; w: number; h: number; hidden: boolean }[];
+    add(spec: Parameters<PptxView["shapeAdd"]>[0]): number | undefined;
+    remove(target?: PptxFormatTarget): number;
+    duplicate(target?: PptxFormatTarget): number;
+    align(mode: Parameters<PptxView["shapeAlign"]>[0], target?: PptxFormatTarget): boolean;
+    order(op: "front" | "back" | "forward" | "backward", target?: PptxFormatTarget): boolean;
+    group(target?: PptxFormatTarget): boolean;
+    ungroup(target?: PptxFormatTarget): boolean;
+  };
   readonly links: {
     list(): LinkItem[];
     /** Pasang tautan pada bentuk terpilih (atau teks terpilih saat menyunting). */
@@ -533,6 +564,8 @@ export default function PptxEditor(props: PptxEditorProps) {
     return r;
   };
 
+  const st = (scope: string, action: string, ok: boolean, detail?: unknown): boolean => { emit("structure", { scope, action, ok, detail }); return ok; };
+
   const buildApi = (): PptxEditorApi => ({
     events: bus, on: bus.on, off: bus.off, once: bus.once, run: (name, ...args) => bus.run(name, ...args),
     getDeck: () => deck(), getView: () => view,
@@ -548,6 +581,32 @@ export default function PptxEditor(props: PptxEditorProps) {
     redo: async () => { await restore(() => deck()!.redo()); emit("history", { action: "redo" }); },
     goTo: i => view?.goTo(i), getSlideCount: () => deck()?.slides.length ?? 0,
     goto: target => { const r = view?.gotoTarget(target) ?? { target, ok: false }; emit("navigate", r); return r; },
+    format: {
+      keys: () => [...PPTX_FORMAT_KEYS],
+      apply: spec => { const r = view?.formatShapes(spec.props ?? {}, spec.target) ?? { applied: [], skipped: Object.keys(spec.props ?? {}), targets: 0 }; emit("format", { action: "apply", report: r, target: spec.target }); return r; },
+      get: t => view?.formatGet(t),
+    },
+    slides: {
+      list: () => view?.slideSummaries() ?? [], layouts: () => view?.layoutNames() ?? [],
+      add: o => st("slide", "add", !!view?.addSlide(o?.layout, o?.at), o),
+      duplicate: i => st("slide", "duplicate", !!view?.slideDuplicate(i), { index: i }),
+      remove: i => st("slide", "remove", !!view?.slideRemove(i), { index: i }),
+      move: (f, t) => st("slide", "move", !!view?.slideMove(f, t), { from: f, to: t }),
+      setBackground: (c, i) => st("slide", "background", !!view?.slideSetBackground(c, i), { index: i, color: c }),
+      setNotes: (tx, i) => st("slide", "notes", !!view?.slideSetNotes(tx, i), { index: i }),
+      setHidden: (h, i) => st("slide", "hidden", !!view?.slideSetHidden(h, i), { index: i, hidden: h }),
+      setLayout: (n, i) => st("slide", "layout", !!view?.slideSetLayout(n, i), { index: i, layout: n }),
+    },
+    shapes: {
+      list: s => view?.shapeSummaries(s) ?? [],
+      add: spec => { const id = view?.shapeAdd(spec); st("shape", "add", id !== undefined, { id, type: spec.type }); return id; },
+      remove: t => { const n = view?.shapeRemove(t) ?? 0; st("shape", "remove", n > 0, { n }); return n; },
+      duplicate: t => { const n = view?.shapeDuplicate(t) ?? 0; st("shape", "duplicate", n > 0, { n }); return n; },
+      align: (m, t) => st("shape", "align", !!view?.shapeAlign(m, t), { mode: m }),
+      order: (o, t) => st("shape", "order", !!view?.shapeOrder(o, t), { op: o }),
+      group: t => st("shape", "group", !!view?.shapeGroup(t)),
+      ungroup: t => st("shape", "ungroup", !!view?.shapeUngroup(t)),
+    },
     find: spec => {
       const r = view?.findMatches(spec) ?? { query: spec.query, count: 0, matches: [], current: -1 };
       emit("find", { query: spec.query, count: r.count });
@@ -614,6 +673,15 @@ export default function PptxEditor(props: PptxEditorProps) {
       undo: () => a.undo(), redo: () => a.redo(), goTo: (i: number) => a.goTo(i), getSlideCount: () => a.getSlideCount(), setZoom: (z: number) => a.setZoom(z), getZoom: () => a.getZoom(),
       load: (i: Uint8Array | ArrayBuffer | File, n?: string) => a.load(i, n), getBytes: () => a.getBytes(), getText: () => a.getText(),
       save: () => savePptx(), setPanel: (p: Panel) => setPanel(p), setLocale: (l: Lang) => setLang(l),
+      "format.keys": () => a.format.keys(), "format.apply": (s: FormatSpec<PptxFormatTarget>) => a.format.apply(s), "format.get": (t?: PptxFormatTarget) => a.format.get(t),
+      "slide.list": () => a.slides.list(), "slide.layouts": () => a.slides.layouts(), "slide.add": (o?: { layout?: string; at?: number }) => a.slides.add(o),
+      "slide.duplicate": (i?: number) => a.slides.duplicate(i), "slide.remove": (i?: number) => a.slides.remove(i), "slide.move": (f: number, t: number) => a.slides.move(f, t),
+      "slide.setBackground": (c: string | null, i?: number) => a.slides.setBackground(c, i), "slide.setNotes": (tx: string, i?: number) => a.slides.setNotes(tx, i),
+      "slide.setHidden": (h: boolean, i?: number) => a.slides.setHidden(h, i), "slide.setLayout": (n: string, i?: number) => a.slides.setLayout(n, i),
+      "shape.list": (s?: number) => a.shapes.list(s), "shape.add": (sp: Parameters<typeof a.shapes.add>[0]) => a.shapes.add(sp), "shape.remove": (t?: PptxFormatTarget) => a.shapes.remove(t),
+      "shape.duplicate": (t?: PptxFormatTarget) => a.shapes.duplicate(t), "shape.align": (m: Parameters<typeof a.shapes.align>[0], t?: PptxFormatTarget) => a.shapes.align(m, t),
+      "shape.order": (o: "front" | "back" | "forward" | "backward", t?: PptxFormatTarget) => a.shapes.order(o, t),
+      "shape.group": (t?: PptxFormatTarget) => a.shapes.group(t), "shape.ungroup": (t?: PptxFormatTarget) => a.shapes.ungroup(t),
       goto: (t: PptxNavTarget) => a.goto(t), find: (s: FindSpec) => a.find(s), findNext: () => a.findNext(), findPrev: () => a.findPrev(), findClear: () => a.findClear(),
       replace: (s: ReplaceSpec) => a.replace(s), replaceAll: (s: ReplaceSpec) => a.replaceAll(s), "replace.kinds": () => a.replaceKinds(),
       "link.list": () => a.links.list(), "link.set": (u: string) => a.links.set(u), "link.remove": () => a.links.remove(),

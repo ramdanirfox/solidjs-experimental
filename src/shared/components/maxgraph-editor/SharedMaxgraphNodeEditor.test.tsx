@@ -530,3 +530,125 @@ describe("SharedMaxgraphNodeEditor — navigasi, cari/ganti lintas jenis, warna 
     expect(ro.links.set("https://a.b", { ids: ["a"] })).toBe(false);
   });
 });
+
+describe("SharedMaxgraphNodeEditor — format.*, struktur sel, penggaris", () => {
+  const load = async (api: MaxgraphNodeEditorApi) => { await api.importDrawio(DRAWIO); };
+  const styleOf = (api: MaxgraphNodeEditorApi, id: string) => api.graph.getCurrentCellStyle(api.graph.getDataModel().getCell(id)!) as Record<string, unknown>;
+
+  it("format.apply: font, warna+alfa native, isi, garis, rata, bounds; satu undo; kunci asing dilewati", async () => {
+    const { api, root } = mount();
+    await load(api);
+    const fmt = vi.fn();
+    api.on("format", fmt);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["format.apply", "format.get", "format.keys", "cell.list", "cell.update", "ruler.toggle", "ruler.addGuide"]));
+    const r = await api.run<{ applied: string[]; skipped: string[]; targets: number }>("format.apply", {
+      target: { id: "a" },
+      props: { bold: true, italic: true, fontSize: 18, color: "#FF0000", colorAlpha: 0.5, fill: "#00FF00", fillAlpha: 0.25, stroke: { color: "#0000FF", width: 3, dash: "dash", alpha: 0.75 }, align: "left", valign: "top", opacity: 0.8, rounded: false, bounds: { x: 100, w: 220 }, link: undefined, zzz: 1, rotation: 15 },
+    });
+    expect(r.targets).toBe(1);
+    expect(r.applied).toEqual(expect.arrayContaining(["bold", "italic", "fontSize", "color", "colorAlpha", "fill", "fillAlpha", "stroke", "align", "valign", "opacity", "bounds", "rotation"]));
+    expect(r.skipped).toContain("zzz");
+    expect(fmt).toHaveBeenCalledTimes(1);
+    const s = styleOf(api, "a");
+    expect(s.fontStyle).toBe(3);
+    expect(s.fontSize).toBe(18);
+    expect(s.fontColor).toBe("#FF0000");
+    expect(s.textOpacity).toBe(50);
+    expect(s.fillColor).toBe("#00FF00");
+    expect(s.fillOpacity).toBe(25);
+    expect(s.strokeColor).toBe("#0000FF");
+    expect(s.strokeWidth).toBe(3);
+    expect(s.strokeOpacity).toBe(75);
+    expect(s.dashed).toBeTruthy();
+    expect(s.opacity).toBe(80);
+    expect(s.align).toBe("left");
+    expect(s.verticalAlign).toBe("top");
+    const g = api.graph.getDataModel().getCell("a")!.getGeometry()!;
+    expect([g.x, g.width]).toEqual([100, 220]);
+    const got = (await api.run<{ bold: boolean; fillAlpha: number; stroke: { width: number } }>("format.get", { id: "a" }));
+    expect(got.bold).toBe(true);
+    expect(got.fillAlpha).toBeCloseTo(0.25, 2);
+    expect(got.stroke.width).toBe(3);
+    // satu langkah undo mengembalikan style asli
+    api.undo();
+    expect(styleOf(api, "a").fontSize).not.toBe(18);
+    expect(styleOf(api, "a").fillColor).toBe("#dae8fc");
+    // fill null → "none"; bold off menjaga bit lain
+    api.format.apply({ target: { id: "a" }, props: { italic: true, bold: true } });
+    api.format.apply({ target: { id: "a" }, props: { bold: false, fill: null } });
+    expect(styleOf(api, "a").fontStyle).toBe(2);
+    expect(styleOf(api, "a").fillColor).toBeFalsy();
+    // edge-only key diabaikan untuk vertex; berlaku untuk edge
+    expect(api.format.apply({ target: { id: "a" }, props: { endArrow: "block" } }).skipped).toContain("endArrow");
+    expect(api.format.apply({ target: { kind: "edge" }, props: { endArrow: "block", edgeStyle: "orthogonalEdgeStyle" } }).applied).toEqual(expect.arrayContaining(["endArrow", "edgeStyle"]));
+    expect(styleOf(api, "e").endArrow).toBe("block");
+    // target tak ada; kind vertex = semua simpul
+    expect(api.format.apply({ target: { id: "zzz" }, props: { bold: true } }).targets).toBe(0);
+    expect(api.format.apply({ target: { kind: "vertex" }, props: { shadow: true } }).targets).toBe(2);
+    // link lewat format
+    expect(api.format.apply({ target: { id: "b" }, props: { link: "https://example.com" } }).applied).toContain("link");
+    expect(api.links.list().some(l => l.url.includes("example.com"))).toBe(true);
+    expect(await dispatchCommand<string[]>(root, "maxgraph-editor", "format.keys")).toContain("fillAlpha");
+  });
+
+  it("cells.*: daftar, ubah label/geometri/style, urutan, ratakan, hapus; readonly menolak", async () => {
+    const { api } = mount();
+    await load(api);
+    const list = api.cells.list();
+    expect(list.map(c => c.id).sort()).toEqual(["a", "b", "e"]);
+    expect(list.find(c => c.id === "e")).toMatchObject({ kind: "edge", source: "a", target: "b" });
+    expect(api.cells.list({ kind: "vertex" })).toHaveLength(2);
+    const st = vi.fn();
+    api.on("structure", st);
+    expect(api.cells.update("a", { label: "Baru", x: 60, y: 70, w: 150, style: { fontSize: 20 } })).toBe(true);
+    expect(api.cells.list().find(c => c.id === "a")).toMatchObject({ label: "Baru", x: 60, y: 70, w: 150 });
+    expect(styleOf(api, "a").fontSize).toBe(20);
+    expect(api.cells.update("zzz", { label: "x" })).toBe(false);
+    api.cells.update("b", { y: 300 });
+    expect(api.cells.align("top", ["a", "b"])).toBe(true);
+    const ys = api.cells.list({ kind: "vertex" }).map(c => c.y);
+    expect(ys[0]).toBe(ys[1]);
+    expect(api.cells.order("front", ["a"])).toBe(true);
+    expect(await api.run("cell.remove", ["b"])).toBeGreaterThan(0);
+    expect(api.cells.list().map(c => c.id)).toEqual(["a"]); // edge ikut terhapus
+    expect(st.mock.calls.map(c => c[0].scope + "." + c[0].action)).toEqual(expect.arrayContaining(["cell.update", "cell.align", "cell.remove"]));
+    api.undo();
+    expect(api.cells.list().map(c => c.id).sort()).toEqual(["a", "b", "e"]);
+  });
+
+  it("ruler.*: bus, geometri mengikuti zoom, tombol toolbar, opsi awal", async () => {
+    const { api, root } = mount({ ruler: true, rulerUnit: "px" });
+    await load(api);
+    const vis = vi.fn(), unit = vi.fn(), guide = vi.fn();
+    api.on("ruler:visible", vis); api.on("ruler:unit", unit); api.on("ruler:guide-add", guide);
+    expect(root.querySelector(".rk-frame.rk-on")).toBeTruthy(); // ruler={true}
+    await api.run("ruler.hide");
+    expect(root.querySelector(".rk-frame.rk-on")).toBeFalsy();
+    await api.run("ruler.toggle");
+    expect(vis).toHaveBeenCalledTimes(2);
+    await api.run("ruler.setUnit", "cm");
+    expect(unit).toHaveBeenCalled();
+    const g = await api.run<{ id: string }>("ruler.addGuide", "x", 120);
+    expect(guide).toHaveBeenCalledTimes(1);
+    expect(api.ruler.getGuides()).toHaveLength(1);
+    const m = await api.run<{ distance: number }>("ruler.measure", 0, 0, 300, 400);
+    expect(m.distance).toBe(500);
+    await api.run("ruler.removeGuide", g.id);
+    expect(api.ruler.getGuides()).toHaveLength(0);
+    // tombol toolbar
+    const btn = root.querySelector<HTMLButtonElement>("button[title='Penggaris']")!;
+    expect(btn).toBeTruthy();
+    btn.click();
+    expect(root.querySelector(".rk-frame.rk-on")).toBeFalsy();
+    btn.click();
+    expect(root.querySelector(".rk-frame.rk-on")).toBeTruthy();
+  });
+
+  it("readonly: format & cells menolak", async () => {
+    const { api } = mount({ readonly: true });
+    await api.importDrawio(DRAWIO).catch(() => undefined);
+    expect(api.format.apply({ target: { kind: "all" }, props: { bold: true } }).targets).toBe(0);
+    expect(api.cells.remove(["a"])).toBe(0);
+    expect(api.cells.update("a", { label: "x" })).toBe(false);
+  });
+});

@@ -96,7 +96,7 @@ const en: Dict = {
   "log.saveFail": "Could not build the .pptx: {msg}", "log.oleFail": "Could not read object {part}: {msg}",
   // hyperlink, color, DOM import
   "panel.links": "Hyperlinks", "b.links": "Hyperlinks",
-  "color.opacity": "Opacity", "color.none": "No color", "color.hex": "Hex", "color.custom": "Custom", "color.textNote": "While editing text, opacity is not applied; select the shape and pick the color again to apply it to all of its text.",
+  "color.opacity": "Opacity", "color.none": "No color", "color.hex": "Hex", "color.custom": "Custom", "color.textNote": "While editing, opacity applies to the selected text; outside edit mode it applies to all text in the shape.",
   "g.importDom": "Import from page", "dom.selector": "CSS selector, e.g. #chart", "dom.import": "Import", "dom.tip": "Import a DOM element of this page into the current slide", "dom.mode.auto": "Auto", "dom.mode.image": "As image", "dom.mode.shapes": "As shapes",
   "toast.domImported": "Imported from page ({n})", "toast.domFail": "Import failed: {msg}", "hist.import": "Import DOM",
 };
@@ -179,7 +179,7 @@ const id: Dict = {
   "log.saveFail": "Gagal membuat .pptx: {msg}", "log.oleFail": "Gagal membaca objek {part}: {msg}",
   // hyperlink, color, DOM import
   "panel.links": "Hyperlink", "b.links": "Hyperlink",
-  "color.opacity": "Opasitas", "color.none": "Tanpa warna", "color.hex": "Hex", "color.custom": "Kustom", "color.textNote": "Saat menyunting teks, opasitas tidak diterapkan; pilih bentuknya lalu pilih warna lagi untuk menerapkannya ke seluruh teks.",
+  "color.opacity": "Opasitas", "color.none": "Tanpa warna", "color.hex": "Hex", "color.custom": "Kustom", "color.textNote": "Saat menyunting, opasitas berlaku pada teks yang dipilih; di luar mode edit berlaku untuk seluruh teks bentuk.",
   "g.importDom": "Impor dari halaman", "dom.selector": "Selektor CSS, mis. #chart", "dom.import": "Impor", "dom.tip": "Impor elemen DOM halaman ini ke slide aktif", "dom.mode.auto": "Otomatis", "dom.mode.image": "Sebagai gambar", "dom.mode.shapes": "Sebagai bentuk",
   "toast.domImported": "Diimpor dari halaman ({n})", "toast.domFail": "Impor gagal: {msg}", "hist.import": "Impor DOM",
 };

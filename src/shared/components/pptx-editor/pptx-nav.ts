@@ -37,7 +37,7 @@ function walkShapes(slide: SlideData, tops: TopShapes): { shape: SlideShapeData;
   return out;
 }
 
-export function collectUnits(slides: SlideData[], kinds: ReplaceKind[], tops: TopShapes): PptxUnit[] {
+export function collectUnits(slides: readonly SlideData[], kinds: ReplaceKind[], tops: TopShapes): PptxUnit[] {
   const out: PptxUnit[] = [];
   const want = new Set(kinds);
   slides.forEach((slide, si) => {
@@ -80,7 +80,7 @@ export function collectUnits(slides: SlideData[], kinds: ReplaceKind[], tops: To
   return out;
 }
 
-export function listLinks(slides: SlideData[], tops: TopShapes): LinkItem[] {
+export function listLinks(slides: readonly SlideData[], tops: TopShapes): LinkItem[] {
   const out: LinkItem[] = [];
   const units = collectUnits(slides, ["link"], tops);
   units.forEach((u, i) => out.push({
@@ -93,7 +93,7 @@ export function listLinks(slides: SlideData[], tops: TopShapes): LinkItem[] {
 type ResolveColor = (c: string | null | undefined) => string | null;
 
 /** Ganti nilai persis (font / warna teks / isi / garis). `to` kosong pada warna = hapus. Mengembalikan jumlah perubahan. */
-export function replaceValues(pres: PresentationData, slides: SlideData[], tops: TopShapes, resolve: ResolveColor, kind: "font" | "color" | "fill" | "stroke", from: string, to: string): number {
+export function replaceValues(pres: PresentationData, slides: readonly SlideData[], tops: TopShapes, resolve: ResolveColor, kind: "font" | "color" | "fill" | "stroke", from: string, to: string): number {
   let n = 0;
   for (const slide of slides) {
     for (const { shape } of walkShapes(slide, tops)) {
@@ -128,7 +128,7 @@ export function replaceValues(pres: PresentationData, slides: SlideData[], tops:
 }
 
 /** Hitungan nilai (untuk pratinjau). */
-export function countValues(pres: PresentationData, slides: SlideData[], tops: TopShapes, resolve: ResolveColor, kind: "font" | "color" | "fill" | "stroke", value: string): number {
+export function countValues(pres: PresentationData, slides: readonly SlideData[], tops: TopShapes, resolve: ResolveColor, kind: "font" | "color" | "fill" | "stroke", value: string): number {
   let n = 0;
   for (const slide of slides) for (const { shape } of walkShapes(slide, tops)) {
     if (kind === "fill") { if (sameColor(safe(() => P.getShapeFillColorResolved(pres, shape), null), value)) n++; }

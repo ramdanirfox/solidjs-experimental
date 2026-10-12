@@ -31,6 +31,10 @@ import { createEventBus, type EditorEventBus } from "../editor-kit/events";
 import { ColorField, type ColorValue } from "../editor-kit/ColorField";
 import { compileFind, createFindCursor, isValueKind, makeReport, matchRanges, snippet, type FindMatch, type FindResult, type FindSpec, type NavEvent, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
 import { normalizeLink, openExternal, type LinkItem } from "../editor-kit/hyperlink";
+import { RulerKit, type RulerEventMap } from "../editor-kit/ruler-kit";
+import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
+import { MAXGRAPH_FORMAT_KEYS, applyFormat, listCells, readFormat, resolveCells, updateCell, type CellPatch, type MaxgraphFormatTarget } from "./maxgraph-format";
+import type { FormatSpec } from "../editor-kit/format";
 import { MAXGRAPH_REPLACE_KINDS, allCells, cellName, collectUnits as gCollectUnits, countStyleValue as gCountStyleValue, linkOf, listLinks as gListLinks, replaceStyleValue as gReplaceStyleValue, setCellAttr, type GUnit } from "./maxgraph-nav";
 import { MaxgraphLinksDialog } from "./MaxgraphLinksDialog";
 import {
@@ -87,6 +91,7 @@ const ICON_PATHS = {
     zoomOut: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M21 21l-4.3-4.3 M8 11h6",
     fit: "M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5",
     grid: "M3 3h18v18H3z M3 9h18 M3 15h18 M9 3v18 M15 3v18",
+    ruler: "M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z M14.5 12.5l2-2 M11.5 9.5l2-2 M8.5 6.5l2-2 M17.5 15.5l2-2",
     map: "M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2z M9 4v14 M15 6v14",
     upload: "M12 15V3 M7 8l5-5 5 5 M4 21h16",
     download: "M12 3v12 M7 10l5 5 5-5 M4 21h16",
@@ -183,6 +188,10 @@ const GROUP_STYLE: CellStyle = {
 export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) => {
     let rootEl!: HTMLDivElement;
     let canvasEl!: HTMLDivElement;
+    let frameEl!: HTMLDivElement;
+    let ruler: RulerKit | undefined;
+    const [rulerOn, setRulerOn] = createSignal(!!props.ruler);
+    const [rulerUnit, setRulerUnit] = createSignal<RulerUnit>(props.rulerUnit ?? "px");
     let outlineHost: HTMLDivElement | undefined;
     let fileInput!: HTMLInputElement;
     let shapesInput!: HTMLInputElement;
@@ -1457,6 +1466,24 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
         };
         refreshLinksFn = refreshLinkOverlays;
 
+        // ---- penggaris: titik asal diagram di layar = (translate × skala) − scroll kontainer
+        const rulerGeometry = () => {
+            const v = g.getView();
+            return { originX: v.translate.x * v.scale - canvasEl.scrollLeft, originY: v.translate.y * v.scale - canvasEl.scrollTop, scale: v.scale, zeroX: 0, zeroY: 0 };
+        };
+        const onRulerEvent = <K extends keyof RulerEventMap>(type: K, payload: RulerEventMap[K]) => {
+            if (type === "ruler:visible") setRulerOn((payload as RulerEventMap["ruler:visible"]).visible);
+            else if (type === "ruler:unit") setRulerUnit((payload as RulerEventMap["ruler:unit"]).unit);
+            emit(type, payload as never);
+        };
+        ruler = new RulerKit({ frame: frameEl, unit: rulerUnit(), visible: rulerOn(), scrollEl: canvasEl, getGeometry: rulerGeometry, emit: onRulerEvent });
+        const refreshRuler = () => ruler?.refresh();
+        for (const ev of [InternalEvent.SCALE, InternalEvent.TRANSLATE, InternalEvent.SCALE_AND_TRANSLATE]) g.getView().addListener(ev, refreshRuler);
+        disposers.push(() => ruler?.destroy());
+
+        const st = (scope: string, action: string, ok: boolean, detail?: unknown): boolean => { emit("structure", { scope, action, ok, detail }); return ok; };
+        const idsToCells = (ids?: string[]): Cell[] => (ids ? ids.map(i => model.getCell(i)).filter((c): c is Cell => !!c) : g.getSelectionCells());
+
         api = {
             graph: g,
             getXml,
@@ -1538,6 +1565,31 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
             replaceAll: spec => doReplaceEmit(spec, false),
             replaceKinds: () => [...MAXGRAPH_REPLACE_KINDS],
             links: linkApi,
+            ruler: ruler!,
+            format: {
+                keys: () => [...MAXGRAPH_FORMAT_KEYS],
+                apply: (spec: FormatSpec<MaxgraphFormatTarget>) => {
+                    const cells = isReadonly() ? [] : resolveCells(g, spec.target, g.getSelectionCells());
+                    const r = applyFormat(g, cells, spec.props ?? {}, { setLink: (url, cs) => linkApi.set(url, { ids: cs.map(c => c.getId()!).filter(Boolean) }) });
+                    emit("format", { action: "apply", report: r, target: spec.target });
+                    if (r.applied.length) setLinkVer(x => x + 1);
+                    return r;
+                },
+                get: (target?: MaxgraphFormatTarget) => { const c = resolveCells(g, target, g.getSelectionCells())[0]; return c ? readFormat(g, c) : undefined; },
+            },
+            cells: {
+                list: f => listCells(g, f),
+                update: (id: string, patch: CellPatch) => { const c = model.getCell(id); return !isReadonly() && !!c && st("cell", "update", updateCell(g, c, patch), { id }); },
+                remove: ids => { if (isReadonly()) return 0; const cs = g.getDeletableCells(idsToCells(ids)); if (cs.length) g.removeCells(cs, true); st("cell", "remove", cs.length > 0, { n: cs.length }); return cs.length; },
+                order: (op, ids) => { const cs = idsToCells(ids); if (isReadonly() || !cs.length) return st("cell", "order", false); g.orderCells(op === "back", cs); return st("cell", "order", true, { op }); },
+                align: (mode, ids) => {
+                    const cs = idsToCells(ids).filter(c => c.isVertex());
+                    if (isReadonly() || cs.length < 1) return st("cell", "align", false);
+                    const a = { left: "left", center: "center", right: "right", top: "top", middle: "middle", bottom: "bottom" }[mode];
+                    g.alignCells(a as never, cs);
+                    return st("cell", "align", true, { mode });
+                },
+            },
         };
 
         // perintah bernama untuk bus.run(...) dan CustomEvent "maxgraph-editor:command"
@@ -1551,6 +1603,13 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
             setLabel: (id: string, v: string, o?: { html?: boolean }) => { const c = model.getCell(id); if (!c) throw new Error(`setLabel: sel "${id}" tidak ditemukan`); return setLabelOf(c, v, o); },
             getLabel: (id?: string) => getLabelOf(id ? model.getCell(id) : undefined),
             openLabelEditor: (id?: string) => openLabelEditor(id ? model.getCell(id) : undefined),
+            "format.keys": () => api!.format.keys(), "format.apply": (s: FormatSpec<MaxgraphFormatTarget>) => api!.format.apply(s), "format.get": (t?: MaxgraphFormatTarget) => api!.format.get(t),
+            "cell.list": (f?: { kind?: "vertex" | "edge" }) => api!.cells.list(f), "cell.update": (id: string, p: CellPatch) => api!.cells.update(id, p), "cell.remove": (ids?: string[]) => api!.cells.remove(ids),
+            "cell.order": (op: "front" | "back", ids?: string[]) => api!.cells.order(op, ids), "cell.align": (m: Parameters<MaxgraphNodeEditorApi["cells"]["align"]>[0], ids?: string[]) => api!.cells.align(m, ids),
+            "ruler.show": () => ruler!.setVisible(true), "ruler.hide": () => ruler!.setVisible(false), "ruler.toggle": () => ruler!.toggle(),
+            "ruler.setUnit": (u: RulerUnit) => ruler!.setUnit(u), "ruler.addGuide": (axis: "x" | "y", pos: number) => ruler!.addGuide(axis, pos),
+            "ruler.removeGuide": (id: string) => ruler!.removeGuide(id), "ruler.clearGuides": () => ruler!.clearGuides(), "ruler.getGuides": () => ruler!.getGuides(),
+            "ruler.measure": (x1: number, y1: number, x2: number, y2: number) => ruler!.measure(x1, y1, x2, y2), "ruler.setMeasureMode": (on: boolean) => ruler!.setMeasureMode(on),
             zoomTo: (s: number) => zoomTo(s),
             setFullscreen: (on: boolean) => setFullscreen(on),
             toggleFullscreen: () => toggleFullscreen(),
@@ -1799,6 +1858,7 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
                             <div class="mgx-group">
                                 <Btn icon="grid" title="Tampilkan grid & snap" active={showGrid()} onClick={() => setShowGrid(v => !v)} />
                                 <Btn icon="map" title="Minimap" active={showOutline()} onClick={() => setShowOutline(v => !v)} />
+                                <Btn icon="ruler" title="Penggaris" active={rulerOn()} onClick={() => ruler?.toggle()} />
                             </div>
                         </Show>
                         <Show when={pages().length > 1}>
@@ -1892,7 +1952,7 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
                 </Show>
 
                 <div class="mgx-canvas-wrap">
-                    <div ref={canvasEl} class="mgx-canvas" />
+                    <div ref={frameEl} class="rk-frame mgx-rkframe"><div class="rk-body mgx-rkbody"><div ref={canvasEl} class="mgx-canvas" /></div></div>
                     <Show when={showOutline()}>
                         <div ref={el => (outlineHost = el)} class="mgx-outline" />
                     </Show>

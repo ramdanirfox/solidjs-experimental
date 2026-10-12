@@ -151,3 +151,45 @@ describe("xlsx-model", () => {
     expect(book.drawingsOf(ws).filter(d => d.kind === "picture").length).toBe(2);
   });
 });
+
+describe("xlsx-model — struktur sheet (undo, rumus, simpan)", () => {
+  it("rewriteSheetRefs: nama biasa, bernama spasi, apostrof, literal string dibiarkan", async () => {
+    const { rewriteSheetRefs } = await import("./xlsx-model");
+    expect(rewriteSheetRefs("Lain!A1+Lain!B2", "Lain", "Baru")).toBe("Baru!A1+Baru!B2");
+    expect(rewriteSheetRefs("'Sheet Dua'!A1", "Sheet Dua", "X")).toBe("X!A1");
+    expect(rewriteSheetRefs("Lain!A1", "Lain", "Sheet Dua")).toBe("'Sheet Dua'!A1");
+    expect(rewriteSheetRefs('"Lain!A1"&Lain!A1', "Lain", "Z")).toBe('"Lain!A1"&Z!A1');
+    expect(rewriteSheetRefs("XLain!A1", "Lain", "Z")).toBe("XLain!A1");
+    expect(rewriteSheetRefs("'O''Brien'!A1", "O'Brien", "Q")).toBe("Q!A1");
+  });
+
+  it("tambah/rename/pindah/hapus: undo-redo, nama lokal, simpan lalu buka ulang", async () => {
+    const book = await sample();
+    const names0 = book.sheets.map(s => s.sheet.title);
+    const add = book.addSheet("Baru", 1);
+    expect("error" in add).toBe(false);
+    book.commit((add as unknown as { records: never[] }).records, { styleOnly: true });
+    expect(book.sheets.map(s => s.sheet.title)).toEqual([names0[0], "Baru", ...names0.slice(1)]);
+    expect("error" in book.addSheet("Baru")).toBe(true);
+    expect("error" in book.addSheet("a:b")).toBe(true);
+    expect("error" in book.addSheet("x".repeat(32))).toBe(true);
+    const rn = book.renameSheetTo(names0[1], "Ringkas Baru");
+    expect("error" in rn).toBe(false);
+    book.commit((rn as unknown as { records: never[] }).records, { styleOnly: true });
+    // rumus pada sheet pertama yang merujuk sheet ber-nama lama ikut diperbarui
+    const bytes = await book.toBytes();
+    const re = await loadBook(bytes, "s.xlsx");
+    expect(re.book!.sheets.map(s => s.sheet.title)).toEqual([names0[0], "Baru", "Ringkas Baru", ...names0.slice(2)]);
+    const mv = book.moveSheetTo("Baru", 0);
+    book.commit((mv as unknown as { records: never[] }).records, { styleOnly: true });
+    expect(book.sheets[0].sheet.title).toBe("Baru");
+    const rm = book.removeSheetByTitle("Baru");
+    book.commit((rm as unknown as { records: never[] }).records, { styleOnly: true });
+    expect(book.sheets.some(s => s.sheet.title === "Baru")).toBe(false);
+    for (let i = 0; i < 4; i++) book.undo();
+    expect(book.sheets.map(s => s.sheet.title)).toEqual(names0);
+    book.redo(); book.redo();
+    expect(book.sheets.map(s => s.sheet.title)).toEqual([names0[0], "Baru", names0[1], ...names0.slice(2)].map((t, i) => (i === 2 ? "Ringkas Baru" : t)));
+    expect("error" in book.removeSheetByTitle("tidak ada")).toBe(true);
+  });
+});

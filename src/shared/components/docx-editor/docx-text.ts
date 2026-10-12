@@ -218,6 +218,19 @@ export function insertRunAt(p: XEl, off: number, run: XEl, srcRun?: XEl) {
   void srcRun;
 }
 
+/** Sisipkan beberapa run berurutan pada offset `off` (mis. run field kompleks) tanpa terpisah. */
+export function insertRunsAt(p: XEl, off: number, runs: XEl[]) {
+  if (!runs.length) return;
+  insertRunAt(p, off, runs[0]);
+  const parentOf = (root: XEl, node: XEl): XEl | undefined => {
+    for (const c of root.children) { if (c === node) return root; if (isEl(c)) { const r = parentOf(c, node); if (r) return r; } }
+    return undefined;
+  };
+  const parent = parentOf(p, runs[0]) ?? p;
+  let prev = runs[0];
+  for (const r of runs.slice(1)) { insertAfter(parent, prev, r); prev = r; }
+}
+
 /** Sisipkan teks (dengan \t dan \n) pada offset `a`. `srcRun` = run sumber format (mis. dari DOM). */
 export function insertText(p: XEl, a: number, text: string, srcRun?: XEl, opts?: { rPr?: XEl }): XEl | undefined {
   if (!text) return undefined;
@@ -225,6 +238,18 @@ export function insertText(p: XEl, a: number, text: string, srcRun?: XEl, opts?:
   const prev = [...us].reverse().find(u => u.end === a && u.end > u.start);
   const next = us.find(u => u.start === a && u.end > u.start);
   const plain = !/[\t\n\r]/.test(text);
+
+  // di ujung hasil field: teks baru berada SETELAH field (bukan memperpanjang hasil field yang dihitung ulang)
+  if (prev && (!srcRun || srcRun === prev.run)) {
+    const sib = prev.container.children;
+    const nx = sib[sib.indexOf(prev.run) + 1];
+    const fc = isEl(nx) && nx.name.local === "r" ? first(nx, "fldChar") : undefined;
+    if (isEl(nx) && fc && attr(fc, "fldCharType") === "end") {
+      const nr = newRun(opts?.rPr ?? runProps(prev.run), makePieces(text));
+      insertAfter(prev.container, nx, nr);
+      return nr;
+    }
+  }
 
   let host: XEl | undefined;
   if (srcRun && (srcRun === prev?.run || srcRun === next?.run)) host = srcRun;

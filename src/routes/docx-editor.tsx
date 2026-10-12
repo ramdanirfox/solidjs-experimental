@@ -37,7 +37,7 @@ export default function PageDocxEditor() {
           </label>
         </div>
       </div>
-      <SJXClientDocxEditor height="auto" readonly={readonly()} locale={locale()} onLocaleChange={setLocale} maxHistory={maxHistory()} fallback={<div class="sjx-loading">Memuat komponen DOCX…</div>} />
+      <SJXClientDocxEditor height="auto" onReady={(e) => console.log("DOCX Instance", e)} readonly={readonly()} locale={locale()} onLocaleChange={setLocale} maxHistory={maxHistory()} fallback={<div class="sjx-loading">Memuat komponen DOCX…</div>} />
     </div>
   );
 }

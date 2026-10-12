@@ -106,3 +106,19 @@ Catatan: registry stensil maxGraph bersifat **global** (dipakai bersama semua in
 
 `pnpm test src/shared/components/maxgraph-editor` — draw.io (format, kompresi, impor/ekspor round-trip, sanitasi, atomik), event, perintah, bentuk, log/info/panel (jsdom, komponen dirender sungguhan).
 Tidak diuji terhadap aplikasi draw.io yang sebenarnya; kompatibilitas ekspor diverifikasi dengan membaca kembali hasilnya lewat importer yang sama.
+
+## 6. Navigasi, cari/ganti, tautan, warna
+
+Lihat `editor-kit/README.md` untuk kontrak umum. Khusus maxGraph:
+
+- `goto` target: `{kind:"node"|"edge"|"cell",id}`, `{kind:"page",page}` (indeks/id/nama), `{kind:"link",id}`, `search`, `match`, `all` (fit), `{kind:"point",x,y}`. Sel dipilih dan ditengahkan.
+- Ganti: `text` (label; pada label HTML hanya simpul teks yang diganti, tag/atribut utuh), `link`, `data` (atribut XML kustom), `font`, `color`, `fill`, `stroke`. Kosong pada fill/stroke → `none`, warna teks → bawaan. Seluruh permintaan = satu langkah undo.
+- **Warna + opasitas**: isi, garis, dan teks sel terpilih (`fillOpacity`/`strokeOpacity`/`textOpacity`).
+- **Tautan sel**: atribut `link` pada nilai `<object>` (kompatibel draw.io, ikut ekspor/impor), ikon tautan di pojok sel (klik = buka; `#id` = pilih sel), dialog *Kelola tautan* (Ctrl+K) dengan daftar, ubah, hapus, dan ganti massal. `api.links.*`.
+
+### Format, struktur sel, dan penggaris lewat bus
+
+- `format.apply({ target?: {id?, ids?, kind?}, props })` / `format.get` / `format.keys` (`maxgraph-format.ts`). Kunci umum (alfa asli lewat `fillOpacity`/`strokeOpacity`/`textOpacity`, `bold/italic/underline` = bit `fontStyle` yang digabung per sel) + khusus: `rounded`, `shadow`, `dashed`, `startArrow`, `endArrow`, `edgeStyle`, `curved` (hanya edge), `rotation`, `bounds {x,y,w,h}`, `label`. `link` memakai pengelolaan tautan sel. Satu langkah undo.
+- `cell.list({kind?})`, `cell.update(id, { label?, x?, y?, w?, h?, style? })`, `cell.remove(ids?)`, `cell.order("front"|"back", ids?)`, `cell.align(mode, ids?)`.
+- **Penggaris**: prop `ruler` / `rulerUnit` (default `px`), tombol di toolbar, API `api.ruler` dan perintah `ruler.show/hide/toggle/setUnit/addGuide/removeGuide/clearGuides/getGuides/measure/setMeasureMode`. Titik nol mengikuti translate/zoom/scroll diagram. Garis bantu hanya referensi visual (tidak menempelkan sel).
+

@@ -218,8 +218,8 @@ describe("XlsxPreview — navigasi, cari/ganti lintas jenis, hyperlink", () => {
     const f = api.find({ query: "halo", select: false });
     expect(f.matches.map(m => m.location).sort()).toEqual(["Data!A1", "Data!C1"]);
     // jenis tak didukung dilaporkan
-    const rep = api.replaceAll({ query: "halo", replacement: "hai", kinds: ["text", "name" as never] });
-    expect(rep.skipped).toEqual(["name"]);
+    const rep = api.replaceAll({ query: "halo", replacement: "hai", kinds: ["text", "stroke" as never] });
+    expect(rep.skipped).toEqual(["stroke"]);
     expect(rep.byKind.text).toBe(2);
     expect(api.getCell("A1")!.text).toBe("hai");
     expect(api.getCell("C1")!.text).toBe("hai dunia");
@@ -298,5 +298,149 @@ describe("XlsxPreview — navigasi, cari/ganti lintas jenis, hyperlink", () => {
     const { api } = await mount({ readonly: true });
     expect(api.replaceAll({ query: "halo", replacement: "x" }).error).toBe("readonly");
     expect(api.links.set("https://a.b")).toBe(false);
+  });
+});
+
+
+describe("XlsxPreview — format.* & struktur lewat bus", () => {
+  it("format.apply: gaya sel, alfa dikomposit, kunci asing dilewati; get; undo; readonly", async () => {
+    const { api, root } = await mount();
+    const fmt = vi.fn();
+    api.on("format", fmt);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["format.apply", "format.get", "format.keys", "sheet.add", "sheet.rename", "range.merge", "range.freeze"]));
+    const r = await api.run<{ applied: string[]; skipped: string[]; targets: number }>("format.apply", { target: { range: "A1:B2" }, props: { bold: true, fill: "#FF0000", fillAlpha: 0.5, color: "#0000FF", colorAlpha: 0.25, align: "center", numFmt: "0.00", opacity: 0.5 } });
+    expect(r.targets).toBe(4);
+    expect(r.applied).toEqual(expect.arrayContaining(["bold", "fill", "fillAlpha", "color", "colorAlpha", "align", "numFmt"]));
+    expect(r.skipped).toContain("opacity");
+    expect(fmt).toHaveBeenCalledTimes(1);
+    const g = api.format.get({ range: "B2" })!;
+    expect(g).toMatchObject({ bold: true, align: "center", numFmt: "0.00" });
+    expect(g.fill?.toLowerCase()).toBe("#ff8080"); // #FF0000 @50% di atas putih
+    expect(api.getCell("B2")!.text).toBe("42.00");
+    // sheet lain lewat prefix, tanpa berpindah
+    expect(api.format.apply({ target: { range: "Lain!A1" }, props: { italic: true } }).targets).toBe(1);
+    expect(api.format.get({ range: "Lain!A1" })!.italic).toBe(true);
+    expect(api.getSelection().sheet).toBe("Data");
+    // stroke → border; target tak valid
+    expect(api.format.apply({ target: { range: "A1" }, props: { stroke: { color: "#000000", width: 2 } } }).applied).toContain("stroke");
+    expect(api.format.apply({ target: { range: "zzz!!" }, props: { bold: true } }).targets).toBe(0);
+    api.undo(); // stroke
+    api.undo(); // italic di sheet lain
+    expect(api.format.get({ range: "Lain!A1" })!.italic).toBeFalsy();
+    api.undo(); // format sel A1:B2
+    expect(api.format.get({ range: "B2" })!.bold).toBeFalsy();
+    expect(await dispatchCommand<string[]>(root, "xlsx-preview", "format.keys")).toContain("numFmt");
+  });
+
+  it("sheet.*: tambah/ganti nama (rumus ikut)/pindah/sembunyi/hapus + undo-redo + event", async () => {
+    const { api } = await mount();
+    const st = vi.fn();
+    api.on("structure", st);
+    expect(api.sheets.list().map(s => s.name)).toEqual(["Data", "Lain"]);
+    const name = await api.run<string>("sheet.add", { name: "Baru", at: 1 });
+    expect(name).toBe("Baru");
+    expect(api.sheets.list().map(s => s.name)).toEqual(["Data", "Baru", "Lain"]);
+    expect(api.getSelection().sheet).toBe("Baru");
+    expect(api.sheets.add({ name: "Baru" })).toBeUndefined(); // duplikat
+    expect(api.sheets.add({ name: "a/b" })).toBeUndefined();   // karakter terlarang
+    api.setCell("A1", "=Lain!A1*2");
+    expect(api.getCell("A1")!.text).toBe("14");
+    expect(await api.run("sheet.rename", "Lain", "Sheet Dua")).toBe(true);
+    expect(api.getCell("A1")!.raw).toBe("='Sheet Dua'!A1*2");
+    expect(api.getCell("A1")!.text).toBe("14");
+    expect(api.sheets.rename("Sheet Dua", "Data")).toBe(false); // bentrok
+    expect(api.sheets.move("Baru", 0)).toBe(true);
+    expect(api.sheets.list()[0].name).toBe("Baru");
+    expect(api.getSelection().sheet).toBe("Baru");
+    expect(api.sheets.setVisible("Data", false)).toBe(true);
+    expect(api.sheets.list().find(s => s.name === "Data")!.state).toBe("hidden");
+    expect(api.sheets.setVisible("Data", true)).toBe(true);
+    expect(api.sheets.remove("Baru")).toBe(true);
+    expect(api.sheets.list().map(s => s.name)).toEqual(["Data", "Sheet Dua"]);
+    expect(api.getSelection().sheet).not.toBe("Baru");
+    // undo berantai mengembalikan semuanya
+    for (let i = 0; i < 20; i++) api.undo();
+    expect(api.sheets.list().map(s => s.name)).toEqual(["Data", "Lain"]);
+    expect(api.getCell("Lain!A1")!.text).toBe("7");
+    api.redo(); api.redo();
+    expect(api.sheets.list().map(s => s.name)).toEqual(["Data", "Baru", "Lain"]);
+    expect(st.mock.calls.map(c => c[0].scope + "." + c[0].action)).toEqual(expect.arrayContaining(["sheet.add", "sheet.rename", "sheet.move", "sheet.remove", "sheet.visible"]));
+  });
+
+  it("tidak boleh menghapus satu-satunya sheet terlihat; readonly menolak", async () => {
+    const { api } = await mount();
+    expect(api.sheets.setVisible("Lain", false)).toBe(true);
+    expect(api.sheets.remove("Data")).toBe(false);
+    expect(api.sheets.list()).toHaveLength(2);
+  });
+
+  it("range.*: gabung/pisah, kosongkan, bekukan, lebar kolom, autofilter", async () => {
+    const { api } = await mount();
+    expect(api.range.merge("C3:D3", { center: true })).toBe(true);
+    expect(api.getBook()!.worksheetAt(0)!.mergedCells.length).toBe(1);
+    expect(api.range.merge("C3:D3")).toBe(false); // sudah digabung
+    expect(api.range.unmerge("C3")).toBe(true);
+    expect(api.getBook()!.worksheetAt(0)!.mergedCells.length).toBe(0);
+    expect(api.range.clear("B2")).toBeGreaterThan(0);
+    expect(api.getCell("B2")!.text).toBe("");
+    api.undo();
+    expect(api.getCell("B2")!.text).toBe("42");
+    expect(api.range.freeze(1, 1)).toBe(true);
+    expect(api.range.freeze(-1, 0)).toBe(false);
+    expect(api.range.setColumnWidth("C", 140)).toBe(true);
+    expect(api.range.setRowHeight(2, 40)).toBe(true);
+    expect(api.range.setRowHeight(0, 40)).toBe(false);
+    expect(api.range.autofilter("A1:B2")).toBe(true);
+    expect(api.range.autofilter(false)).toBe(true);
+  });
+
+  it("readonly: format/sheet/range menolak tanpa melempar", async () => {
+    const { api } = await mount({ readonly: true });
+    expect(api.format.apply({ props: { bold: true } }).targets).toBe(0);
+    expect(api.sheets.add()).toBeUndefined();
+    expect(api.sheets.remove("Lain")).toBe(false);
+    expect(api.range.merge("A1:B1")).toBe(false);
+    expect(api.range.clear("A1")).toBe(0);
+  });
+});
+
+describe("XlsxPreview — ganti nilai numerik & nama sheet", () => {
+  it("number: cari/ganti angka mentah (bukan rumus), jadi teks bila tak numerik; satu undo", async () => {
+    const { api } = await mount();
+    expect(api.replaceKinds()).toEqual(expect.arrayContaining(["number", "name"]));
+    // A2 = 40 (angka), B1 = 2 (angka), B2 rumus
+    const f = api.find({ query: "40", kinds: ["number"] });
+    expect(f.count).toBe(1);
+    expect(f.matches[0].location).toBe("Data!A2");
+    const r = api.replaceAll({ query: "40", replacement: "100", kinds: ["number"] });
+    expect(r.byKind.number).toBe(1);
+    expect(api.getCell("A2")!.text).toBe("100");
+    expect(api.getCell("B2")!.text).toBe("102"); // rumus A2+B1 dihitung ulang
+    api.undo();
+    expect(api.getCell("A2")!.text).toBe("40");
+    const t = api.replaceAll({ query: "2", replacement: "dua", kinds: ["number"], scope: "sheet" } as never);
+    expect(t.total).toBeGreaterThan(0);
+    expect(api.getCell("B1")!.raw).toBe("dua");
+    // kind tak didukung tetap dilewati
+    expect(api.replaceAll({ query: "x", replacement: "y", kinds: ["number", "stroke"] }).skipped).toContain("stroke");
+  });
+
+  it("name: ganti nama sheet (rumus ikut), bentrok ditolak, undo mengembalikan", async () => {
+    const { api } = await mount();
+    api.setCell("C1", "=Lain!A1+1");
+    const f = api.find({ query: "Lai", kinds: ["name"] });
+    expect(f.count).toBe(1);
+    expect(f.matches[0].target).toMatchObject({ kind: "sheet", sheet: "Lain" });
+    const r = api.replaceAll({ query: "Lain", replacement: "Kedua", kinds: ["name"] });
+    expect(r.byKind.name).toBe(1);
+    expect(api.sheets.list().map(s => s.name)).toEqual(["Data", "Kedua"]);
+    expect(api.getCell("Data!C1")!.raw).toBe("=Kedua!A1+1");
+    expect(api.getCell("Data!C1")!.text).toBe("8");
+    // bentrok dengan nama yang sudah ada → tidak dihitung
+    const clash = api.replaceAll({ query: "Kedua", replacement: "Data", kinds: ["name"] });
+    expect(clash.total).toBe(0);
+    api.undo();
+    expect(api.sheets.list().map(s => s.name)).toEqual(["Data", "Lain"]);
+    expect(api.getCell("Data!C1")!.raw).toBe("=Lain!A1+1");
   });
 });

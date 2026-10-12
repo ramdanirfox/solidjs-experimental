@@ -123,3 +123,30 @@ Angka nol = margin kiri/atas halaman terdekat (margin diberi warna); posisi guid
 
 Objek ditulis sebagai `<w:object>` + VML (`v:shape`/`o:OLEObject`) dengan part `/word/embeddings/*` dan gambar pratinjau. **Perbarui** selalu membuat part + relasi baru lalu mengarahkan objek ke sana (riwayat undo hanya menyimpan XML body, jadi undo tetap mengembalikan isi lama);
 saat menyimpan, part sisa yang tidak dirujuk body dilepas sementara dari berkas (dan dikembalikan ke sesi sehingga undo setelah simpan tetap benar). File baru: `docx-ole-edit.ts`.
+
+## Navigasi, cari/ganti, tab stop, daftar isi, tautan
+
+Lihat `editor-kit/README.md` untuk kontrak umum. Khusus DOCX:
+
+- `goto` target: `{kind:"page",page}`, `{kind:"paragraph",index,start?,end?}` (berbasis 1), `{kind:"heading",index|text}`, `{kind:"bookmark",name}`, `{kind:"table",index,row?,col?}`, `{kind:"toc",index?}`, `{kind:"link",id}`, `search`, `match`, `start`, `end`.
+- Ganti: `text` (badan + tabel), `headerFooter`, `link`, `font`, `color` (warna run), `fill` (shading paragraf/sel/run). Catatan kaki/komentar belum.
+- **Tab stop**: `api.tabs.{get,set,add,remove,clear}` (posisi dalam pt dari margin kiri; `align` left/center/right/decimal/bar; `leader` dot/hyphen/underscore). Di UI: klik penggaris, atau tombol *Tab stop…*. Tab warisan style yang dihapus ditulis sebagai `clear`.
+- **Daftar isi** (`docx-toc.ts`): mendeteksi field `TOC` yang ada; `api.toc.{list,insert,update,remove}`; opsi `from/to` level, `hyperlinks` (`\h`), `pageNumbers` (`\n`). Entri dibangun dari judul dengan bookmark `_Toc…`, hyperlink internal, `PAGEREF`, dan nomor halaman dari paginasi (diulang sampai stabil), dibungkus SDT "Table of Contents". Belum dibuka di Word sungguhan.
+- **Tautan**: `api.links.*` + panel *Hyperlink* (View → Hyperlink).
+- Warna teks/shading/sel memakai `ColorField`; alfa dikomposit di atas putih.
+- Perbaikan: pemformatan pada seleksi asli lintas-sel kini menjangkau semua sel (sebelumnya hanya sel kursor), dan paragraf kosong ikut diformat.
+
+## Header/footer, penomoran halaman, dan daftar
+
+**Header & footer** (`api.headerFooter`, perintah `hf.*`, tab *Sisip → Header & footer*): klik ganda header/footer pada halaman (atau tombol *Header*/*Footer*) masuk mode sunting — kotak yang disunting hanya satu (halaman itu), isi lain dikaburkan, salinan di halaman lain ikut diperbarui; `Esc`/klik pada isi/*Tutup* untuk selesai. Bila header/footer belum ada, part + referensi dibuat (jenis mengikuti halaman: `first` bila *Halaman pertama berbeda* dan halaman pertama section, `even` bila *Ganjil & genap berbeda* dan halaman genap, selain itu `default`). Paragraf header/footer yang disunting diperlakukan seperti paragraf body (`book.hfActive` + `reindex`), sehingga format, daftar, tabel, dan undo/redo bekerja sama. Field: `insertField("PAGE" | "NUMPAGES" | "SECTIONPAGES" | "DATE" | "TIME")` — hasil cache ditampilkan saat disunting, nilai asli saat dirender. Opsi: `setDifferentFirstPage`, `setDifferentOddEven` (pengaturan dokumen, tidak masuk undo), `remove(kind, type)`. Section tanpa referensi sendiri mewarisi dari section sebelumnya; menyunting yang diwarisi mengubah bagian bersama (seperti Word).
+
+**Penomoran halaman**: `setPageNumbering({ start, fmt }, allSections?)` menulis `w:pgNumType` (mulai dari / `decimal | upperRoman | lowerRoman | upperLetter | lowerLetter`; `start: null` = lanjutkan). Field `PAGE`, label halaman, dan nomor di daftar isi memakai nomor tampil (`data-disp`); `NUMPAGES` tetap jumlah halaman fisik. Mengubah penomoran memperbarui daftar isi.
+
+**Daftar** (`api.lists`, perintah `list.*`, galeri di tombol ▾ di samping bullet/numbering): `apply(presetId)` — seleksi dalam satu daftar → seluruh daftar berganti gaya; selain itu → daftar baru dimulai dari awal. Preset: bullet (disc, circle, square, arrow, check, dash), nomor (`1.`, `1)`, `(1)`, `a)`, `A.`, `i.`, `I.`), bertingkat (`1. a. i.`, legal `1 / 1.1 / 1.1.1`). `restart(start?)` / `setStart(n)` membuat `num` baru dengan `startOverride` untuk item terpilih dan item berikutnya dalam daftar yang sama; `continue()` menyambung ke daftar bernomor terdekat di atasnya. Definisi baru ditulis ke `numbering.xml`; undo mengembalikan referensi `numPr` di body (definisi yang tak terpakai dibiarkan). File: `docx-lists.ts`.
+
+## Format, struktur, dan ganti catatan lewat bus
+
+- `format.apply({ target?, props })` / `format.get` / `format.keys` — target `DocxFormatTarget`: `selection` (default), `all`, `paragraph {index,to?,start?,end?}` (1-based), `table {index,row?,col?,toRow?,toCol?}` (rentang sel), atau target navigasi (`search`, `heading`, `bookmark`, `link`, `match`). Kunci umum + khusus: `highlight`, `superscript`, `subscript`, `caps`, `smallCaps`, `letterSpacing`, `style`, `lineSpacing`, `spaceBefore/After`, `indentLeft/Right/First`, `keepNext`, `pageBreakBefore`. `fill`/`stroke` → shading/border paragraf, atau sel bila targetnya sel tabel; `valign`/`wrap` hanya untuk sel. Warna ber-alfa dikomposit di atas putih. Seluruh perubahan = satu langkah undo (`book.squashHistory`).
+- Struktur: `paragraph.count/insert({text?,style?,after?})/remove(index)`, `pageBreak.insert(paragraph?)`, `table.list/ops/insert(rows,cols,after?)`, `table.apply({index,row?,col?,toRow?,toCol?,op,arg?})` dengan `op` ∈ `insertRowAbove/Below`, `insertColLeft/Right`, `deleteRows/Cols/Table`, `merge`, `split`, `shade`, `valign`, `noWrap`, `direction`, `cellMargins`, `borders`, `align`, `style`, `look`, `layout`, `width`, `rowHeight`, `headerRow`, `distCols`, `caption`.
+- Ganti baru: `notes` (catatan kaki & akhir) dan `comment` (komentar). Bagian ini memakai mekanisme yang sama dengan header/footer (`book.hf`/`touchHF`): ikut undo dan ditulis ulang saat simpan; paragraf pemisah bawaan dilewati. Hasil `find` menunjuk ke paragraf yang memuat penanda rujukan.
+

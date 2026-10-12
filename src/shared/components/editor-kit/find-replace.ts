@@ -26,6 +26,7 @@ export type ReplaceKind =
   | "link"          // target hyperlink (URL)
   | "name"          // nama objek (shape, sheet, tabel bernama, halaman)
   | "formula"       // teks rumus (xlsx)
+  | "number"        // nilai numerik sel, dicocokkan sebagai teks angka mentah (xlsx)
   | "label"         // label/tooltip
   | "data"          // atribut data kustom (maxgraph)
   | "font"          // nama font (nilai persis)

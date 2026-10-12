@@ -5,7 +5,8 @@
  */
 import { For, Show, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { DocxBook, DocxLoadError, PAGE_SIZES } from "./docx-model";
-import { DocxView, type DocxNavTarget, type ImgSelInfo, type PainterInfo, type SelInfo } from "./docx-view";
+import { DocxView, DOCX_FORMAT_KEYS, DOCX_TABLE_OPS, type DocxFormatTarget, type DocxNavTarget, type ImgSelInfo, type PainterInfo, type SelInfo } from "./docx-view";
+import type { FormatProps, FormatReport, FormatSpec, OfficeFormatEvents, OfficeStructureEvents } from "../editor-kit/format";
 import { createSampleBook } from "./docx-sample";
 import { exportHtml, exportText } from "./docx-export";
 import { hexDump, isCfb, listOle, readCfb, readVba, streamBytes, vbaPart, type CfbInfo, type OleObject, type VbaInfo } from "./docx-ole";
@@ -25,25 +26,31 @@ import { compositeOver } from "../editor-kit/color-util";
 import { unitToPx, pxToUnit } from "../editor-kit/ruler-core";
 import type { TocOptions } from "./docx-toc";
 import { DOCX_REPLACE_KINDS } from "./docx-nav";
+import { LIST_PRESETS, type ListInfo } from "./docx-lists";
 import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
 import { prepareOle } from "../office-shared/ole-embed";
 import { canPreviewOle, prepareOlePreview, type OlePreviewData } from "../office-shared/ole-preview";
 import "./docx-editor.css";
 
 /** Event yang dipancarkan editor DOCX (bus: `api.events`; DOM: CustomEvent `docx-editor:<tipe>` pada elemen akar). */
-export interface DocxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, RulerEventMap {
+export interface DocxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, RulerEventMap {
   /** Editor siap dipakai (dokumen mungkin belum selesai dimuat → tunggu `load`). */
   ready: { api: DocxEditorApi };
   selection: { info: SelInfo };
   pages: { count: number };
   /** Daftar isi disisipkan/diperbarui/dihapus. */
   toc: { action: "insert" | "update" | "remove"; count: number };
+  /** Mode sunting header/footer dimulai/selesai, field disisipkan, atau opsi halaman/penomoran berubah. */
+  headerfooter: { action: "enter" | "exit" | "field" | "options"; kind?: "hdr" | "ftr"; page?: number };
   /** Tab stop paragraf aktif berubah (posisi dalam pt dari margin kiri). */
   tabs: { positions: number[] };
 }
 
 /** Tab stop untuk API: posisi dalam pt dari margin kiri. */
 export interface DocxTabStop { pos: number; align: "left" | "center" | "right" | "decimal" | "bar"; leader?: "none" | "dot" | "hyphen" | "underscore" | string }
+export type HfKind = "hdr" | "ftr";
+export type { ListInfo };
+export interface DocxHfOptions { section: number; sections: number; titlePg: boolean; evenOdd: boolean; pgStart?: number; pgFmt: string; editing: { kind: HfKind; page: number } | null; has: { hdr: string[]; ftr: string[] } }
 export interface DocxTocInfo { index: number; instruction: string; entries: number; options: TocOptions }
 
 /** Handle imperatif yang diberikan lewat `onReady`. */
@@ -96,6 +103,54 @@ export interface DocxEditorApi {
     insert(opts?: Partial<TocOptions>): boolean;
     update(index?: number): number;
     remove(index?: number): number;
+  };
+  /**
+   * Format umum + khusus DOCX pada target (`DocxFormatTarget`: seleksi, seluruh dokumen, paragraf, bagian tabel, hasil cari/judul/penanda).
+   * Kunci khusus: `highlight`, `superscript`, `subscript`, `caps`, `smallCaps`, `letterSpacing`, `style`, `lineSpacing`, `spaceBefore/After`, `indentLeft/Right/First`, `keepNext`, `pageBreakBefore`.
+   * Satu langkah undo.
+   */
+  readonly format: {
+    keys(): string[];
+    apply(spec: FormatSpec<DocxFormatTarget>): FormatReport;
+    get(target?: DocxFormatTarget): FormatProps | undefined;
+  };
+  /** Struktur dokumen: paragraf, page break, dan tabel. Indeks berbasis 1. */
+  readonly blocks: {
+    paragraphCount(): number;
+    insertParagraph(opts?: { text?: string; style?: string; after?: number }): number | undefined;
+    removeParagraph(index: number): boolean;
+    insertPageBreak(paragraph?: number): boolean;
+  };
+  readonly tables: {
+    list(): { index: number; rows: number; cols: number; text: string }[];
+    ops(): string[];
+    insert(rows: number, cols: number, after?: number): number | undefined;
+    /** Operasi tabel pada bagian tabel: baris/kolom disisip/dihapus, gabung/pisah sel, shading, border, lebar, dll. (`ops()`). */
+    apply(o: { index: number; row?: number; col?: number; toRow?: number; toCol?: number; op: string; arg?: unknown }): boolean;
+  };
+  /** Daftar bullet/bernomor: galeri gaya, mulai ulang, lanjutkan, nilai awal. */
+  readonly lists: {
+    presets(): { id: string; kind: "bullet" | "number" | "multi"; sample: string }[];
+    /** Terapkan gaya galeri (seleksi dalam satu daftar → gaya daftar itu diganti; selain itu → daftar baru). */
+    apply(presetId: string): boolean;
+    restart(start?: number): boolean;
+    continue(): boolean;
+    setStart(n: number): boolean;
+    /** Ringkasan daftar pada kursor. */
+    info(): ListInfo | undefined;
+  };
+  /** Header/footer: sunting di halaman, field halaman/tanggal, halaman pertama berbeda, ganjil/genap, penomoran halaman. */
+  readonly headerFooter: {
+    /** Masuk mode sunting header/footer (default: halaman kursor); dibuat bila belum ada. */
+    edit(kind: HfKind, page?: number): boolean;
+    exit(): void;
+    insertField(kind: "PAGE" | "NUMPAGES" | "SECTIONPAGES" | "DATE" | "TIME"): boolean;
+    options(): DocxHfOptions;
+    setDifferentFirstPage(on: boolean): void;
+    setDifferentOddEven(on: boolean): boolean;
+    /** `start: null` = lanjutkan dari halaman sebelumnya; `fmt`: decimal | upperRoman | lowerRoman | upperLetter | lowerLetter. */
+    setPageNumbering(o: { start?: number | null; fmt?: string | null }, allSections?: boolean): void;
+    remove(kind: HfKind, type?: "default" | "first" | "even"): boolean;
   };
   readonly tabs: {
     get(): DocxTabStop[];
@@ -209,7 +264,7 @@ const Ic = (p: { n: string; size?: number }) => (
 
 type Tab = "home" | "insert" | "table" | "picture" | "layout" | "view";
 type Panel = "find" | "info" | "log" | "ole" | "history" | "outline" | "links" | null;
-type MenuId = "export" | "history" | "table" | "borders" | "symbols" | "case" | "lang" | "ctx-text" | "ctx-table" | "ctx-image";
+type MenuId = "list-bullet" | "list-number" | "export" | "history" | "table" | "borders" | "symbols" | "case" | "lang" | "ctx-text" | "ctx-table" | "ctx-image";
 
 const FONTS = ["Calibri", "Cambria", "Arial", "Times New Roman", "Courier New", "Georgia", "Verdana", "Tahoma", "Segoe UI", "Consolas", "Garamond", "Trebuchet MS", "Comic Sans MS"];
 const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 28, 36, 48, 72];
@@ -543,6 +598,8 @@ export default function DocxEditor(props: DocxEditorProps) {
     return r;
   };
 
+  const st = (scope: string, action: string, ok: boolean, detail?: unknown): boolean => { emit("structure", { scope, action, ok, detail }); return ok; };
+
   const buildApi = (): DocxEditorApi => ({
     events: bus, on: bus.on, off: bus.off, once: bus.once, run: (name, ...args) => bus.run(name, ...args),
     getBook: () => book(), getView: () => view,
@@ -603,6 +660,41 @@ export default function DocxEditor(props: DocxEditorProps) {
       update: index => { const n = view?.updateToc(index) ?? 0; if (n) { emit("toc", { action: "update", count: n }); toast("toast.tocUpdated", { n }); } return n; },
       remove: index => { const n = view?.removeToc(index) ?? 0; if (n) emit("toc", { action: "remove", count: n }); return n; },
     },
+    format: {
+      keys: () => [...DOCX_FORMAT_KEYS],
+      apply: spec => { const r = view?.formatApply(spec.props ?? {}, spec.target) ?? { applied: [], skipped: Object.keys(spec.props ?? {}), targets: 0 }; emit("format", { action: "apply", report: r, target: spec.target }); return r; },
+      get: t => view?.formatGet(t),
+    },
+    blocks: {
+      paragraphCount: () => view?.paragraphCount() ?? 0,
+      insertParagraph: o => { const i = view?.insertParagraphAt(o); st("paragraph", "insert", i !== undefined, { index: i }); return i; },
+      removeParagraph: i => st("paragraph", "remove", !!view?.removeParagraphAt(i), { index: i }),
+      insertPageBreak: p => st("block", "pageBreak", !!view?.insertPageBreakAt(p), { paragraph: p }),
+    },
+    tables: {
+      list: () => view?.tableSummaries() ?? [],
+      ops: () => [...DOCX_TABLE_OPS],
+      insert: (r, c, a) => { const i = view?.insertTableAfterPara(r, c, a); st("table", "insert", i !== undefined, { index: i, rows: r, cols: c }); return i; },
+      apply: o => st("table", o.op, !!view?.tableApply(o), { index: o.index }),
+    },
+    lists: {
+      presets: () => LIST_PRESETS.map(p => ({ id: p.id, kind: p.kind, sample: p.sample })),
+      apply: id => !!view?.applyListPreset(id),
+      restart: start => !!view?.restartList(start),
+      continue: () => { const ok = !!view?.continueList(); if (!ok) toast("toast.listNoPrev"); return ok; },
+      setStart: n => !!view?.setListStart(n),
+      info: () => view?.listInfoAtCaret(),
+    },
+    headerFooter: {
+      edit: (kind, page) => { const ok = !!view?.editHeaderFooter(kind, page); if (ok) emit("headerfooter", { action: "enter", kind, page: view?.hfEdit?.page }); return ok; },
+      exit: () => { if (view?.hfEdit) { view.exitHF(); emit("headerfooter", { action: "exit" }); } },
+      insertField: kind => { const ok = !!view?.insertField(kind); if (ok) emit("headerfooter", { action: "field" }); return ok; },
+      options: () => view!.hfOptions(),
+      setDifferentFirstPage: on => { view?.setDifferentFirstPage(on); emit("headerfooter", { action: "options" }); },
+      setDifferentOddEven: on => { const ok = !!view?.setDifferentOddEven(on); if (ok) emit("headerfooter", { action: "options" }); return ok; },
+      setPageNumbering: (o, all) => { view?.setPageNumbering(o, all); emit("headerfooter", { action: "options" }); },
+      remove: (kind, type) => { const ok = !!view?.removeHeaderFooter(kind, type); if (ok) emit("headerfooter", { action: "options", kind }); return ok; },
+    },
     tabs: {
       get: () => (view?.tabStopsAtCaret() ?? []).map(x => ({ pos: x.pos / 20, align: toTabType(x.val), leader: x.leader })),
       set: list => view?.setTabStops(list.map(x => ({ pos: x.pos * 20, val: x.align, leader: x.leader && x.leader !== "none" ? x.leader : undefined }))),
@@ -633,6 +725,18 @@ export default function DocxEditor(props: DocxEditorProps) {
       "link.update": (id: string, p: { url?: string; tooltip?: string }) => a.links.update(id, p), "link.removeById": (id: string) => a.links.removeById(id),
       "link.replace": (f: string, to: string, o?: { regex?: boolean; caseSensitive?: boolean }) => a.links.replace(f, to, o), "link.open": (u: string) => a.links.open(u),
       "toc.list": () => a.toc.list(), "toc.insert": (o?: Partial<TocOptions>) => a.toc.insert(o), "toc.update": (i?: number) => a.toc.update(i), "toc.remove": (i?: number) => a.toc.remove(i),
+      "format.keys": () => a.format.keys(), "format.apply": (s: FormatSpec<DocxFormatTarget>) => a.format.apply(s), "format.get": (t?: DocxFormatTarget) => a.format.get(t),
+      "paragraph.count": () => a.blocks.paragraphCount(), "paragraph.insert": (o?: { text?: string; style?: string; after?: number }) => a.blocks.insertParagraph(o),
+      "paragraph.remove": (i: number) => a.blocks.removeParagraph(i), "pageBreak.insert": (p?: number) => a.blocks.insertPageBreak(p),
+      "table.list": () => a.tables.list(), "table.ops": () => a.tables.ops(), "table.insert": (r: number, c: number, after?: number) => a.tables.insert(r, c, after),
+      "table.apply": (o: Parameters<typeof a.tables.apply>[0]) => a.tables.apply(o),
+      "list.presets": () => a.lists.presets(), "list.apply": (id: string) => a.lists.apply(id), "list.restart": (n?: number) => a.lists.restart(n),
+      "list.continue": () => a.lists.continue(), "list.setStart": (n: number) => a.lists.setStart(n), "list.info": () => a.lists.info(),
+      "hf.edit": (k: HfKind, p?: number) => a.headerFooter.edit(k, p), "hf.exit": () => a.headerFooter.exit(),
+      "hf.insertField": (k: "PAGE" | "NUMPAGES" | "SECTIONPAGES" | "DATE" | "TIME") => a.headerFooter.insertField(k), "hf.options": () => a.headerFooter.options(),
+      "hf.firstPage": (on: boolean) => a.headerFooter.setDifferentFirstPage(on), "hf.oddEven": (on: boolean) => a.headerFooter.setDifferentOddEven(on),
+      "hf.pageNumbering": (o: { start?: number | null; fmt?: string | null }, all?: boolean) => a.headerFooter.setPageNumbering(o, all),
+      "hf.remove": (k: HfKind, t?: "default" | "first" | "even") => a.headerFooter.remove(k, t),
       "tabs.get": () => a.tabs.get(), "tabs.set": (l: DocxTabStop[]) => a.tabs.set(l), "tabs.add": (p: number, al?: DocxTabStop["align"], le?: string) => a.tabs.add(p, al, le),
       "tabs.remove": (p: number) => a.tabs.remove(p), "tabs.clear": () => a.tabs.clear(),
       "ole.list": () => a.ole.list(), "ole.insert": (f: FileInput, o?: OleInsertOptions) => a.ole.insert(f, o),
@@ -867,6 +971,10 @@ export default function DocxEditor(props: DocxEditorProps) {
   const logs = createMemo(() => { logVer(); const b = book(); return b ? [...b.log] : []; });
   const counts = createMemo(() => { const l = logs(); return { info: l.filter(x => x.level === "info").length, warn: l.filter(x => x.level === "warn").length, error: l.filter(x => x.level === "error").length }; });
   const outline = createMemo(() => { ver(); return panel() === "outline" && view ? view.outline() : []; });
+  const listInfoM = createMemo<ListInfo | undefined>(() => { sel(); ver(); return view && view.book && book() ? view.listInfoAtCaret() : undefined; });
+  const [listStartDraft, setListStartDraft] = createSignal("1");
+  const hfo = createMemo(() => { sel(); ver(); return view && view.book && book() ? view.hfOptions() : undefined; });
+  const [pgStartDraft, setPgStartDraft] = createSignal("");
   const tocCount = createMemo(() => { ver(); return view?.tocList().length ?? 0; });
   const linkItems = createMemo<LinkItem[]>(() => { ver(); return panel() === "links" && view ? view.linkItems() : []; });
   const tabUnit = () => rulerUnit();
@@ -937,7 +1045,9 @@ export default function DocxEditor(props: DocxEditorProps) {
       </Grp>
       <Grp cap={t("g.paragraph")}>
         <Btn icon="bullets" title={t("b.bullets")} disabled={!edit()} on={S()?.list === "bullet"} onClick={() => view?.toggleList("bullet")} />
+        <Btn title={t("list.bullets")} disabled={!edit()} menu onClick={e => openMenu("list-bullet", e)} />
         <Btn icon="numbers" title={t("b.numbers")} disabled={!edit()} on={S()?.list === "number"} onClick={() => view?.toggleList("number")} />
+        <Btn title={t("list.numbers")} disabled={!edit()} menu onClick={e => openMenu("list-number", e)} />
         <Btn icon="outdent" title={t("b.outdent")} disabled={!edit()} onClick={() => view?.indent(-1)} />
         <Btn icon="indent" title={t("b.indent")} disabled={!edit()} onClick={() => view?.indent(1)} />
         <Btn icon="alignL" title={t("b.alignL") + " (Ctrl+L)"} disabled={!edit()} on={S()?.align === "left" || S()?.align === "start"} onClick={() => view?.setAlign("left")} />
@@ -970,6 +1080,29 @@ export default function DocxEditor(props: DocxEditorProps) {
         <Btn icon="pagebreak" label={t("b.pageBreak")} title={t("b.pageBreak") + " (Ctrl+Enter)"} disabled={!edit() || !S()?.has} onClick={() => view?.insertPageBreakAtCaret()} />
         <Btn label="Ω" title={t("b.symbol")} disabled={!edit() || !S()?.has} menu onClick={e => openMenu("symbols", e)} />
         <Btn icon="object" label={t("ole.insert")} title={t("ole.insertTip")} disabled={!edit() || !book()} onClick={() => oleInput.click()} />
+      </Grp>
+      <Grp cap={t("g.hf")}>
+        <Btn label={t("hf.header")} title={t("hf.editTip")} on={hfo()?.editing?.kind === "hdr"} disabled={!edit()} onClick={() => api?.headerFooter.edit("hdr")} />
+        <Btn label={t("hf.footer")} title={t("hf.editTip")} on={hfo()?.editing?.kind === "ftr"} disabled={!edit()} onClick={() => api?.headerFooter.edit("ftr")} />
+        <Show when={hfo()?.editing}>
+          <Btn label={t("hf.page")} title={t("hf.fieldTip")} disabled={!edit()} onClick={() => api?.headerFooter.insertField("PAGE")} />
+          <Btn label={t("hf.pages")} title={t("hf.fieldTip")} disabled={!edit()} onClick={() => api?.headerFooter.insertField("NUMPAGES")} />
+          <Btn label={t("hf.date")} title={t("hf.fieldTip")} disabled={!edit()} onClick={() => api?.headerFooter.insertField("DATE")} />
+          <Btn primary label={t("hf.close")} onClick={() => api?.headerFooter.exit()} />
+        </Show>
+        <label class="dxe-chk"><input type="checkbox" disabled={!edit()} checked={!!hfo()?.titlePg} onChange={e => api?.headerFooter.setDifferentFirstPage(e.currentTarget.checked)} />{t("hf.firstPage")}</label>
+        <label class="dxe-chk"><input type="checkbox" disabled={!edit()} checked={!!hfo()?.evenOdd} onChange={e => api?.headerFooter.setDifferentOddEven(e.currentTarget.checked)} />{t("hf.oddEven")}</label>
+        <Btn icon="trash" label="H" title={t("hf.removeHdr")} disabled={!edit() || !hfo()?.has.hdr.length} onClick={() => api?.headerFooter.remove("hdr", (hfo()?.has.hdr.includes("default") ? "default" : hfo()!.has.hdr[0]) as "default" | "first" | "even")} />
+        <Btn icon="trash" label="F" title={t("hf.removeFtr")} disabled={!edit() || !hfo()?.has.ftr.length} onClick={() => api?.headerFooter.remove("ftr", (hfo()?.has.ftr.includes("default") ? "default" : hfo()!.has.ftr[0]) as "default" | "first" | "even")} />
+      </Grp>
+      <Grp cap={t("g.pgnum")}>
+        <span class="dxe-lbl">{t("pg.format")}</span>
+        <select class="dxe-sel" style={{ width: "92px" }} disabled={!edit()} value={hfo()?.pgFmt ?? "decimal"} onChange={e => api?.headerFooter.setPageNumbering({ fmt: e.currentTarget.value })}>
+          <For each={["decimal", "upperRoman", "lowerRoman", "upperLetter", "lowerLetter"]}>{f => <option value={f} selected={f === (hfo()?.pgFmt ?? "decimal")}>{t("pg.fmt." + f)}</option>}</For>
+        </select>
+        <span class="dxe-lbl">{t("pg.start")}</span>
+        <input class="dxe-num-in" type="number" min="0" style={{ width: "58px" }} disabled={!edit()} placeholder={t("pg.continue")} value={hfo()?.pgStart ?? ""}
+          onChange={e => { const v = e.currentTarget.value.trim(); api?.headerFooter.setPageNumbering({ start: v === "" ? null : Math.max(0, Math.floor(+v)) }); }} />
       </Grp>
       <Grp cap={t("g.toc")}>
         <Btn icon="outline" label={t("toc.insert")} title={t("toc.insertTip")} disabled={!edit() || !S()?.has} onClick={() => api?.toc.insert({ to: tocTo(), pageNumbers: tocPages(), hyperlinks: tocLinks(), title: t("toc.title") })} />
@@ -1231,7 +1364,7 @@ export default function DocxEditor(props: DocxEditorProps) {
 
         <Show when={panel() === "links"}>
           <LinkPanel items={linkItems()} readonly={ro()} tooltips labels={lang() === "id" ? LINK_LABELS_ID : LINK_LABELS_EN}
-            onGoto={i => api?.goto(i.target)} onUpdate={(i, p) => api?.links.update(i.id, p)} onRemove={i => api?.links.removeById(i.id)}
+            onGoto={i => api?.goto(i.target as DocxNavTarget)} onUpdate={(i, p) => api?.links.update(i.id, p)} onRemove={i => api?.links.removeById(i.id)}
             onReplace={(from, to) => api?.links.replace(from, to) ?? 0} onOpen={i => api?.links.open(i.url)} onNotify={toastRaw} />
         </Show>
 
@@ -1570,6 +1703,21 @@ export default function DocxEditor(props: DocxEditorProps) {
               <Show when={m().id === "table"}><TblPicker /></Show>
               <Show when={m().id === "borders"}><BorderMenu /></Show>
               <Show when={m().id === "symbols"}><div class="dxe-gridpick"><div class="g" style={{ "grid-template-columns": "repeat(6, 28px)" }}><For each={SYMBOLS}>{s => <i style={{ width: "28px", height: "28px", display: "grid", "place-items": "center", "font-style": "normal" }} onMouseDown={e => e.preventDefault()} onClick={() => { setMenu(null); view?.insertTextAtSel(s); }}>{s}</i>}</For></div></div></Show>
+              <Show when={m().id === "list-bullet"}>
+                <div class="dxe-listpick"><For each={LIST_PRESETS.filter(p => p.kind === "bullet")}>{p => (
+                  <button class="dxe-lp" classList={{ on: listInfoM()?.preset === p.id }} title={t("list.p." + p.id)} onMouseDown={e => e.preventDefault()} onClick={() => { setMenu(null); api?.lists.apply(p.id); }}><b>{p.sample}</b><span>{t("list.p." + p.id)}</span></button>
+                )}</For></div>
+              </Show>
+              <Show when={m().id === "list-number"}>
+                <div class="dxe-listpick"><For each={LIST_PRESETS.filter(p => p.kind !== "bullet")}>{p => (
+                  <button class="dxe-lp" classList={{ on: listInfoM()?.preset === p.id }} title={t("list.p." + p.id)} onMouseDown={e => e.preventDefault()} onClick={() => { setMenu(null); api?.lists.apply(p.id); }}><b>{p.sample}</b><span>{t("list.p." + p.id)}</span></button>
+                )}</For></div>
+                <hr />
+                <MI label={t("list.restart")} disabled={!listInfoM()} onClick={() => api?.lists.restart(1)} />
+                <MI label={t("list.continue")} disabled={!listInfoM()} onClick={() => api?.lists.continue()} />
+                <div class="dxe-lp-start"><span>{t("list.start")}</span><input class="dxe-num-in" type="number" min="0" style={{ width: "62px" }} value={listStartDraft()} onInput={e => setListStartDraft(e.currentTarget.value)} />
+                  <button class="dxe-btn" disabled={!listInfoM()} onMouseDown={e => e.preventDefault()} onClick={() => { setMenu(null); api?.lists.setStart(Math.max(0, Math.floor(+listStartDraft() || 1))); }}>{t("list.setStart")}</button></div>
+              </Show>
               <Show when={m().id === "case"}>
                 <MI label={t("case.upper")} onClick={() => view?.changeCase("upper")} /><MI label={t("case.lower")} onClick={() => view?.changeCase("lower")} /><MI label={t("case.title")} onClick={() => view?.changeCase("title")} />
               </Show>

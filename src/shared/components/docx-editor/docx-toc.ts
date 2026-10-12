@@ -109,7 +109,7 @@ const run = (children: XNode[]) => mk("r", undefined, children);
 const fld = (t: "begin" | "separate" | "end") => run([mk("fldChar", { fldCharType: t })]);
 const instrRun = (s: string) => run([mkText("instrText", s)]);
 
-function makeEntry(book: DocxBook, h: TocHeading, bm: string, page: number | undefined, o: TocOptions, tabPos: number, firstEntry: boolean, instr: string): XEl {
+function makeEntry(book: DocxBook, h: TocHeading, bm: string, page: number | string | undefined, o: TocOptions, tabPos: number, firstEntry: boolean, instr: string): XEl {
   const pPrKids: XNode[] = [];
   if (book.styles.has(`TOC${h.level}`)) pPrKids.push(mk("pStyle", { val: `TOC${h.level}` }));
   if (o.pageNumbers && o.rightAlign) pPrKids.push(mk("tabs", undefined, [mk("tab", { val: "right", ...(o.leader !== "none" ? { leader: o.leader } : {}), pos: tabPos })]));
@@ -166,7 +166,7 @@ export interface BuildTocArgs {
   book: DocxBook;
   headings: TocHeading[];
   options: TocOptions;
-  pageOf: (p: XEl) => number | undefined;
+  pageOf: (p: XEl) => number | string | undefined;
   /** Lebar area konten (twip) untuk posisi tab nomor halaman. */
   contentTw: number;
   emptyText: string;

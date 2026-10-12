@@ -109,3 +109,21 @@ Event `change` bersifat kasar (setiap perubahan model; cek `modified`). Id objek
 **Perbarui**: isi part diganti (atau part + relasi baru bila jenis berganti) dan pratinjau diarahkan ulang. **Membaca** mendukung bentuk klasik (VML) dan Excel 2010+ (`mc:AlternateContent` + `objectPr` + anchor). Objek ditampilkan di grid sebagai kotak pratinjau + lencana *OLE*; klik ganda membukanya di panel OLE.
 Pada `@office-kit/xlsx` 0.23.4, `oleObjects` + VML + embedding **bertahan** saat berkas dimuat lalu disimpan (diuji; uji akan gagal bila versi library berikutnya mengubahnya).
 Batasan: posisi/ukuran objek yang **sudah ada di berkas** belum dapat diubah (hanya isinya); objek yang disisipkan pada sesi ini dapat diubah ukurannya lewat `api.ole.resize`. Objek tertaut (link) hanya dapat dibaca.
+
+## Navigasi, cari/ganti, tautan, warna
+
+Lihat `editor-kit/README.md` untuk kontrak umum. Khusus XLSX:
+
+- `goto` target: `{kind:"cell",address,sheet?}`, `{kind:"range",range,sheet?}`, `{kind:"sheet",sheet}`, `{kind:"name",name}`, `{kind:"link",id}`, `search`, `match`, `start`, `end`. `find`/`replace` menerima `scope: "sheet"|"book"|"selection"` (default seluruh workbook).
+- Ganti: `text` (sel string), `formula`, `link` (target/lokasi), `comment` (catatan), `font`, `color` (warna teks), `fill`. Ganti sel angka (`number`) dan nama sheet (`name`) kini didukung (lihat bawah). Yang belum:.
+- **Hyperlink**: `api.links.*`, dialog (Ctrl+K / tombol 🔗 / menu klik kanan), panel *Tautan*. URL luar atau lokasi internal (`#Sheet2!A1`); sel kosong diisi teks tampilan seperti Excel. Undo/redo didukung.
+- Warna teks/isi memakai `ColorField`; Excel tidak menyimpan alfa sehingga warna dikomposit di atas putih.
+
+### Format, sheet, dan rentang lewat bus
+
+- `format.apply({ target?: {range?, sheet?}, props })` / `format.get` / `format.keys`. Kunci umum + `numFmt`, `border {kind,style,color}`, `indent`, `clear`. `stroke` → border luar. `fillAlpha`/`colorAlpha` dikomposit di atas putih. Satu langkah undo.
+- Sheet (dengan undo/redo, ikut tersimpan): `sheet.list/add({name?,at?})/rename/remove/move/setVisible`. `rename` menulis ulang referensi `Lama!A1` / `'Nama Lama'!A1` pada seluruh rumus (literal string dibiarkan). Nama tidak boleh kosong, >31 karakter, memuat `\ / ? * [ ] :`, atau bentrok; sheet terlihat terakhir tidak bisa dihapus/disembunyikan.
+- Rentang: `range.merge(range?, {center?})`, `unmerge`, `clear`, `freeze(rows, cols)`, `colWidth(col, px)`, `rowHeight(row, px)`, `autofilter(range | false)`.
+- Ganti baru: `number` (nilai numerik dicocokkan sebagai teks angka mentah; hasil non-numerik menjadi teks) dan `name` (nama sheet; rumus ikut diperbarui; bentrok dilewati). Keduanya hanya dicari bila diminta lewat `kinds`.
+- Belum: sisip/hapus baris & kolom (tidak ada penyesuaian referensi rumus di library).
+

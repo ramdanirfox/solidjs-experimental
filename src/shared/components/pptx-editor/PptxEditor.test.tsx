@@ -161,3 +161,36 @@ describe("PptxEditor — penggaris & garis bantu", () => {
     expect(api.ruler.getGuides()).toHaveLength(0);
   });
 });
+
+
+describe("PptxEditor — format.* & struktur lewat bus", () => {
+  it("format.apply/get/keys + event, DOM CustomEvent, slide.* & shape.*", async () => {
+    const { api, root } = await mount();
+    const fmt = vi.fn(), st = vi.fn();
+    api.on("format", fmt); api.on("structure", st);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["format.apply", "format.get", "format.keys", "slide.add", "slide.move", "shape.add", "shape.align", "shape.group"]));
+    expect(await api.run<string[]>("format.keys")).toContain("fillAlpha");
+    const id = await api.run<number>("shape.add", { type: "shape", preset: "rect", x: 20, y: 20, w: 120, h: 80, fill: "#336699" });
+    expect(typeof id).toBe("number");
+    const rep = await api.run<{ applied: string[]; targets: number }>("format.apply", { target: { id }, props: { fill: "#FF0000", fillAlpha: 0.3, bold: true } });
+    expect(rep.targets).toBe(1);
+    expect(rep.applied).toEqual(expect.arrayContaining(["fill", "fillAlpha"]));
+    expect(fmt).toHaveBeenCalled();
+    expect((await api.run<{ fillAlpha?: number }>("format.get", { id })).fillAlpha).toBeCloseTo(0.3, 2);
+    const n0 = api.getSlideCount();
+    expect(await api.run("slide.add", { at: 0 })).toBe(true);
+    expect(api.getSlideCount()).toBe(n0 + 1);
+    expect(await dispatchCommand<boolean>(root, "pptx-editor", "slide.setHidden", true, 0)).toBe(true);
+    expect((await api.run<{ hidden: boolean }[]>("slide.list"))[0].hidden).toBe(true);
+    expect(st.mock.calls.map(c => c[0].scope + "." + c[0].action)).toEqual(expect.arrayContaining(["shape.add", "slide.add", "slide.hidden"]));
+    expect(await api.run("slide.remove", 0)).toBe(true);
+    expect(api.getSlideCount()).toBe(n0);
+  });
+
+  it("readonly: format & struktur menolak tanpa melempar", async () => {
+    const { api } = await mount({ readonly: true });
+    expect(api.format.apply({ props: { bold: true } }).targets).toBe(0);
+    expect(api.slides.add()).toBe(false);
+    expect(api.shapes.add({ type: "textbox" })).toBeUndefined();
+  });
+});

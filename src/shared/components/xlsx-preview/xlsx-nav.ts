@@ -9,11 +9,11 @@ import { addr, parseAddress, type EditRecord, type Sel, type XlsxBook } from "./
 import { classifyLink, type LinkItem } from "../editor-kit/hyperlink";
 import { sameColor, sameFont, type ReplaceKind } from "../editor-kit/find-replace";
 
-export const XLSX_REPLACE_KINDS: readonly ReplaceKind[] = ["text", "formula", "link", "comment", "font", "color", "fill"];
+export const XLSX_REPLACE_KINDS: readonly ReplaceKind[] = ["text", "number", "formula", "link", "comment", "name", "font", "color", "fill"];
 
 /** Satu potongan teks yang dapat dicari & diganti. */
 export interface XUnit {
-  kind: "text" | "formula" | "link" | "comment";
+  kind: "text" | "number" | "formula" | "link" | "comment" | "name";
   sheet: string;
   ws: Worksheet;
   row: number;
@@ -22,8 +22,8 @@ export interface XUnit {
   text: string;
   /** Teks pendamping (mis. teks tampilan tautan). */
   label?: string;
-  /** Terapkan teks baru; mengembalikan record untuk undo. */
-  set(next: string): EditRecord;
+  /** Terapkan teks baru; mengembalikan record untuk undo (undefined bila ditolak, mis. nama sheet bentrok). */
+  set(next: string): EditRecord | undefined;
 }
 
 export interface UnitScope { sheet?: Worksheet; selection?: Sel }
@@ -39,7 +39,13 @@ export function collectUnits(book: XlsxBook, kinds: ReplaceKind[], scope: UnitSc
   const want = new Set(kinds);
   const targets = scope.sheet ? [scope.sheet] : worksheets(book);
   for (const ws of targets) {
-    if (want.has("text") || want.has("formula")) {
+    if (want.has("name")) {
+      out.push({
+        kind: "name", sheet: ws.title, ws, row: 0, col: 0, address: "", text: ws.title,
+        set: next => { const r = book.renameSheetTo(ws.title, next); return "error" in r ? undefined : r.records[0]; },
+      });
+    }
+    if (want.has("text") || want.has("formula") || want.has("number")) {
       for (const r of [...ws.rows.keys()].sort((a, b) => a - b)) {
         const row = ws.rows.get(r)!;
         if (scope.selection && (r < scope.selection.r1 || r > scope.selection.r2)) continue;
@@ -49,6 +55,11 @@ export function collectUnits(book: XlsxBook, kinds: ReplaceKind[], scope: UnitSc
           const v = cell.value as unknown;
           if (typeof v === "string" && want.has("text")) {
             out.push({ kind: "text", sheet: ws.title, ws, row: r, col: c, address: addr(r, c), text: v, set: t => book.setValueRaw(ws, r, c, t) });
+          } else if (typeof v === "number" && want.has("number")) {
+            out.push({
+              kind: "number", sheet: ws.title, ws, row: r, col: c, address: addr(r, c), text: String(v),
+              set: t => book.setValueRaw(ws, r, c, /^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/.test(t.trim()) ? Number(t) : t),
+            });
           } else if (v && typeof v === "object" && (v as { kind?: string }).kind === "formula" && want.has("formula")) {
             const f = String((v as { formula?: string }).formula ?? "");
             out.push({ kind: "formula", sheet: ws.title, ws, row: r, col: c, address: addr(r, c), text: f, set: t => book.setValueRaw(ws, r, c, makeFormula(t.replace(/^=/, ""))) });

@@ -87,7 +87,7 @@ const en: Dict = {
   "toast.saved": "Downloaded “{name}”", "toast.saveFail": "Could not build the file — see the log", "toast.copied": "Copied", "toast.replaced": "{n} replaced", "toast.propsSaved": "Properties updated", "toast.revisions": "{n} revisions resolved",
   "toast.linkBlocked": "Link not opened: {href}", "toast.noBookmark": "Bookmark “{name}” not found", "toast.imgUnsupported": "“{name}” is not a supported picture", "toast.imgFail": "Could not insert “{name}”",
   // history labels
-  "hist.open": "Opened", "hist.undo": "Undo", "hist.redo": "Redo", "hist.jump": "Jump", "hist.typing": "Typing", "hist.enter": "New paragraph", "hist.delete": "Delete", "hist.break": "Line break", "hist.pageBreak": "Page break", "hist.merge": "Join paragraphs",
+  "hist.insert": "Insert", "hist.open": "Opened", "hist.undo": "Undo", "hist.redo": "Redo", "hist.jump": "Jump", "hist.typing": "Typing", "hist.enter": "New paragraph", "hist.delete": "Delete", "hist.break": "Line break", "hist.pageBreak": "Page break", "hist.merge": "Join paragraphs",
   "hist.list": "List", "hist.format": "Character format", "hist.color": "Color", "hist.font": "Font", "hist.clear": "Clear formatting", "hist.align": "Alignment", "hist.style": "Style", "hist.spacing": "Spacing", "hist.border": "Border", "hist.indent": "Indent",
   "hist.link": "Hyperlink", "hist.paste": "Paste", "hist.painter": "Format painter", "hist.replace": "Replace", "hist.props": "Properties", "hist.revisions": "Revisions", "hist.page": "Page setup",
   "hist.tbl": "Table", "hist.tblInsert": "Insert table", "hist.tblRow": "Insert row", "hist.tblCol": "Insert column", "hist.tblDelRow": "Delete row", "hist.tblDelCol": "Delete column", "hist.tblDelete": "Delete table", "hist.tblMerge": "Merge cells",
@@ -118,6 +118,18 @@ const en: Dict = {
   "hist.toc": "Table of contents", "hist.tabs": "Tab stops",
   "panel.links": "Hyperlinks", "b.links": "Hyperlinks",
   "color.opacity": "Opacity", "color.none": "No color", "color.hex": "Hex", "color.custom": "Custom", "color.noAlphaNote": "Word stores this color without transparency, so it is blended with white.",
+  // header & footer, page numbering
+  "g.hf": "Header & footer", "hf.header": "Header", "hf.footer": "Footer", "hf.editTip": "Edit the header/footer of the current page (or double-click it on the page). Esc or a click on the body finishes.",
+  "hf.close": "Close header/footer", "hf.page": "Page #", "hf.pages": "Total pages", "hf.date": "Date", "hf.time": "Time", "hf.fieldTip": "Insert a field at the cursor",
+  "hf.firstPage": "Different first page", "hf.oddEven": "Different odd & even", "hf.removeHdr": "Remove header", "hf.removeFtr": "Remove footer", "hf.editing": "Editing {kind} — page {n}",
+  "g.pgnum": "Page numbers", "pg.format": "Format", "pg.start": "Start at", "pg.continue": "continue", "pg.apply": "Apply", "pg.all": "All sections",
+  "pg.fmt.decimal": "1, 2, 3", "pg.fmt.upperRoman": "I, II, III", "pg.fmt.lowerRoman": "i, ii, iii", "pg.fmt.upperLetter": "A, B, C", "pg.fmt.lowerLetter": "a, b, c",
+  "hist.hf": "Header/footer", "hist.field": "Field", "hist.pgnum": "Page numbering",
+  // list gallery
+  "list.bullets": "Bullet styles", "list.numbers": "Numbering styles", "list.restart": "Restart at 1", "list.continue": "Continue numbering", "list.start": "Start value", "list.setStart": "Set start value",
+  "list.none": "Not in a list", "toast.listNoPrev": "No earlier numbered list to continue",
+  "list.p.bullet-disc": "Disc", "list.p.bullet-circle": "Circle", "list.p.bullet-square": "Square", "list.p.bullet-arrow": "Arrow", "list.p.bullet-check": "Check", "list.p.bullet-dash": "Dash",
+  "list.p.num-dot": "1. 2. 3.", "list.p.num-paren": "1) 2) 3)", "list.p.num-enclosed": "(1) (2) (3)", "list.p.alpha-lower": "a) b) c)", "list.p.alpha-upper": "A. B. C.", "list.p.roman-lower": "i. ii. iii.", "list.p.roman-upper": "I. II. III.", "list.p.multi-decimal": "1. a. i. (multilevel)", "list.p.multi-legal": "1 / 1.1 / 1.1.1 (legal)",
 };
 
 const id: Dict = {
@@ -185,7 +197,7 @@ const id: Dict = {
   "err.parse": "Dokumen tidak dapat dibaca", "err.fetch": "Dokumen tidak dapat diunduh", "err.hint": "Simpan sebagai .docx dari Word (File → Save As) atau hapus password, lalu buka kembali.", "err.cfb": "Isi kontainer ({kind})",
   "toast.saved": "“{name}” diunduh", "toast.saveFail": "Berkas tidak dapat dibuat — lihat log", "toast.copied": "Tersalin", "toast.replaced": "{n} diganti", "toast.propsSaved": "Properti diperbarui", "toast.revisions": "{n} revisi diselesaikan",
   "toast.linkBlocked": "Tautan tidak dibuka: {href}", "toast.noBookmark": "Bookmark “{name}” tidak ditemukan", "toast.imgUnsupported": "“{name}” bukan gambar yang didukung", "toast.imgFail": "Gagal menyisipkan “{name}”",
-  "hist.open": "Dibuka", "hist.undo": "Urungkan", "hist.redo": "Ulangi", "hist.jump": "Lompat", "hist.typing": "Mengetik", "hist.enter": "Paragraf baru", "hist.delete": "Hapus", "hist.break": "Pindah baris", "hist.pageBreak": "Jeda halaman", "hist.merge": "Gabung paragraf",
+  "hist.insert": "Sisip", "hist.open": "Dibuka", "hist.undo": "Urungkan", "hist.redo": "Ulangi", "hist.jump": "Lompat", "hist.typing": "Mengetik", "hist.enter": "Paragraf baru", "hist.delete": "Hapus", "hist.break": "Pindah baris", "hist.pageBreak": "Jeda halaman", "hist.merge": "Gabung paragraf",
   "hist.list": "Daftar", "hist.format": "Format karakter", "hist.color": "Warna", "hist.font": "Font", "hist.clear": "Hapus format", "hist.align": "Perataan", "hist.style": "Gaya", "hist.spacing": "Spasi", "hist.border": "Border", "hist.indent": "Indentasi",
   "hist.link": "Hyperlink", "hist.paste": "Tempel", "hist.painter": "Format painter", "hist.replace": "Ganti", "hist.props": "Properti", "hist.revisions": "Revisi", "hist.page": "Pengaturan halaman",
   "hist.tbl": "Tabel", "hist.tblInsert": "Sisip tabel", "hist.tblRow": "Sisip baris", "hist.tblCol": "Sisip kolom", "hist.tblDelRow": "Hapus baris", "hist.tblDelCol": "Hapus kolom", "hist.tblDelete": "Hapus tabel", "hist.tblMerge": "Gabung sel",
@@ -215,6 +227,18 @@ const id: Dict = {
   "hist.toc": "Daftar isi", "hist.tabs": "Tab stop",
   "panel.links": "Hyperlink", "b.links": "Hyperlink",
   "color.opacity": "Opasitas", "color.none": "Tanpa warna", "color.hex": "Hex", "color.custom": "Kustom", "color.noAlphaNote": "Word menyimpan warna ini tanpa transparansi, sehingga dicampur dengan putih.",
+  // header & footer, page numbering
+  "g.hf": "Header & footer", "hf.header": "Header", "hf.footer": "Footer", "hf.editTip": "Sunting header/footer halaman ini (atau klik ganda pada halaman). Esc atau klik pada isi untuk selesai.",
+  "hf.close": "Tutup header/footer", "hf.page": "Nomor halaman", "hf.pages": "Jumlah halaman", "hf.date": "Tanggal", "hf.time": "Jam", "hf.fieldTip": "Sisipkan field di kursor",
+  "hf.firstPage": "Halaman pertama berbeda", "hf.oddEven": "Ganjil & genap berbeda", "hf.removeHdr": "Hapus header", "hf.removeFtr": "Hapus footer", "hf.editing": "Menyunting {kind} — halaman {n}",
+  "g.pgnum": "Nomor halaman", "pg.format": "Format", "pg.start": "Mulai dari", "pg.continue": "lanjutkan", "pg.apply": "Terapkan", "pg.all": "Semua section",
+  "pg.fmt.decimal": "1, 2, 3", "pg.fmt.upperRoman": "I, II, III", "pg.fmt.lowerRoman": "i, ii, iii", "pg.fmt.upperLetter": "A, B, C", "pg.fmt.lowerLetter": "a, b, c",
+  "hist.hf": "Header/footer", "hist.field": "Field", "hist.pgnum": "Penomoran halaman",
+  // list gallery
+  "list.bullets": "Gaya bullet", "list.numbers": "Gaya penomoran", "list.restart": "Mulai ulang dari 1", "list.continue": "Lanjutkan penomoran", "list.start": "Nilai awal", "list.setStart": "Atur nilai awal",
+  "list.none": "Bukan daftar", "toast.listNoPrev": "Tidak ada daftar bernomor sebelumnya untuk dilanjutkan",
+  "list.p.bullet-disc": "Bulat penuh", "list.p.bullet-circle": "Lingkaran", "list.p.bullet-square": "Kotak", "list.p.bullet-arrow": "Panah", "list.p.bullet-check": "Centang", "list.p.bullet-dash": "Strip",
+  "list.p.num-dot": "1. 2. 3.", "list.p.num-paren": "1) 2) 3)", "list.p.num-enclosed": "(1) (2) (3)", "list.p.alpha-lower": "a) b) c)", "list.p.alpha-upper": "A. B. C.", "list.p.roman-lower": "i. ii. iii.", "list.p.roman-upper": "I. II. III.", "list.p.multi-decimal": "1. a. i. (bertingkat)", "list.p.multi-legal": "1 / 1.1 / 1.1.1 (legal)",
 };
 
 export const DICTS: Record<Lang, Dict> = { en, id };

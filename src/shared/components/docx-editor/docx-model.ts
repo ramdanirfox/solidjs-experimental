@@ -4,10 +4,10 @@
  * dan ditulis balik sebagai blok `raw` lewat `flush()`.
  */
 import {
-  addBulletList, addHyperlink, addImageRun, addNumberedList, appProperties, coreProperties, numberingPart, openDocx, setCoreProperties, stylesPart, toUint8Array, validate,
+  addBulletList, addFooter, addHeader, addHyperlink, addImageRun, addNumberedList, appProperties, coreProperties, numberingPart, openDocx, setCoreProperties, stylesPart, toUint8Array, validate,
   getParagraphNumbering, type Docx,
 } from "@office-kit/docx";
-import { NS, astBodyToXml, attr, cloneEl, descendAll, els, first, isEl, mk, num, parseXmlString, serialize, setAttr, setChild, val, type XEl, type XNode } from "./docx-xml";
+import { NS, astBodyToXml, attr, cloneEl, descendAll, els, first, isEl, mk, num, parseXmlString, removeNode, serialize, setAttr, setChild, val, type XEl, type XNode } from "./docx-xml";
 import { StyleEngine } from "./docx-style";
 import { pruneOleParts } from "./docx-ole-edit";
 import { NumberingEngine } from "./docx-numbering";
@@ -33,6 +33,8 @@ export interface Section {
   orient: "portrait" | "landscape";
   type: string;
   titlePg: boolean;
+  /** Penomoran halaman section (`w:pgNumType`): mulai dari / format angka. */
+  pgNum?: { start?: number; fmt?: string };
   cols: { num: number; space: number };
   hdrRefs: Record<string, string>;
   ftrRefs: Record<string, string>;
@@ -57,6 +59,7 @@ function readSect(sp: XEl): Section {
     orient: attr(pg, "orient") === "landscape" || w > h ? "landscape" : "portrait",
     type: val(sp, "type") ?? "nextPage",
     titlePg: !!first(sp, "titlePg"),
+    pgNum: first(sp, "pgNumType") ? { start: num(attr(first(sp, "pgNumType"), "start")), fmt: attr(first(sp, "pgNumType"), "fmt") } : undefined,
     cols: { num: num(attr(cols, "num")) ?? 1, space: num(attr(cols, "space")) ?? 720 },
     hdrRefs: refs("headerReference"), ftrRefs: refs("footerReference"),
   };
@@ -231,6 +234,10 @@ export class DocxBook {
     return undefined;
   }
 
+  /** rId bagian samping dokumen utama (catatan kaki/akhir, komentar), bila ada. */
+  sideRelId(kind: "footnotes" | "endnotes" | "comments"): string | undefined {
+    return this.relsOf(this.doc.partName).find(x => x.type === REL[kind])?.id;
+  }
   /** Isi header/footer (`<w:hdr>`/`<w:ftr>`) untuk rId. */
   hf(relId: string): XEl | undefined {
     if (this.hfCache.has(relId)) return this.hfCache.get(relId) ?? undefined;
@@ -282,9 +289,77 @@ export class DocxBook {
 
   // ───────── struktur ─────────
 
+  /** Akar header/footer yang sedang disunting: paragrafnya diperlakukan seperti paragraf body (punya induk). */
+  hfActive: XEl | undefined;
   reindex() {
     this.parents = new WeakMap();
     walkBlocks(this.body, (el, parent) => { this.parents.set(el, parent); });
+    if (this.hfActive) walkBlocks(this.hfActive, (el, parent) => { this.parents.set(el, parent); });
+  }
+
+  // ───────── header / footer ─────────
+
+  /**
+   * relId header/footer `kind` ("hdr"/"ftr") jenis `type` untuk section `secIdx`; membuat part + referensi bila belum ada
+   * (section tanpa referensi sendiri mewarisi dari section sebelumnya, jadi menyunting yang diwarisi mengubah bagian bersama).
+   */
+  ensureHF(secIdx: number, kind: "hdr" | "ftr", type: "default" | "first" | "even"): string | undefined {
+    const s = this.sections()[secIdx];
+    if (!s) return undefined;
+    const refName = kind === "hdr" ? "headerReference" : "footerReference";
+    const own = els(s.sectPr, refName).find(r => (attr(r, "type") ?? "default") === type);
+    if (own) return attr(own, "id");
+    const inherited = (kind === "hdr" ? s.hdrRefs : s.ftrRefs)[type];
+    if (inherited) return inherited;
+    const relId = kind === "hdr" ? addHeader(this.doc, "", type) : addFooter(this.doc, "", type);
+    const ref = mk(refName, { type, "r:id": relId });
+    const lastRef = [...s.sectPr.children].reverse().findIndex(c => isEl(c) && (c.name.local === "headerReference" || c.name.local === "footerReference"));
+    s.sectPr.children.splice(lastRef < 0 ? 0 : s.sectPr.children.length - lastRef, 0, ref);
+    s.sectPr.selfClosing = false;
+    this.hfCache.delete(relId);
+    const root = this.hf(relId);
+    if (root && !els(root, "p").length) { root.children.push(mk("p")); root.selfClosing = false; }
+    this.touchHF(relId);
+    return relId;
+  }
+  /** Lepas referensi header/footer milik section (part-nya dibiarkan). Mengembalikan true bila ada yang dilepas. */
+  removeHF(secIdx: number, kind: "hdr" | "ftr", type: "default" | "first" | "even"): boolean {
+    const s = this.sections()[secIdx];
+    if (!s) return false;
+    const refName = kind === "hdr" ? "headerReference" : "footerReference";
+    const own = els(s.sectPr, refName).find(r => (attr(r, "type") ?? "default") === type);
+    if (!own) return false;
+    removeNode(s.sectPr, own);
+    this.hfRev++;
+    return true;
+  }
+  /** "Halaman pertama berbeda" untuk section. */
+  setTitlePg(secIdx: number, on: boolean) {
+    const s = this.sections()[secIdx];
+    if (!s) return;
+    setChild(s.sectPr, on ? mk("titlePg") : null, "titlePg");
+    this.hfRev++;
+  }
+  /** "Ganjil & genap berbeda" (pengaturan dokumen, tidak masuk riwayat undo). Mengembalikan false bila dokumen tak punya settings. */
+  setEvenOdd(on: boolean): boolean {
+    const st = this.settings();
+    if (!st) return false;
+    setChild(st, on ? mk("evenAndOddHeaders") : null, "evenAndOddHeaders");
+    this.settingsDirty = true;
+    this.modified = true;
+    this.hfRev++;
+    return true;
+  }
+  settingsDirty = false;
+  /** Penomoran halaman: `start` (null = lanjutkan) dan `fmt` (decimal/upperRoman/lowerRoman/upperLetter/lowerLetter; null = bawaan). */
+  setPageNumbering(secIdx: number, o: { start?: number | null; fmt?: string | null }) {
+    const s = this.sections()[secIdx];
+    if (!s) return;
+    const cur = first(s.sectPr, "pgNumType");
+    const start = o.start === undefined ? num(attr(cur, "start")) : o.start ?? undefined;
+    const fmt = o.fmt === undefined ? attr(cur, "fmt") : o.fmt ?? undefined;
+    setChild(s.sectPr, start === undefined && !fmt ? null : mk("pgNumType", { start, fmt: fmt && fmt !== "decimal" ? fmt : undefined }), "pgNumType");
+    this.hfRev++;
   }
   parentOf(el: XEl): XEl | undefined { return this.parents.get(el); }
   setParent(el: XEl, parent: XEl) { this.parents.set(el, parent); }
@@ -377,6 +452,15 @@ export class DocxBook {
     return serialize(wrap);
   }
   /** Catat keadaan saat ini. `merge` = gabungkan dengan entri terakhir bila label sama (mis. mengetik). */
+  /** Gabungkan semua checkpoint setelah indeks `from` menjadi satu langkah undo (dipakai operasi massal lewat bus). */
+  squashHistory(from: number, label?: string) {
+    const end = this.hist.length - 1;
+    if (end <= from) return;
+    if (label) this.hist[end] = { ...this.hist[end], label };
+    if (end - from > 1) this.hist.splice(from + 1, end - from - 1);
+    this.histIdx = this.hist.length - 1;
+  }
+
   checkpoint(label: string, init = false, merge?: string) {
     const xml = this.snapshot();
     const now = Date.now();
@@ -422,6 +506,11 @@ export class DocxBook {
 
   flush() {
     this.flushHF();
+    if (this.settingsDirty) {
+      const r = this.relsOf(this.doc.partName).find(x => x.type === REL.settings);
+      const pn = r ? this.resolve(this.doc.partName, r.target) : undefined, part = pn ? this.part(pn) : undefined;
+      if (part && this.settingsEl) (part as { data: Uint8Array }).data = new TextEncoder().encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + serialize(this.settingsEl));
+    }
     const b = this.doc.document.body;
     b.blocks = this.body.children.filter(isEl).map(node => ({ kind: "raw" as const, node: node as never }));
     b.extras = [];
