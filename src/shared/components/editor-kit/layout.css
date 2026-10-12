@@ -1,0 +1,74 @@
+/*
+ * Aturan tata letak bersama untuk mode `data-layout` (lihat layout.ts).
+ *   compact  = [data-layout="compact"] atau [data-layout="touch"][data-narrow="true"]
+ *   touch    = [data-layout="touch"]
+ * Akar editor: .dxe-root (DOCX), .pxe-root (PPTX), .xl-root (XLSX), .mgx-root (maxGraph).
+ */
+
+/* ───────── compact: bilah satu baris yang dapat digulir ───────── */
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-top, .pxe-top, .dxe-tabs, .pxe-tabs, .dxe-ribbon, .pxe-ribbon, .xl-toolbar, .mgx-toolbar) {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-top, .pxe-top, .dxe-tabs, .pxe-tabs, .dxe-ribbon, .pxe-ribbon, .xl-toolbar, .mgx-toolbar) > * { flex: none; }
+
+/* panel samping → lembar bawah (menutupi paling banyak 70% tinggi area utama) */
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-side, .pxe-side, .xl-side) {
+  position: absolute; left: 0; right: 0; bottom: 0; top: auto;
+  width: auto !important; max-width: none !important; max-height: 70%;
+  z-index: 40; border: 1px solid var(--dx-border, var(--px-border, var(--xl-border, #d0d5dd)));
+  border-radius: 12px 12px 0 0; box-shadow: 0 -8px 24px rgba(16, 24, 40, .2);
+}
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-side, .pxe-side).left { width: auto; }
+
+/* PPTX: miniatur slide menjadi strip horizontal di atas kanvas (catatan pembicara disembunyikan; tetap lewat api/bus) */
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .pxe-main { flex-direction: column; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .pxe-thumbs {
+  width: auto; height: 112px; flex-direction: row; overflow: auto hidden; padding: 6px 8px;
+  border-right: 0; border-bottom: 1px solid var(--px-border);
+}
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .pxe-thumbs .pxe-th { flex: none; }
+
+/* maxGraph: palet node menjadi strip horizontal di atas kanvas */
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .mgx-body { flex-direction: column; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .mgx-palette {
+  width: auto; height: auto; max-height: 96px; overflow: auto hidden; padding: 6px 8px;
+  border-right: 0; border-bottom: 1px solid var(--mgx-border);
+  display: flex; flex-direction: row; align-items: center; gap: 8px;
+}
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .mgx-palette > * { flex: none; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .mgx-palette-title { display: none; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .mgx-palette-grid { display: flex; flex-direction: row; gap: 6px; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .mgx-palette-group { margin: 0 4px 0 8px; }
+
+/* pita: satu baris, tanpa keterangan grup agar kanvas mendapat tinggi */
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-rg, .pxe-rg) > .cap { display: none; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-rg, .pxe-rg) > .row { flex-wrap: nowrap; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-ribbon, .pxe-ribbon) { min-height: 0; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .pxe-notes { display: none; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .pxe-thumbs { height: 88px; padding: 4px 6px; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) .pxe-thumbs .pxe-th { zoom: 0.58; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-status, .pxe-status, .xl-status) input[type="range"] { display: none; }
+
+/* bilah status ringkas: satu baris yang dapat digulir */
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-status, .pxe-status, .xl-status) { gap: 2px 8px; font-size: 11px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-status, .pxe-status, .xl-status) > * { flex: none; }
+:is([data-layout="compact"], [data-layout="touch"][data-narrow="true"]) :is(.dxe-status, .pxe-status, .xl-status) input[type="range"] { width: 72px; }
+
+/* ───────── touch: target sentuh besar ───────── */
+[data-layout="touch"] :is(button, select, summary, [role="button"], [role="tab"]) { min-height: 40px; min-width: 40px; }
+[data-layout="touch"] input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]) { min-height: 40px; }
+[data-layout="touch"] :is(.dxe-btn, .pxe-btn, .xl-btn, .mgx-btn) { padding-inline: 12px; }
+[data-layout="touch"] :is(.dxe-tab, .pxe-tab, .xl-tab) { padding-block: 10px; }
+[data-layout="touch"] input[type="range"] { min-height: 32px; }
+/* gagang seleksi/ubah ukuran lebih besar */
+[data-layout="touch"] :is(.px-handle, .dx-handle, .dx-img-handle, .xl-fill-handle, .xl-handle) { transform: scale(1.8); }
+/* menu & popover tidak keluar dari layar */
+[data-layout="touch"] :is(.dxe-menu, .pxe-menu, .xl-menu, .mgx-menu, .ck-pop, .lp-panel) { max-width: calc(100vw - 16px); max-height: 70vh; overflow: auto; }
+
+/* ───────── umum ───────── */
+:is([data-layout="compact"], [data-layout="touch"]) { touch-action: manipulation; } /* hilangkan jeda ketuk-ganda 300ms */

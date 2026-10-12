@@ -444,3 +444,72 @@ describe("XlsxPreview — ganti nilai numerik & nama sheet", () => {
     expect(api.getCell("Data!C1")!.raw).toBe("=Lain!A1+1");
   });
 });
+
+
+describe("XlsxPreview — layout (mode tata letak)", () => {
+  it("prop layout → data-layout; layout.get/set lewat bus & API; event layout; nilai tak valid ditolak", async () => {
+    const { api, root } = await mount({ layout: "touch" });
+    expect(root.dataset.layout).toBe("touch");
+    expect(api.layout.get().mode).toBe("touch");
+    expect(api.layout.get().setting).toBe("touch");
+    const ev = vi.fn();
+    api.on("layout", ev);
+    expect(await api.run("layout.set", "compact")).toBe(true);
+    expect(root.dataset.layout).toBe("compact");
+    expect(ev.mock.calls.at(-1)![0]).toMatchObject({ mode: "compact", setting: "compact" });
+    expect((await dispatchCommand<{ mode: string }>(root, "xlsx-preview", "layout.get")).mode).toBe("compact");
+    expect(await api.run("layout.set", "phone")).toBe(false);
+    expect(root.dataset.layout).toBe("compact");
+    expect(api.layout.set("auto")).toBe(true);
+    expect(api.layout.get().setting).toBe("auto");
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["layout.get", "layout.set"]));
+  });
+
+  it("tanpa prop: auto → desktop di lingkungan uji (lebar 0, pointer halus)", async () => {
+    const { root } = await mount();
+    expect(root.dataset.layout).toBe("desktop");
+  });
+});
+
+
+describe("XlsxPreview — drop (jalur bersama)", () => {
+  // jsdom belum punya Blob.arrayBuffer
+  if (!File.prototype.arrayBuffer) File.prototype.arrayBuffer = function (this: Blob) { return new Promise<ArrayBuffer>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result as ArrayBuffer); fr.onerror = () => rej(fr.error); fr.readAsArrayBuffer(this); }); };
+  const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const png = () => new File([Uint8Array.from(atob(PNG), c => c.charCodeAt(0))], "p.png", { type: "image/png" });
+
+  it("gambar di sel aktif, teks TSV diisikan seperti tempel, url, berkas xlsx dibuka; saringan & event", async () => {
+    const { api } = await mount();
+    const ev = vi.fn();
+    api.on("drop", ev);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["drop.handle", "drop.accept"]));
+    const b = api.getBook()!;
+    const n0 = b.drawingsOf(b.worksheetAt(0)!).length;
+    expect((await api.run<{ handled: unknown[] }>("drop.handle", { files: [png()] })).handled).toHaveLength(1);
+    expect(b.drawingsOf(b.worksheetAt(0)!).length).toBe(n0 + 1);
+    api.select("D5");
+    expect((await api.drop.handle({ text: "a\tb\n1\t2" })).handled).toHaveLength(1);
+    expect([api.getCell("D5")!.text, api.getCell("E5")!.text, api.getCell("D6")!.text, api.getCell("E6")!.text]).toEqual(["a", "b", "1", "2"]);
+    api.select("G1");
+    expect((await api.drop.handle({ url: "https://example.com/drop" })).handled).toHaveLength(1);
+    expect(api.getCell("G1")!.text).toBe("https://example.com/drop");
+    expect(ev).toHaveBeenCalledTimes(3);
+    const pdf = new File(["%PDF"], "a.pdf", { type: "application/pdf" });
+    expect((await api.drop.handle({ files: [pdf] })).rejected[0]).toMatchObject({ reason: "not-accepted" });
+    api.drop.setAccept(["office"]);
+    const loaded = api.events.wait("load", 20000);
+    expect((await api.drop.handle({ files: [new File([minimalXlsx() as BlobPart], "lain.xlsx")] })).handled).toHaveLength(1);
+    await loaded;
+  });
+
+  it("before membatalkan, readonly menolak, drop={false} menonaktifkan", async () => {
+    const a = await mount({ drop: { before: () => false } });
+    expect((await a.api.drop.handle({ text: "x" })).cancelled).toBe(true);
+    unmount?.(); document.body.innerHTML = "";
+    const b = await mount({ readonly: true });
+    expect((await b.api.drop.handle({ text: "x" })).rejected[0]).toMatchObject({ reason: "readonly" });
+    unmount?.(); document.body.innerHTML = "";
+    const c = await mount({ drop: false });
+    expect(c.api.drop.accept()).toEqual([]);
+  });
+});

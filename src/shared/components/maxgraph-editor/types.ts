@@ -5,6 +5,8 @@ import type { FindMatch, FindResult, FindSpec, NavEvent, OfficeNavEvents, Replac
 import type { LinkItem, OfficeLinkEvents } from "../editor-kit/hyperlink";
 import type { RulerKit, RulerEventMap } from "../editor-kit/ruler-kit";
 import type { RulerUnit } from "../editor-kit/ruler-core";
+import type { LayoutInfo, LayoutSetting } from "../editor-kit/layout";
+import type { DropConfig, DropKind, DropReport, OfficeDropEvents } from "../editor-kit/drop";
 import type { FormatProps, FormatReport, FormatSpec, OfficeFormatEvents, OfficeStructureEvents } from "../editor-kit/format";
 import type { CellPatch, CellSummary, MaxgraphFormatTarget } from "./maxgraph-format";
 import type { DrawioFormat, DrawioImportReport, DrawioPage } from "./drawio";
@@ -89,7 +91,9 @@ export type MaxgraphNavTarget =
     | { kind: "all" }
     | { kind: "point"; x: number; y: number };
 
-export interface MaxgraphEventMap extends OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, RulerEventMap {
+export interface MaxgraphEventMap extends OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, OfficeDropEvents, RulerEventMap {
+    /** Mode tata letak UI berubah (`desktop` | `compact` | `touch`). Nama `layout` sudah dipakai tata letak otomatis diagram. */
+    "ui-layout": LayoutInfo;
     ready: { api: MaxgraphNodeEditorApi };
     /** Segera setelah model berubah. */
     "model-change": { changes: number };
@@ -274,6 +278,14 @@ export interface MaxgraphNodeEditorApi {
     replaceKinds(): string[];
     /** Penggaris (px diagram pada zoom 100%) dan garis bantu — referensi visual, tidak menempelkan sel. */
     readonly ruler: RulerKit;
+    /** Mode tata letak yang berlaku (`desktop` | `compact` | `touch`) dan pengaturannya. */
+    readonly uiLayout: { get(): LayoutInfo; set(setting: LayoutSetting): boolean };
+    /** Jalur drop bersama: `handle` menjalankan jalur yang sama dengan drop DOM; `accept`/`setAccept` jenis yang diterima. */
+    readonly drop: {
+        handle(input: { files?: File[]; text?: string; url?: string; x?: number; y?: number }): Promise<DropReport>;
+        accept(): DropKind[];
+        setAccept(list: DropKind[]): boolean;
+    };
     /** Format umum + khusus maxGraph (`rounded`, `shadow`, `dashed`, `startArrow`, `endArrow`, `edgeStyle`, `curved`, `rotation`, `bounds`, `label`). Alfa native (`fillOpacity`/`strokeOpacity`/`textOpacity`). Satu undo. */
     readonly format: {
         keys(): string[];
@@ -327,6 +339,13 @@ export interface SharedMaxgraphNodeEditorProps {
     ruler?: boolean;
     /** Satuan penggaris. Default "px" (satuan diagram). */
     rulerUnit?: RulerUnit;
+    /** Mode tata letak: `auto` (default) | `desktop` | `compact` | `touch`. Dipasang sebagai `data-layout` pada akar. */
+    layout?: LayoutSetting;
+    /**
+     * Drop eksternal. `false` = nonaktif. Default menerima `image` (simpul gambar), `office` (.drawio / XML maxGraph / pustaka bentuk / SVG → diimpor),
+     * `text` dan `url` (simpul berlabel). Seret palet node tetap berjalan seperti biasa.
+     */
+    drop?: boolean | DropConfig;
     /** Grid latar & snap. Default true. */
     grid?: boolean;
     gridSize?: number;

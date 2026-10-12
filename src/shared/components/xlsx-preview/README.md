@@ -127,3 +127,10 @@ Lihat `editor-kit/README.md` untuk kontrak umum. Khusus XLSX:
 - Ganti baru: `number` (nilai numerik dicocokkan sebagai teks angka mentah; hasil non-numerik menjadi teks) dan `name` (nama sheet; rumus ikut diperbarui; bentrok dilewati). Keduanya hanya dicari bila diminta lewat `kinds`.
 - Belum: sisip/hapus baris & kolom (tidak ada penyesuaian referensi rumus di library).
 
+### Mode tata letak
+
+Prop `layout="auto|desktop|compact|touch"`, `api.layout.get()/set()`, perintah `layout.get`/`layout.set`; lihat `editor-kit/README.md` ("Mode tata letak").
+
+### Drop eksternal
+
+Prop `drop`, `api.drop.handle/accept/setAccept`, perintah `drop.handle` / `drop.accept`, event `drop`. Gambar, berkas format editor, teks, dan tautan ditangani; lihat tabel di `editor-kit/README.md` ("Drop eksternal").

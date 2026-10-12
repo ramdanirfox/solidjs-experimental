@@ -9,14 +9,15 @@ import * as P from "@office-kit/pptx";
 import { PptxDeck, PptxLoadError } from "./pptx-model";
 import { PptxView, PPTX_FORMAT_KEYS, type FindHit, type PptxFormatTarget, type PptxNavTarget, type PxSelInfo, type Tool } from "./pptx-view";
 import type { FormatProps, FormatReport, FormatSpec, OfficeFormatEvents, OfficeStructureEvents } from "../editor-kit/format";
-import { createSampleDeck } from "./pptx-sample";
 import { createI18n, type Lang } from "./pptx-i18n";
 import { hexDump, isCfb, isZip, readCfb, readVba, streamBytes, type CfbInfo, type VbaInfo } from "../office-shared/ole-core";
-import { formatBytes } from "../docx-editor/docx-util";
+import { formatBytes } from "../office-shared/bytes";
 import { listPptxOle, pptxOleBytes, type PptxOle } from "./pptx-ole";
 import { createEventBus, type EditorEventBus } from "../editor-kit/events";
 import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
 import { RulerKit, type RulerEventMap } from "../editor-kit/ruler-kit";
+import { createLayoutController, type LayoutController, type LayoutInfo, type LayoutSetting, type OfficeLayoutEvents } from "../editor-kit/layout";
+import { createDropController, type DropConfig, type DropController, type DropKind, type OfficeDropEvents } from "../editor-kit/drop";
 import { ColorField } from "../editor-kit/ColorField";
 import { LinkPanel, LINK_LABELS_EN, LINK_LABELS_ID } from "../editor-kit/LinkPanel";
 import type { FindMatch, FindResult, FindSpec, NavEvent, OfficeNavEvents, ReplaceReport, ReplaceSpec } from "../editor-kit/find-replace";
@@ -28,7 +29,7 @@ import { prepareOle } from "../office-shared/ole-embed";
 import "./pptx-editor.css";
 
 /** Event yang dipancarkan editor PPTX (bus: `api.events`; DOM: CustomEvent `pptx-editor:<tipe>` pada elemen akar). */
-export interface PptxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, RulerEventMap {
+export interface PptxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, OfficeLayoutEvents, OfficeDropEvents, RulerEventMap {
   ready: { api: PptxEditorApi };
   selection: { info: PxSelInfo };
   /** Slide aktif berpindah. */
@@ -114,6 +115,14 @@ export interface PptxEditorApi {
   getZoom(): number;
   /** Penggaris (satuan px slide 1280×720), garis bantu yang menjadi target snapping, dan alat ukur. */
   readonly ruler: RulerKit;
+  /** Mode tata letak yang berlaku (`desktop` | `compact` | `touch`) dan pengaturannya. */
+  readonly layout: { get(): LayoutInfo; set(setting: LayoutSetting): boolean };
+  /** Jalur drop bersama: `handle` menjalankan jalur yang sama dengan drop DOM; `accept`/`setAccept` jenis yang diterima. */
+  readonly drop: {
+    handle(input: { files?: File[]; text?: string; url?: string; x?: number; y?: number }): Promise<import("../editor-kit/drop").DropReport>;
+    accept(): DropKind[];
+    setAccept(list: DropKind[]): boolean;
+  };
   readonly ole: {
     list(): PptxOle[];
     /** Sisipkan berkas apa pun sebagai objek OLE di slide aktif (atau `opts.slide`). */
@@ -155,6 +164,16 @@ export interface PptxEditorProps {
   ruler?: boolean;
   /** Satuan penggaris. Default "cm". */
   rulerUnit?: RulerUnit;
+  /**
+   * Mode tata letak: `auto` (default; sentuh bila pointer kasar, ringkas bila lebar editor sempit), atau paksa `desktop` | `compact` | `touch`.
+   * Dipasang sebagai `data-layout` pada akar; bisa diubah saat berjalan lewat prop, `api.layout.set` atau perintah `layout.set`.
+   */
+  layout?: LayoutSetting;
+  /**
+   * Drop eksternal (berkas, teks, tautan). `false` = nonaktif. `accept` default `["image","office","text","url"]` (tambahkan `"file"` agar berkas
+   * sembarang disisipkan sebagai objek OLE), `maxSize` byte, `before(info)` dapat membatalkan (`false`). Lihat `editor-kit/README.md`.
+   */
+  drop?: boolean | DropConfig;
 }
 
 const ICONS: Record<string, string> = {
@@ -234,6 +253,8 @@ export default function PptxEditor(props: PptxEditorProps) {
   let oleUpdInput!: HTMLInputElement;
   let oleTarget: string | null = null;
   let ruler: RulerKit | undefined;
+  let layoutCtl: LayoutController | undefined;
+  let dropCtl: DropController | undefined;
   let api: PptxEditorApi | undefined;
   let loadSource: PptxEditorEventMap["load"]["source"] = "api";
   const ownBus = !props.bus;
@@ -396,7 +417,7 @@ export default function PptxEditor(props: PptxEditorProps) {
     if (!confirmDiscard()) return;
     setBusy("busy.sample");
     loadSource = "sample";
-    try { attach(await createSampleDeck(lang())); } catch (e) { setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: "parse", name: "sample" }); setBusy(null); }
+    try { attach(await (await import("./pptx-sample")).createSampleDeck(lang())); } catch (e) { setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: "parse", name: "sample" }); setBusy(null); }
   };
   const newBlank = async () => {
     if (!confirmDiscard()) return;
@@ -661,6 +682,12 @@ export default function PptxEditor(props: PptxEditorProps) {
     },
     setZoom: z => setZoom(z), getZoom: () => zoom(),
     ruler: ruler!,
+    drop: {
+      handle: input => dropCtl?.handle(input) ?? Promise.resolve({ handled: [], rejected: [], cancelled: false }),
+      accept: () => dropCtl?.accept() ?? [],
+      setAccept: l => !!dropCtl?.setAccept(l),
+    },
+    layout: { get: () => layoutCtl?.info() ?? { setting: props.layout ?? "auto", mode: "desktop", width: 0, coarse: false, narrow: false }, set: s => !!layoutCtl?.set(s) },
     ole: {
       list: () => oleItems(), insert: oleInsert, update: oleUpdate, resize: oleResize,
       getBytes: id => { const d = deck(); if (!d) return undefined; try { const { slide, shape } = parseOleId(id); return pptxOleBytes(d.pres, slide, shape)?.data; } catch { return undefined; } },
@@ -691,6 +718,8 @@ export default function PptxEditor(props: PptxEditorProps) {
       "ole.list": () => a.ole.list(), "ole.insert": (f: FileInput, o?: object) => a.ole.insert(f, o),
       "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o),
       "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
+      "drop.handle": (i: Parameters<typeof a.drop.handle>[0]) => a.drop.handle(i), "drop.accept": (l?: DropKind[]) => (l ? a.drop.setAccept(l) : a.drop.accept()),
+      "layout.get": () => a.layout.get(), "layout.set": (s: LayoutSetting) => a.layout.set(s),
       "ruler.show": () => a.ruler.setVisible(true), "ruler.hide": () => a.ruler.setVisible(false), "ruler.toggle": () => a.ruler.toggle(),
       "ruler.setUnit": (u: RulerUnit) => a.ruler.setUnit(u), "ruler.addGuide": (axis: "x" | "y", pos: number) => a.ruler.addGuide(axis, pos),
       "ruler.removeGuide": (id: string) => a.ruler.removeGuide(id), "ruler.clearGuides": () => a.ruler.clearGuides(), "ruler.getGuides": () => a.ruler.getGuides(),
@@ -702,6 +731,25 @@ export default function PptxEditor(props: PptxEditorProps) {
   onMount(async () => {
     view = new PptxView(hostEl, hooks());
     view.readonly = ro();
+    layoutCtl = createLayoutController(rootEl, { setting: props.layout, onChange: i => emit("layout", i) });
+    onCleanup(() => layoutCtl?.destroy());
+    createEffect(() => { const s = props.layout; if (s !== undefined) layoutCtl?.set(s); });
+    if (props.drop !== false) {
+      const dcfg: DropConfig = typeof props.drop === "object" ? props.drop : {};
+      dropCtl = createDropController(rootEl, {
+        accept: dcfg.accept, maxSize: dcfg.maxSize, before: dcfg.before, officeExt: /\.(pptx|pptm|potx)$/i,
+        readonly: ro, onState: setDragOver, onReport: (info, report) => emit("drop", { info, report }),
+        ignore: dt => dt.types.includes("text/x-slide"),
+        handlers: {
+          image: (it, info) => view?.insertImage(it.file!, view.clientToSlide(info.x, info.y)),
+          office: it => { void openFile(it.file); },
+          text: (it, info) => { const q = view?.clientToSlide(info.x, info.y); return view?.shapeAdd({ type: "textbox", text: it.text!, ...(q ? { x: q.x - 180, y: q.y - 30 } : {}) }) !== undefined; },
+          url: (it, info) => { const q = view?.clientToSlide(info.x, info.y); return view?.shapeAdd({ type: "textbox", text: it.text!, ...(q ? { x: q.x - 180, y: q.y - 30 } : {}) }) !== undefined; },
+          file: async (it, info) => { const q = view?.clientToSlide(info.x, info.y); return !!(await api?.ole.insert(it.file!, q ? { at: { x: q.x, y: q.y } } : undefined)); },
+        },
+      });
+      onCleanup(() => dropCtl?.destroy());
+    }
     ruler = new RulerKit({
       frame: frameEl, unit: rulerUnit(), visible: rulerOn(), scrollEl: hostEl, getGeometry: rulerGeometry, emit: onRulerEvent,
       labels: { corner: t("ruler.corner"), removeGuide: t("ruler.removeGuide") },
@@ -1400,9 +1448,7 @@ export default function PptxEditor(props: PptxEditorProps) {
   return (
     <div ref={rootEl} class={`pxe-root ${props.class ?? ""}`} classList={{ dark: dark(), "pxe-fs": cssFs() }} style={{ height: props.height ?? "78vh" }} tabIndex={-1}
       onKeyDown={onRootKey}
-      onDragOver={e => { if (e.dataTransfer?.types.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
-      onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false); }}
-      onDrop={() => setDragOver(false)}>
+      >
       <input ref={fileInput} type="file" hidden accept=".pptx,.pptm,.potx,.potm,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={e => { void openFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
       <input ref={oleInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleInsertUi(f); }} />
       <input ref={oleUpdInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleUpdateUi(f); }} />

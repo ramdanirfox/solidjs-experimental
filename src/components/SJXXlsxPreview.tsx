@@ -1,4 +1,4 @@
-import XlsxPreview, { type XlsxPreviewProps } from "~/shared/components/xlsx-preview/XlsxPreview";
+import XlsxPreview, { type XlsxPreviewProps } from "~/shared/components/xlsx-preview";
 
 export type ISJXXlsxPreview = XlsxPreviewProps;
 

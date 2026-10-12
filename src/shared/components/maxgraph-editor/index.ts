@@ -12,3 +12,5 @@ export type { ShapeImportReport, ShapeLibrary, ShapeLibraryKind, ShapeSpec } fro
 export { createEventBus, dispatchCommand } from "../editor-kit/events";
 export type { EditorEventBus } from "../editor-kit/events";
 export type * from "./types";
+export { MAXGRAPH_FORMAT_KEYS } from "./maxgraph-format";
+export type { CellPatch, CellSummary, MaxgraphFormatTarget } from "./maxgraph-format";

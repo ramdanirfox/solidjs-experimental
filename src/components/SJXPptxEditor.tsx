@@ -1,4 +1,4 @@
-import PptxEditor, { type PptxEditorProps } from "~/shared/components/pptx-editor/PptxEditor";
+import PptxEditor, { type PptxEditorProps } from "~/shared/components/pptx-editor";
 
 export type ISJXPptxEditor = PptxEditorProps;
 

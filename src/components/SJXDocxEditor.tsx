@@ -1,4 +1,4 @@
-import DocxEditor, { type DocxEditorProps } from "~/shared/components/docx-editor/DocxEditor";
+import DocxEditor, { type DocxEditorProps } from "~/shared/components/docx-editor";
 
 export type ISJXDocxEditor = DocxEditorProps;
 

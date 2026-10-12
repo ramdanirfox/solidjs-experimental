@@ -3,38 +3,61 @@
  * (ketik, Enter, hapus, tempel), format, tabel, gambar, format painter, pencarian, dan riwayat undo/redo.
  * UI (toolbar, panel) berada di DocxEditor.tsx dan hanya memanggil metode kelas ini.
  */
-import { attr, cloneEl, descendAll, els, first, insertAfter, isEl, mk, removeNode, serialize, setAttr, val, type XEl } from "./docx-xml";
-import { addStyle } from "@office-kit/docx";
-import { DEFAULT_TOC, buildTocParagraphs, buildTocTitle, ensureTocStyles, findTocs, removeTocField, tocHeadings, wrapTocSdt, type TocField, type TocOptions } from "./docx-toc";
+import { attr, cloneEl, els, first, isEl, mk, removeNode, val, type XEl } from "./docx-xml";
+
+
+import { ensureTocStyles } from "./docx-toc";
+
 import { DocxBook, walkBlocks, type Section } from "./docx-model";
-import {
-  Registry, condForCell, condForParagraph, fillBlocks, fillParagraph, refreshNumbering, renderParagraph, renderTable, type RenderCtx,
-} from "./docx-render";
+
+import { Registry, condForParagraph, fillBlocks, fillParagraph, refreshNumbering, renderParagraph, renderTable, type RenderCtx } from "./docx-render";
+
 import { Paginator, geomOf } from "./docx-paginate";
-import { domFlatText, domOffsetToFlat, flatToDomPos, rangeFromFlat } from "./docx-dom";
-import {
-  applyMarkPatch, applyParaPatch, applyRunPatch, deleteRange, flatLength, flatText, insertRunAt, insertText, mergeParagraphs, normalize, paragraphNum, replaceRange, runProps, runsInRange, splitParagraph, units,
-  type PPatch, type RunPatch,
-} from "./docx-text";
-import {
-  applyFormat, captureFormat, changeIndent, clearFormatRange, deleteBlock, deleteSpan, extractFragment, insertImageAt, insertLineBreak, insertPageBreak, insertParagraphAfter, insertPlainText, insertTableAfter, linkAt,
-  pasteFragment, toggleList, transformText, unlinkRange, wrapRunsInLink, type FormatClip,
-} from "./docx-ops";
+
+import { domFlatText, domOffsetToFlat, flatToDomPos } from "./docx-dom";
+
+import { applyParaPatch, applyRunPatch, flatLength, flatText, mergeParagraphs, normalize, replaceRange, runsInRange, splitParagraph, units, type RunPatch } from "./docx-text";
+
+import { deleteSpan, extractFragment, insertLineBreak, insertPageBreak, insertPlainText, insertTableAfter, linkAt, pasteFragment, toggleList, type FormatClip } from "./docx-ops";
+
 import { buildGrid, type GCell, type Grid, type Rect } from "./docx-table";
+
 import * as T from "./docx-table";
-import { cloneDrawing, maxDocPrId, readDrawing, replaceBlip, setAlt, setCrop, setLockAspect, setPosition, setRotation, setSize, setWrapMode, sniffImageSize, type ImgInfo, type WrapMode } from "./docx-image";
-import { compileFind, replaceInString } from "../editor-kit/find-replace";
-import { findAll, replaceHits, type Hit, type SearchOpts, type SearchResult } from "./docx-search";
-import { insertRunsAt } from "./docx-text";
-import { splitFormatKeys, type FormatProps, type FormatReport } from "../editor-kit/format";
-import { compositeOver } from "../editor-kit/color-util";
-import { LIST_PRESETS, abstractIdOf, createList, listInfo, listOf, type ListInfo, type ListPreset } from "./docx-lists";
-import { DOCX_REPLACE_KINDS, findFills, findFonts, findInHeaderFooter, findInSideParts, findTextColors, listLinks, removeLink, sideRefParagraph, replaceFills, replaceFonts, replaceInHeaderFooter, replaceInHeaderFooterAt, replaceInSideHitAt, replaceInSideParts, replaceLinkUrls, replaceTextColors, setLinkTarget, toLinkItem, type DocxLink } from "./docx-nav";
-import { createFindCursor, isValueKind, makeReport, type FindMatch, type FindResult, type FindSpec, type NavEvent, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
-import type { LinkItem } from "../editor-kit/hyperlink";
-import { mergeP, mergeR, readP, readR, type RProps, type TabStop } from "./docx-style";
-import { createOleRun, findOleObject, oleSize, setOleSize, updateOleObject, type DocxOleRef } from "./docx-ole-edit";
-import type { PreparedOle } from "../office-shared/ole-embed";
+
+import { setSize, type ImgInfo, type WrapMode } from "./docx-image";
+
+
+import { type Hit } from "./docx-search";
+
+
+
+
+import { LIST_PRESETS, type ListPreset } from "./docx-lists";
+
+import { type DocxLink } from "./docx-nav";
+
+import { createFindCursor, type FindMatch } from "../editor-kit/find-replace";
+
+
+import { readP } from "./docx-style";
+
+
+import * as hfMod from "./docx-view-hf";
+import * as formatMod from "./docx-view-format";
+import * as tabsMod from "./docx-view-tabs";
+import * as listsMod from "./docx-view-lists";
+import * as tableMod from "./docx-view-table";
+import * as imageMod from "./docx-view-image";
+import * as oleMod from "./docx-view-ole";
+import * as painterMod from "./docx-view-painter";
+import * as searchMod from "./docx-view-search";
+import * as tocMod from "./docx-view-toc";
+import { PX_PER_TWIP, serializeShort, type Sel2 } from "./docx-view-shared";
+
+
+// Target & kunci format/tabel/navigasi ada di docx-view-shared (agar modul pecahan tidak saling bergantung); diekspor ulang di sini.
+export { DOCX_FORMAT_KEYS, DOCX_TABLE_OPS } from "./docx-view-shared";
+export type { DocxFormatTarget, DocxNavTarget } from "./docx-view-shared";
 
 export interface SelInfo {
   has: boolean;
@@ -81,40 +104,16 @@ export interface ViewHooks {
 
 export interface Point { p: XEl; off: number }
 
-/** Target `goto` untuk editor DOCX. Nomor paragraf/tabel/halaman berbasis 1; indeks judul/daftar isi berbasis 0. */
-/** Target `format.apply` DOCX: seleksi saat ini, seluruh dokumen, rentang paragraf, bagian tabel, atau target navigasi apa pun (cari, judul, penanda, …). */
-export type DocxFormatTarget =
-  | { kind: "selection" }
-  | { kind: "all" }
-  | { kind: "paragraph"; index: number; to?: number; start?: number; end?: number }
-  | { kind: "table"; index: number; row?: number; col?: number; toRow?: number; toCol?: number }
-  | Exclude<DocxNavTarget, { kind: "paragraph" } | { kind: "table" } | { kind: "start" } | { kind: "end" } | { kind: "page" } | { kind: "toc" }>;
-export const DOCX_FORMAT_KEYS = [
-  "bold", "italic", "underline", "strike", "fontFamily", "fontSize", "color", "colorAlpha", "fill", "fillAlpha", "stroke", "align", "valign", "wrap", "link",
-  "highlight", "superscript", "subscript", "caps", "smallCaps", "letterSpacing", "style", "lineSpacing", "spaceBefore", "spaceAfter", "indentLeft", "indentRight", "indentFirst", "keepNext", "pageBreakBefore",
-] as const;
-export const DOCX_TABLE_OPS = [
-  "insertRowAbove", "insertRowBelow", "insertColLeft", "insertColRight", "deleteRows", "deleteCols", "deleteTable", "merge", "split", "shade", "valign", "noWrap", "direction", "cellMargins",
-  "borders", "align", "style", "look", "layout", "width", "rowHeight", "headerRow", "distCols", "caption",
-] as const;
 
-export type DocxNavTarget =
-  | { kind: "page"; page: number }
-  | { kind: "paragraph"; index: number; start?: number; end?: number }
-  | { kind: "heading"; index?: number; text?: string }
-  | { kind: "bookmark"; name: string }
-  | { kind: "table"; index: number; row?: number; col?: number }
-  | { kind: "toc"; index?: number }
-  | { kind: "link"; id: string }
-  | { kind: "search"; query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean; occurrence?: number }
-  | { kind: "match"; index: number }
-  | { kind: "start" }
-  | { kind: "end" };
-interface Sel2 { a: Point; b: Point }
-const searchOpts = (s: { query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean }) => ({ query: s.query, regex: !!s.regex, caseSensitive: !!s.caseSensitive, wholeWord: !!s.wholeWord });
 
-const PX_PER_TWIP = 96 / 1440;
-const MAX_IMG_W = 6.5 * 96;
+
+
+
+
+
+
+
+
 
 export class DocxView {
   book?: DocxBook;
@@ -135,20 +134,20 @@ export class DocxView {
   cellSel: { tbl: XEl; r1: number; c1: number; r2: number; c2: number } | null = null;
   pending: { p: XEl; off: number; patch: RunPatch } | null = null;
   private clip: { text: string; frag: XEl[] } | null = null;
-  private imgClip: XEl | null = null;
+  imgClip: XEl | null = null;
   private composing = false;
-  private normTimer = 0;
+  normTimer = 0;
   private pagTimer = 0;
   private selRaf = 0;
-  private notesEl: HTMLElement | null = null;
-  private fnRefs: RenderCtx["fnRefs"] = [];
+  notesEl: HTMLElement | null = null;
+  fnRefs: RenderCtx["fnRefs"] = [];
   private ro: ResizeObserver;
   private disposers: (() => void)[] = [];
   private dragCell: { tbl: XEl; tc: XEl; r: number; c: number } | null = null;
   private lastSel: SelInfo | null = null;
   private hoverResize: { kind: "col" | "row"; tbl: XEl; index: number; tr?: XEl } | null = null;
   private resizeDrag: { kind: "col" | "row"; tbl: XEl; index: number; tr?: XEl; startX: number; startY: number; guide: HTMLElement; base: number } | null = null;
-  private imgDrag: { mode: "resize" | "move"; handle: string; sx: number; sy: number; w0: number; h0: number; l0: number; t0: number; ratio: number; el: HTMLElement; drawing: XEl } | null = null;
+  imgDrag: { mode: "resize" | "move"; handle: string; sx: number; sy: number; w0: number; h0: number; l0: number; t0: number; ratio: number; el: HTMLElement; drawing: XEl } | null = null;
   findHits: Hit[] = [];
   findCur = -1;
   /** Kait snapping: terima rect klien gambar yang diseret, kembalikan koreksi (px dokumen, tanpa zoom). Diisi editor dari penggaris. */
@@ -222,7 +221,7 @@ export class DocxView {
   setMarks(v: boolean) { this.showMarks = v; this.pagesEl.classList.toggle("dx-marks", v); if (this.book) this.renderAll(); }
   setRevisions(v: boolean) { this.showRevisions = v; if (this.book) this.renderAll(); }
 
-  private contentWOf(sec: number) { const s = this.book!.sections(); return geomOf(s[Math.min(sec, s.length - 1)]).contentW; }
+  contentWOf(sec: number) { const s = this.book!.sections(); return geomOf(s[Math.min(sec, s.length - 1)]).contentW; }
 
   /** Render ulang seluruh dokumen (mempertahankan scroll & seleksi). */
   renderAll(keep: { sel?: ReturnType<DocxView["captureIndexSel"]> } = {}) {
@@ -376,7 +375,7 @@ export class DocxView {
     return !!(da.compareDocumentPosition(db) & Node.DOCUMENT_POSITION_FOLLOWING);
   }
   /** Seleksi terakhir yang valid di dokumen (dipakai saat fokus pindah ke toolbar/panel). */
-  private saved: Sel2 | null = null;
+  saved: Sel2 | null = null;
   selPoints(): (Sel2 & { collapsed: boolean; anchor: Point; focus: Point }) | null {
     const s = window.getSelection();
     let anchor: Point | null = null, focus: Point | null = null, collapsed = true;
@@ -516,8 +515,6 @@ export class DocxView {
     on(P, "dblclick", (e: MouseEvent) => this.onDblClick(e));
     on(P, "contextmenu", (e: MouseEvent) => this.onContext(e));
     on(P, "load", () => this.schedulePaginate(), true);
-    on(this.host, "dragover", (e: DragEvent) => { if (e.dataTransfer?.types.includes("Files")) e.preventDefault(); });
-    on(this.host, "drop", (e: DragEvent) => this.onDrop(e));
     on(document, "selectionchange", () => this.scheduleSelection());
     on(this.host, "scroll", () => this.updateOverlay());
     document.fonts?.ready.then(() => this.schedulePaginate(30));
@@ -584,7 +581,7 @@ export class DocxView {
     fillParagraph(ctx, d, p, condForParagraph(this.book, p), "body");
     this.applyCellSelVisual();
   }
-  private refreshNums() { if (this.book) refreshNumbering(this.makeCtx(300, this.book.doc.partName), p => this.rerenderPara(p)); }
+  refreshNums() { if (this.book) refreshNumbering(this.makeCtx(300, this.book.doc.partName), p => this.rerenderPara(p)); }
 
   private onBeforeInput(e: InputEvent) {
     if (this.readonly) { e.preventDefault(); return; }
@@ -674,7 +671,7 @@ export class DocxView {
 
   // ───────── operasi paragraf ─────────
 
-  private commitStructural(label: string, caret?: Point) {
+  commitStructural(label: string, caret?: Point) {
     this.book!.reindex();
     this.renderAll({ sel: null });
     if (caret) this.setCaret(caret.p, caret.off);
@@ -765,7 +762,7 @@ export class DocxView {
     this.commit("hist.pageBreak"); this.schedulePaginate(30);
   }
 
-  private blockSiblings(parent: XEl) { return parent.children.filter(isEl).filter(c => c.name.local === "p" || c.name.local === "tbl"); }
+  blockSiblings(parent: XEl) { return parent.children.filter(isEl).filter(c => c.name.local === "p" || c.name.local === "tbl"); }
 
   private backspaceStart(p: XEl) {
     const book = this.book!;
@@ -890,24 +887,44 @@ export class DocxView {
     if (text.includes("\n")) this.commitStructural("hist.paste", res); else { this.rerenderPara(pt.p); this.setCaret(res.p, res.off); this.commit("hist.paste"); this.schedulePaginate(); }
   }
 
-  private onDrop(e: DragEvent) {
-    const files = [...(e.dataTransfer?.files ?? [])];
-    if (!files.length) return;
-    e.preventDefault();
-    const f = files[0];
-    if (/\.(docx|docm|dotx|dotm)$/i.test(f.name)) { this.hooks.openFile(f); return; }
-    if (f.type.startsWith("image/") && !this.readonly) {
-      const pos = (document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint?.(e.clientX, e.clientY);
-      const range = pos ? null : document.caretRangeFromPoint?.(e.clientX, e.clientY);
-      const node = pos?.offsetNode ?? range?.startContainer, off = pos?.offset ?? range?.startOffset ?? 0;
-      if (node) { const pt = this.pointOf(node, off); if (pt) this.setCaret(pt.p, pt.off); }
-      void this.insertImageFile(f);
-    } else this.hooks.openFile(f);
+  // ───────── drop (dipanggil kontroler drop bersama) ─────────
+
+  /** Letakkan caret pada titik klien (x, y); false bila titik tidak berada pada paragraf. */
+  placeCaretAtPoint(x: number, y: number): boolean {
+    const pos = (document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint?.(x, y);
+    const range = pos ? null : document.caretRangeFromPoint?.(x, y);
+    const node = pos?.offsetNode ?? range?.startContainer, off = pos?.offset ?? range?.startOffset ?? 0;
+    if (!node) return false;
+    const pt = this.pointOf(node, off);
+    if (!pt) return false;
+    this.setCaret(pt.p, pt.off);
+    return true;
+  }
+  async insertImageAtPoint(f: File, x: number, y: number): Promise<boolean> {
+    if (this.readonly) return false;
+    this.placeCaretAtPoint(x, y);
+    return this.insertImageFile(f);
+  }
+  /** Sisipkan teks polos (baris baru → paragraf) pada titik klien; titik tak valid = di caret saat ini. */
+  insertTextAtPoint(text: string, x: number, y: number): boolean {
+    if (!this.book || this.readonly || !text) return false;
+    this.placeCaretAtPoint(x, y);
+    const s = this.selPoints();
+    if (!s) return false;
+    let pt: Point = { p: s.a.p, off: s.a.off };
+    if (!s.collapsed) { const d = this.deleteSelection(); if (!d) return false; pt = d; }
+    const parent = this.book.parentOf(pt.p);
+    if (!parent) return false;
+    const t = text.replace(/\r\n?/g, "\n");
+    const res = insertPlainText(parent, pt.p, pt.off, t);
+    this.book.reindex();
+    if (t.includes("\n")) this.commitStructural("hist.paste", res); else { this.rerenderPara(pt.p); this.setCaret(res.p, res.off); this.commit("hist.paste"); this.schedulePaginate(); }
+    return true;
   }
 
   // ───────── mouse ─────────
 
-  private cellAt(target: EventTarget | null): { td: HTMLElement; tc: XEl; tbl: XEl; g: Grid; cell: GCell } | null {
+  cellAt(target: EventTarget | null): { td: HTMLElement; tc: XEl; tbl: XEl; g: Grid; cell: GCell } | null {
     const td = (target as HTMLElement | null)?.closest?.("td") as HTMLElement | null;
     if (!td || td.closest(".dx-hdr,.dx-ftr,.dx-notes,.dx-txbx")) return null;
     const tc = this.reg.elOf.get(td);
@@ -1034,655 +1051,108 @@ export class DocxView {
   /** Header/footer yang sedang disunting (satu kotak pada satu halaman). */
   hfEdit: { relId: string; kind: "hdr" | "ftr"; page: number; sec: number } | null = null;
 
-  /** Jenis header/footer yang berlaku untuk halaman `pageNo` (mengikuti `titlePg` dan ganjil/genap). */
-  hfTypeFor(pageNo: number): { sec: number; type: "default" | "first" | "even" } {
-    const pg = [...this.pagesEl.querySelectorAll<HTMLElement>(".dx-page")];
-    const el = pg.find(p => Number(p.dataset.no) === pageNo) ?? pg[0];
-    const sec = Number(el?.dataset.sec ?? 0);
-    const s = this.book!.sections()[sec];
-    const inSec = pg.filter(p => Number(p.dataset.sec) === sec && Number(p.dataset.no) <= pageNo).length;
-    const type = s?.titlePg && inSec === 1 ? "first" : this.book!.evenAndOdd() && pageNo % 2 === 0 ? "even" : "default";
-    return { sec, type };
-  }
-  /** Halaman tempat kursor berada (1 bila tidak ada). */
-  currentPageNo(): number {
-    const s = this.selPoints();
-    const d = s ? this.reg.domOf.get(s.a.p) : undefined;
-    return Number(d?.closest<HTMLElement>(".dx-page")?.dataset.no ?? 1);
-  }
-  /** Masuk mode sunting header/footer pada halaman `pageNo` (default: halaman kursor); membuat header/footer bila belum ada. */
-  editHeaderFooter(kind: "hdr" | "ftr", pageNo = this.currentPageNo()): boolean {
-    const book = this.book;
-    if (!book || this.readonly) return false;
-    if (this.hfEdit) this.exitHF();
-    const { sec, type } = this.hfTypeFor(pageNo);
-    const had = this.hfRelFor(sec, kind, type);
-    const relId = book.ensureHF(sec, kind, type);
-    const root = relId ? book.hf(relId) : undefined;
-    if (!relId || !root) return false;
-    if (!had) this.commit("hist.hf");
-    book.hfActive = root;
-    book.reindex();
-    this.hfEdit = { relId, kind, page: pageNo, sec };
-    this.pagesEl.classList.add("dx-hf-editing");
-    this.imgSel = null; this.cellSel = null; this.pending = null;
-    this.renderAll({ sel: null });
-    this.focusHFStart();
-    this.hooks.changed("hf.enter");
-    return true;
-  }
-  private hfRelFor(sec: number, kind: "hdr" | "ftr", type: "default" | "first" | "even"): string | undefined {
-    const s = this.book!.sections()[sec];
-    return (kind === "hdr" ? s?.hdrRefs : s?.ftrRefs)?.[type];
-  }
-  private focusHFStart() {
-    const box = this.pagesEl.querySelector<HTMLElement>("[data-edit]");
-    const d = box?.querySelector<HTMLElement>(".dx-p");
-    const p = d ? this.reg.elOf.get(d) : undefined;
-    this.bindActiveHF();
-    if (p) this.focusPara(p, 0, true);
-  }
-  /** Pastikan paragraf header/footer terdaftar ke DOM kotak yang dapat disunting (salinan di halaman lain memakai paragraf yang sama). */
-  private bindActiveHF() {
-    if (!this.hfEdit) return;
-    const box = this.pagesEl.querySelector<HTMLElement>("[data-edit]");
-    if (!box) return;
-    for (const d of box.querySelectorAll<HTMLElement>(".dx-p")) { const el = this.reg.elOf.get(d); if (el) this.reg.set(d, el); }
-  }
-  /** Keluar dari mode sunting header/footer dan gambar ulang semua salinannya. */
-  exitHF() {
-    const book = this.book;
-    if (!book || !this.hfEdit) return;
-    clearTimeout(this.normTimer);
-    book.hfActive = undefined;
-    book.reindex();
-    this.hfEdit = null;
-    this.pagesEl.classList.remove("dx-hf-editing");
-    window.getSelection()?.removeAllRanges();
-    this.saved = null; this.pending = null;
-    book.hfRev++;
-    this.paginator.invalidateHF();
-    this.paginate();
-    this.hooks.changed("hf.exit");
-    this.scheduleSelection();
-  }
+  hfTypeFor = hfMod.hfTypeFor;
+  currentPageNo = hfMod.currentPageNo;
+  editHeaderFooter = hfMod.editHeaderFooter;
+  hfRelFor = hfMod.hfRelFor;
+  focusHFStart = hfMod.focusHFStart;
+  bindActiveHF = hfMod.bindActiveHF;
+  exitHF = hfMod.exitHF;
 
-  /** Sisipkan field (halaman, jumlah halaman, tanggal…) di kursor. Hasil cache ditampilkan hingga dirender ulang pada header/footer. */
-  insertField(kind: "PAGE" | "NUMPAGES" | "SECTIONPAGES" | "DATE" | "TIME"): boolean {
-    const s = this.selPoints();
-    if (!this.book || this.readonly || !s) return false;
-    const { p } = s.a;
-    let off = s.a.off;
-    if (!s.collapsed) { const d = this.deleteSelection(); if (!d) return false; off = d.off; }
-    const now = new Date();
-    const cached = kind === "DATE" ? now.toLocaleDateString() : kind === "TIME" ? now.toLocaleTimeString() : "1";
-    const instr = kind === "DATE" ? ' DATE \\@ "dd/MM/yyyy" ' : kind === "TIME" ? ' TIME \\@ "HH:mm" ' : ` ${kind} `;
-    const fc = (t: string) => mk("r", undefined, [mk("fldChar", { fldCharType: t })]);
-    const instrRun = mk("r", undefined, [mk("instrText", { "xml:space": "preserve" }, [{ kind: "text", value: instr }])]);
-    const result = mk("r", undefined, [mk("t", undefined, [{ kind: "text", value: cached }])]);
-    insertRunsAt(p, off, [fc("begin"), instrRun, fc("separate"), result, fc("end")]);
-    normalize(p);
-    this.rerenderPara(p);
-    this.setCaret(p, off + cached.length);
-    this.commit("hist.field");
-    this.schedulePaginate(30);
-    return true;
-  }
+  insertField = hfMod.insertField;
 
-  /** Section aktif (halaman kursor / halaman yang disunting). */
-  currentSection(): number { return this.hfEdit?.sec ?? this.hfTypeFor(this.currentPageNo()).sec; }
-  /** Opsi header/footer untuk section aktif. */
-  hfOptions(): { section: number; sections: number; titlePg: boolean; evenOdd: boolean; pgStart?: number; pgFmt: string; editing: { kind: "hdr" | "ftr"; page: number } | null; has: { hdr: string[]; ftr: string[] } } {
-    const book = this.book!;
-    const secs = book.sections();
-    const sec = Math.min(this.currentSection(), secs.length - 1);
-    const s = secs[sec];
-    return {
-      section: sec, sections: secs.length, titlePg: !!s?.titlePg, evenOdd: book.evenAndOdd(), pgStart: s?.pgNum?.start, pgFmt: s?.pgNum?.fmt ?? "decimal",
-      editing: this.hfEdit ? { kind: this.hfEdit.kind, page: this.hfEdit.page } : null,
-      has: { hdr: Object.keys(s?.hdrRefs ?? {}), ftr: Object.keys(s?.ftrRefs ?? {}) },
-    };
-  }
-  setDifferentFirstPage(on: boolean) {
-    if (!this.book || this.readonly) return;
-    const sec = this.currentSection();
-    this.exitHF();
-    this.book.setTitlePg(sec, on);
-    this.commit("hist.hf"); this.paginate();
-  }
-  setDifferentOddEven(on: boolean): boolean {
-    if (!this.book || this.readonly) return false;
-    this.exitHF();
-    const ok = this.book.setEvenOdd(on);
-    if (ok) { this.commit("hist.hf"); this.paginate(); }
-    return ok;
-  }
-  /** Penomoran halaman section aktif (atau semua). `start: null` = lanjutkan; `fmt` = decimal/upperRoman/lowerRoman/upperLetter/lowerLetter. */
-  setPageNumbering(o: { start?: number | null; fmt?: string | null }, allSections = false) {
-    if (!this.book || this.readonly) return;
-    const secs = this.book.sections();
-    const target = allSections ? secs.map((_, i) => i) : [this.currentSection()];
-    this.exitHF();
-    for (const i of target) this.book.setPageNumbering(i, o);
-    this.commit("hist.pgnum"); this.paginate();
-    if (this.tocList().length) this.updateToc();
-  }
-  /** Hapus header/footer jenis `type` pada section aktif. */
-  removeHeaderFooter(kind: "hdr" | "ftr", type: "default" | "first" | "even" = "default"): boolean {
-    if (!this.book || this.readonly) return false;
-    const sec = this.currentSection();
-    this.exitHF();
-    const ok = this.book.removeHF(sec, kind, type);
-    if (ok) { this.commit("hist.hf"); this.paginator.invalidateHF(); this.paginate(); }
-    return ok;
-  }
-  openLink(href: string) {
-    if (!href) return;
-    if (href.startsWith("#")) { this.scrollToBookmark(href.slice(1)); return; }
-    const i = href.indexOf("#");
-    if (/^(https?:|mailto:|tel:|ftp:)/i.test(href)) window.open(i > 0 && !/^https?:\/\/[^#]*#/.test(href) ? href : href, "_blank", "noopener,noreferrer");
-    else this.hooks.toast("toast.linkBlocked", { href });
-  }
-  scrollToBookmark(name: string) {
-    const el = this.pagesEl.querySelector<HTMLElement>(`[data-bm="${CSS.escape(name)}"]`);
-    if (el) el.scrollIntoView({ block: "center" });
-    else this.hooks.toast("toast.noBookmark", { name });
-  }
-  private scrollToNote(key: string) {
-    const [kind, id] = key.split(":");
-    const idx = this.fnRefs.findIndex(f => f.kind === kind && f.id === id);
-    const note = this.notesEl?.querySelectorAll(".dx-note")[idx];
-    (note as HTMLElement | undefined)?.scrollIntoView({ block: "center" });
-  }
+  currentSection = hfMod.currentSection;
+  hfOptions = hfMod.hfOptions;
+  setDifferentFirstPage = hfMod.setDifferentFirstPage;
+  setDifferentOddEven = hfMod.setDifferentOddEven;
+  setPageNumbering = hfMod.setPageNumbering;
+  removeHeaderFooter = hfMod.removeHeaderFooter;
+  openLink = hfMod.openLink;
+  scrollToBookmark = hfMod.scrollToBookmark;
+  private scrollToNote = hfMod.scrollToNote;
 
-  private onContext(e: MouseEvent) {
-    if (!this.book) return;
-    const t = e.target as HTMLElement;
-    const img = t.closest<HTMLElement>(".dx-img");
-    if (img) { e.preventDefault(); if (this.imgSel?.el !== img) this.selectImageEl(img); this.hooks.context(e.clientX, e.clientY, "image"); return; }
-    const c = this.cellAt(t);
-    if (c) {
-      if (!this.cellSel) { const pt = this.pointOf(window.getSelection()?.anchorNode ?? null, 0); if (!pt) { const p = ps0(c.tc, this.book); if (p) this.setCaret(p, 0); } }
-      e.preventDefault(); this.hooks.context(e.clientX, e.clientY, "table"); return;
-    }
-    if (!this.readonly) { e.preventDefault(); this.hooks.context(e.clientX, e.clientY, "text"); }
-  }
+  private onContext = hfMod.onContext;
 
   // ───────── format karakter ─────────
 
-  /** Properti run terselesaikan (style paragraf + tabel + style karakter + langsung). */
-  runResolved(p: XEl, run: XEl | undefined): RProps {
-    const book = this.book!;
-    const base = book.styles.paraBase(val(first(p, "pPr"), "pStyle"), condForParagraph(book, p)).r;
-    if (!run) return mergeR(base, readR(first(first(p, "pPr"), "rPr"), book.styles.theme));
-    const rPr = runProps(run);
-    const rs = val(rPr, "rStyle");
-    return mergeR(mergeR(base, rs ? book.styles.charLayer(rs) : undefined), readR(rPr, book.styles.theme));
-  }
-  private runAt(p: XEl, off: number): XEl | undefined {
-    const us = units(p);
-    return (us.find(u => u.start < off && off <= u.end) ?? us.find(u => u.start >= off && u.end > u.start))?.run;
-  }
-  private runsOverlapping(p: XEl, a: number, b: number): XEl[] {
-    const out: XEl[] = [];
-    for (const u of units(p)) if (u.end > a && u.start < b && !out.includes(u.run)) out.push(u.run);
-    return out;
-  }
+  runResolved = hfMod.runResolved;
+  runAt = formatMod.runAt;
+  runsOverlapping = formatMod.runsOverlapping;
 
-  private applyRunCmd(label: string, pick: (all: RProps[], collapsed: boolean) => RunPatch | null) {
-    const sp = this.spans();
-    if (!sp.length || this.readonly || !this.book) return;
-    const collapsed = sp.length === 1 && sp[0].a === sp[0].b;
-    const states: RProps[] = [];
-    for (const s of sp) {
-      if (collapsed) states.push(this.runResolved(s.p, this.runAt(s.p, s.a)));
-      else for (const r of this.runsOverlapping(s.p, s.a, s.b)) states.push(this.runResolved(s.p, r));
-    }
-    if (!states.length) for (const s of sp) states.push(this.runResolved(s.p, undefined));
-    const patch = pick(states, collapsed);
-    if (!patch) return;
-    const sel = this.captureSel();
-    if (collapsed) {
-      const { p, a } = sp[0];
-      if (flatLength(p) === 0) { applyMarkPatch(p, patch); this.rerenderPara(p); }
-      else this.pending = { p, off: a, patch: this.pending && this.pending.p === p && this.pending.off === a ? { ...this.pending.patch, ...patch } : patch };
-      this.restoreSel(sel);
-      this.scheduleSelection();
-      if (flatLength(p) === 0) { this.commit(label); }
-      return;
-    }
-    const touched = new Set<XEl>();
-    for (const s of sp) {
-      if (s.b <= s.a) {
-        // paragraf kosong (mis. sel kosong dalam seleksi sel): tandai paragraf agar teks berikutnya mewarisi format
-        if (flatLength(s.p) === 0) { applyMarkPatch(s.p, patch); touched.add(s.p); }
-        continue;
-      }
-      for (const r of runsInRange(s.p, s.a, s.b)) applyRunPatch(r.run, patch);
-      normalize(s.p);
-      touched.add(s.p);
-    }
-    for (const p of touched) this.rerenderPara(p);
-    this.restoreSel(sel);
-    this.commit(label);
-    this.schedulePaginate();
-    this.scheduleSelection();
-  }
+  applyRunCmd = formatMod.applyRunCmd;
 
-  toggleRun(key: "b" | "i" | "strike" | "caps" | "smallCaps") {
-    const prop: Record<string, keyof RProps> = { b: "b", i: "i", strike: "strike", caps: "caps", smallCaps: "smallCaps" };
-    this.applyRunCmd("hist.format", st => ({ [key]: !st.every(r => r[prop[key]]) }) as RunPatch);
-  }
-  toggleUnderline() { this.applyRunCmd("hist.format", st => ({ u: st.every(r => r.u && r.u !== "none") ? "none" : "single" })); }
-  setUnderline(style: string) { this.applyRunCmd("hist.format", () => ({ u: style })); }
-  setVert(v: "superscript" | "subscript") { this.applyRunCmd("hist.format", st => ({ vert: st.every(r => r.vert === v) ? "baseline" : v })); }
-  setColor(c: string | null) { this.applyRunCmd("hist.color", () => ({ color: c })); }
-  setHighlight(c: string | null) { this.applyRunCmd("hist.color", () => ({ highlight: c })); }
-  setFont(name: string | null) { this.applyRunCmd("hist.font", () => ({ font: name })); }
-  setSize(pt: number | null) { this.applyRunCmd("hist.font", () => ({ sz: pt === null ? null : Math.round(pt * 2) })); }
-  bumpSize(delta: number) { this.applyRunCmd("hist.font", st => { const cur = (st[0]?.sz ?? 22) / 2; const steps = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72]; const i = steps.findIndex(x => x >= cur - 0.01); const nx = delta > 0 ? steps[Math.min(steps.length - 1, (i < 0 ? steps.length - 1 : steps[i] > cur + 0.01 ? i : i + 1))] : steps[Math.max(0, (i < 0 ? steps.length : i) - 1)]; return { sz: Math.round(nx * 2) }; }); }
-  setLetterSpacing(tw: number | null) { this.applyRunCmd("hist.format", () => ({ spacing: tw })); }
+  toggleRun = formatMod.toggleRun;
+  toggleUnderline = formatMod.toggleUnderline;
+  setUnderline = formatMod.setUnderline;
+  setVert = formatMod.setVert;
+  setColor = formatMod.setColor;
+  setHighlight = formatMod.setHighlight;
+  setFont = formatMod.setFont;
+  setSize = formatMod.setSize;
+  bumpSize = formatMod.bumpSize;
+  setLetterSpacing = formatMod.setLetterSpacing;
 
-  clearFormat() {
-    const sp = this.spans();
-    if (!sp.length || this.readonly) return;
-    const sel = this.captureSel();
-    for (const s of sp) {
-      if (s.b > s.a) clearFormatRange(s.p, s.a, s.b);
-      else { applyParaPatch(s.p, { style: null }); clearFormatRange(s.p, 0, flatLength(s.p)); }
-      this.rerenderPara(s.p);
-    }
-    this.restoreSel(sel); this.commit("hist.clear"); this.schedulePaginate();
-  }
+  clearFormat = formatMod.clearFormat;
 
-  changeCase(mode: "upper" | "lower" | "title") {
-    const sp = this.spans();
-    if (!sp.length || this.readonly) return;
-    const fn = mode === "upper" ? (s: string) => s.toUpperCase() : mode === "lower" ? (s: string) => s.toLowerCase() : (s: string) => s.toLowerCase().replace(/(^|[\s(\["'])(\p{L})/gu, (_m, a: string, b: string) => a + b.toUpperCase());
-    const sel = this.captureSel();
-    for (const s of sp) { transformText(s.p, s.b > s.a ? s.a : 0, s.b > s.a ? s.b : flatLength(s.p), fn); this.rerenderPara(s.p); }
-    this.restoreSel(sel); this.commit("hist.format");
-  }
+  changeCase = formatMod.changeCase;
 
   // ───────── format & struktur lewat bus ─────────
 
-  /** Pilih target `format.apply`; false bila tidak ditemukan. */
-  selectFormatTarget(t?: DocxFormatTarget): boolean {
-    const book = this.book;
-    if (!book) return false;
-    if (!t || t.kind === "selection") return !!this.selPoints();
-    const paras = [...book.paragraphs()].map(x => x.p);
-    switch (t.kind) {
-      case "all": {
-        const body = paras.filter(p => book.parentOf(p) === book.body);
-        if (!body.length) return false;
-        this.restoreSel({ a: { p: body[0], off: 0 }, b: { p: body[body.length - 1], off: flatLength(body[body.length - 1]) } });
-        return true;
-      }
-      case "paragraph": {
-        const p1 = paras[Math.round(t.index) - 1], p2 = paras[Math.round(t.to ?? t.index) - 1];
-        if (!p1 || !p2) return false;
-        if (t.to === undefined && t.start !== undefined && t.end !== undefined) { this.selectRange(p1, Math.max(0, t.start), Math.min(flatLength(p1), t.end)); return true; }
-        this.restoreSel({ a: { p: p1, off: 0 }, b: { p: p2, off: flatLength(p2) } });
-        return true;
-      }
-      case "table": {
-        const tbl = book.tables()[Math.round(t.index) - 1];
-        if (!tbl) return false;
-        const g = buildGrid(tbl);
-        const clamp = (v: number | undefined, d: number, max: number) => Math.max(0, Math.min(max, (v === undefined ? d : Math.round(v) - 1)));
-        const r1 = clamp(t.row, 0, g.rows.length - 1), c1 = clamp(t.col, 0, g.ncols - 1);
-        const r2 = clamp(t.toRow ?? (t.row === undefined ? undefined : t.row), g.rows.length - 1, g.rows.length - 1), c2 = clamp(t.toCol ?? (t.col === undefined ? undefined : t.col), g.ncols - 1, g.ncols - 1);
-        const first0 = g.map[r1]?.[c1]?.origin;
-        const p = first0 ? this.firstParaOfCell(first0.el) : undefined;
-        if (!p) return false;
-        this.focusPara(p, 0, false);
-        this.setCellSel(tbl, { r1: Math.min(r1, r2), c1: Math.min(c1, c2), r2: Math.max(r1, r2), c2: Math.max(c1, c2) });
-        return true;
-      }
-      default: return this.gotoTarget(t as DocxNavTarget).ok;
-    }
-  }
+  selectFormatTarget = formatMod.selectFormatTarget;
 
-  /**
-   * `format.apply` — properti umum + khusus DOCX. Run → seleksi teks, paragraf → paragraf terpilih, `fill`/`valign`/`wrap` → sel bila target berupa
-   * sel tabel (selain itu shading paragraf). Seluruh perubahan = satu langkah undo. Alfa dikomposit di atas putih (OOXML tak punya alfa warna teks/shading).
-   */
-  formatApply(props: FormatProps, target?: DocxFormatTarget): FormatReport {
-    const { use, skipped } = splitFormatKeys(props, DOCX_FORMAT_KEYS);
-    const book = this.book;
-    const none = (): FormatReport => ({ applied: [], skipped: [...skipped, ...use], targets: 0 });
-    if (!book || this.readonly || !use.length || !this.selectFormatTarget(target)) return none();
-    const sp0 = this.spans();
-    const targets = new Set(sp0.map(s => s.p)).size;
-    const start = book.histIdx;
-    const ok = new Set<string>();
-    const has = (k: string) => use.includes(k) && props[k] !== undefined;
-    const flat = (c: string | null | undefined, a?: number) => (c ? (a !== undefined && a < 1 ? compositeOver(c, a) : c) : null);
+  formatApply = formatMod.formatApply;
 
-    const rp: RunPatch = {};
-    const set = (keys: string[], fn: () => void) => { fn(); keys.forEach(k => ok.add(k)); };
-    if (has("bold")) set(["bold"], () => { rp.b = !!props.bold; });
-    if (has("italic")) set(["italic"], () => { rp.i = !!props.italic; });
-    if (has("underline")) set(["underline"], () => { rp.u = props.underline ? "single" : "none"; });
-    if (has("strike")) set(["strike"], () => { rp.strike = !!props.strike; });
-    if (has("caps")) set(["caps"], () => { rp.caps = !!props.caps; });
-    if (has("smallCaps")) set(["smallCaps"], () => { rp.smallCaps = !!props.smallCaps; });
-    if (has("fontFamily")) set(["fontFamily"], () => { rp.font = (props.fontFamily as string | null) ?? null; });
-    if (has("fontSize")) set(["fontSize"], () => { rp.sz = props.fontSize === null ? null : Math.round((props.fontSize as number) * 2); });
-    if (has("color")) set(["color", ...(props.colorAlpha !== undefined ? ["colorAlpha"] : [])], () => { rp.color = flat(props.color as string | null, props.colorAlpha as number | undefined); });
-    if (has("highlight")) set(["highlight"], () => { rp.highlight = (props.highlight as string | null) ?? null; });
-    if (has("superscript")) set(["superscript"], () => { rp.vert = props.superscript ? "superscript" : "baseline"; });
-    if (has("subscript")) set(["subscript"], () => { rp.vert = props.subscript ? "subscript" : "baseline"; });
-    if (has("letterSpacing")) set(["letterSpacing"], () => { rp.spacing = props.letterSpacing === null ? null : Math.round((props.letterSpacing as number) * 20); });
-    if (Object.keys(rp).length) this.applyRunCmd("hist.format", () => rp);
+  formatGet = formatMod.formatGet;
 
-    const pp: PPatch = {};
-    if (has("align")) set(["align"], () => { pp.jc = props.align === "justify" ? "both" : (props.align as string); });
-    if (has("style")) set(["style"], () => { pp.style = (props.style as string | null) ?? null; });
-    if (has("lineSpacing")) set(["lineSpacing"], () => { pp.line = Math.round((props.lineSpacing as number) * 240); pp.lineRule = "auto"; });
-    if (has("spaceBefore")) set(["spaceBefore"], () => { pp.before = props.spaceBefore === null ? null : Math.round((props.spaceBefore as number) * 20); });
-    if (has("spaceAfter")) set(["spaceAfter"], () => { pp.after = props.spaceAfter === null ? null : Math.round((props.spaceAfter as number) * 20); });
-    if (has("indentLeft")) set(["indentLeft"], () => { pp.indLeft = props.indentLeft === null ? null : Math.round((props.indentLeft as number) * 20); });
-    if (has("indentRight")) set(["indentRight"], () => { pp.indRight = props.indentRight === null ? null : Math.round((props.indentRight as number) * 20); });
-    if (has("indentFirst")) set(["indentFirst"], () => { pp.indFirst = props.indentFirst === null ? null : Math.round((props.indentFirst as number) * 20); });
-    if (has("keepNext")) set(["keepNext"], () => { pp.keepNext = !!props.keepNext; });
-    if (has("pageBreakBefore")) set(["pageBreakBefore"], () => { pp.pageBreakBefore = !!props.pageBreakBefore; });
-    const inCells = !!this.cellSel;
-    if (has("stroke") && !inCells) set(["stroke"], () => { const s = props.stroke as { color?: string | null } | null; pp.borders = s === null || s?.color === null ? null : { top: s?.color ?? "000000", left: s?.color ?? "000000", bottom: s?.color ?? "000000", right: s?.color ?? "000000" }; });
-    if (has("fill") && !inCells) set(["fill", ...(props.fillAlpha !== undefined ? ["fillAlpha"] : [])], () => { pp.shd = flat(props.fill as string | null, props.fillAlpha as number | undefined); });
-    if (Object.keys(pp).length) this.paraCmd("hist.format", pp);
-
-    if (inCells) {
-      if (has("fill")) { this.table("shade", flat(props.fill as string | null, props.fillAlpha as number | undefined)); ok.add("fill"); if (props.fillAlpha !== undefined) ok.add("fillAlpha"); }
-      if (has("stroke")) { const s = props.stroke as { color?: string | null; width?: number } | null; this.table("borders", { preset: "all", spec: s === null || s?.color === null ? null : { style: "single", sz: Math.max(2, Math.round((s?.width ?? 0.5) * 8)), color: (s?.color ?? "000000").replace("#", "") } }); ok.add("stroke"); }
-    }
-    if (this.tctx()) {
-      if (has("valign")) { this.table("valign", props.valign === "middle" ? "center" : props.valign); ok.add("valign"); }
-      if (has("wrap")) { this.table("noWrap", !props.wrap); ok.add("wrap"); }
-    }
-    if (has("link")) { this.setLink((props.link as string | null) || null); ok.add("link"); }
-    book.squashHistory(start, "hist.format");
-    if (inCells) this.clearCellSel();
-    return { applied: use.filter(k => ok.has(k)), skipped: [...skipped, ...use.filter(k => !ok.has(k))], targets };
-  }
-
-  /** `format.get` — format di titik awal target/seleksi sebagai `FormatProps` umum. */
-  formatGet(target?: DocxFormatTarget): FormatProps | undefined {
-    const book = this.book;
-    if (!book || !this.selectFormatTarget(target)) return undefined;
-    const sp = this.spans();
-    if (!sp.length) return undefined;
-    const p = sp[0].p;
-    const r = this.runResolved(p, this.runAt(p, sp[0].b > sp[0].a ? sp[0].a + 1 : sp[0].a));
-    const pf = readP(first(p, "pPr"), book.styles.theme);
-    return {
-      bold: !!r.b, italic: !!r.i, underline: !!r.u && r.u !== "none", strike: !!r.strike, fontFamily: r.fAscii ?? null, fontSize: r.sz ? r.sz / 2 : null, color: r.color ? `#${r.color.replace("#", "")}` : null,
-      highlight: r.highlight ?? null, align: pf.jc === "both" ? "justify" : (pf.jc as FormatProps["align"]) ?? "left", style: val(first(p, "pPr"), "pStyle") ?? null,
-    };
-  }
-
-  // struktur: paragraf & tabel
-  paragraphCount(): number { return this.book ? [...this.book.paragraphs()].length : 0; }
-  /** Sisipkan paragraf setelah paragraf ke-`after` (1-based; 0 = paling awal; default akhir dokumen). Mengembalikan indeks (1-based) paragraf baru. */
-  insertParagraphAt(o: { text?: string; style?: string; after?: number } = {}): number | undefined {
-    const book = this.book;
-    if (!book || this.readonly) return undefined;
-    const paras = [...book.paragraphs()].map(x => x.p);
-    const afterIdx = o.after === undefined ? paras.length : Math.round(o.after);
-    if (afterIdx < 0 || afterIdx > paras.length) return undefined;
-    let np: XEl;
-    if (afterIdx === 0) {
-      const ref = paras[0];
-      const parent = ref ? book.parentOf(ref) : book.body;
-      if (!parent) return undefined;
-      np = mk("p"); if (o.text) insertText(np, 0, o.text);
-      parent.children.splice(ref ? parent.children.indexOf(ref) : 0, 0, np);
-    } else {
-      const ref = paras[afterIdx - 1];
-      const parent = book.parentOf(ref);
-      if (!parent) return undefined;
-      // setelah paragraf yang mengakhiri tabel/sel tetap berada pada induk yang sama
-      np = insertParagraphAfter(parent, ref, o.text ?? "");
-    }
-    if (o.style) applyParaPatch(np, { style: o.style });
-    this.commitStructural("hist.insert", { p: np, off: flatLength(np) });
-    return [...book.paragraphs()].map(x => x.p).indexOf(np) + 1;
-  }
-  removeParagraphAt(index: number): boolean {
-    const book = this.book;
-    if (!book || this.readonly) return false;
-    const paras = [...book.paragraphs()].map(x => x.p);
-    const p = paras[Math.round(index) - 1];
-    if (!p || paras.length < 2) return false;
-    const parent = book.parentOf(p);
-    if (!parent) return false;
-    const nx = deleteBlock(parent, p);
-    this.commitStructural("hist.delete", nx && nx.name.local === "p" ? { p: nx, off: 0 } : undefined);
-    return true;
-  }
-  insertPageBreakAt(paragraph?: number): boolean {
-    if (this.readonly || !this.book) return false;
-    if (paragraph !== undefined) { const p = [...this.book.paragraphs()].map(x => x.p)[Math.round(paragraph) - 1]; if (!p) return false; this.focusPara(p, flatLength(p), false); }
-    this.insertPageBreakAtCaret();
-    return true;
-  }
-  tableSummaries(): { index: number; rows: number; cols: number; text: string }[] {
-    const book = this.book;
-    if (!book) return [];
-    return book.tables().map((tbl, i) => { const g = buildGrid(tbl); return { index: i + 1, rows: g.rows.length, cols: g.ncols, text: flatText(tbl).slice(0, 40) }; });
-  }
-  /** Sisipkan tabel baru setelah paragraf ke-`after` (default: kursor). Mengembalikan indeks (1-based) tabel baru. */
-  insertTableAfterPara(rows: number, cols: number, after?: number): number | undefined {
-    const book = this.book;
-    if (!book || this.readonly || !(rows >= 1) || !(cols >= 1)) return undefined;
-    const before = new Set(book.tables());
-    if (after !== undefined) { const p = [...book.paragraphs()].map(x => x.p)[Math.round(after) - 1]; if (!p) return undefined; this.focusPara(p, flatLength(p), false); }
-    this.insertTable(Math.round(rows), Math.round(cols));
-    const i = book.tables().findIndex(t => !before.has(t));
-    return i < 0 ? undefined : i + 1;
-  }
-  /** Jalankan operasi tabel (`DOCX_TABLE_OPS`) pada bagian tabel; false bila op/target tidak valid. */
-  tableApply(o: { index: number; row?: number; col?: number; toRow?: number; toCol?: number; op: string; arg?: unknown }): boolean {
-    if (this.readonly || !this.book || !(DOCX_TABLE_OPS as readonly string[]).includes(o.op)) return false;
-    if (!this.selectFormatTarget({ kind: "table", index: o.index, row: o.row, col: o.col, toRow: o.toRow, toCol: o.toCol })) return false;
-    const before = this.book.histIdx;
-    this.table(o.op, o.arg);
-    if (this.book.histIdx !== before) this.book.squashHistory(before);
-    this.clearCellSel();
-    return true;
-  }
+  paragraphCount = formatMod.paragraphCount;
+  insertParagraphAt = formatMod.insertParagraphAt;
+  removeParagraphAt = formatMod.removeParagraphAt;
+  insertPageBreakAt = formatMod.insertPageBreakAt;
+  tableSummaries = formatMod.tableSummaries;
+  insertTableAfterPara = formatMod.insertTableAfterPara;
+  tableApply = formatMod.tableApply;
 
   // ───────── format paragraf ─────────
 
-  private paraCmd(label: string, patch: PPatch | ((p: XEl) => PPatch), after?: () => void) {
-    if (this.readonly || !this.book) return;
-    const sp = this.spans();
-    if (!sp.length) return;
-    const sel = this.captureSel();
-    const seen = new Set<XEl>();
-    for (const s of sp) { if (seen.has(s.p)) continue; seen.add(s.p); applyParaPatch(s.p, typeof patch === "function" ? patch(s.p) : patch); this.rerenderPara(s.p); }
-    after?.();
-    this.refreshNums();
-    this.restoreSel(sel);
-    this.commit(label); this.schedulePaginate();
-    this.scheduleSelection();
-  }
-  setAlign(jc: "left" | "center" | "right" | "both") { this.paraCmd("hist.align", { jc }); }
-  setStyle(id: string | null) { this.paraCmd("hist.style", { style: id }); }
-  setLineSpacing(mult: number) { this.paraCmd("hist.spacing", { line: Math.round(mult * 240), lineRule: "auto" }); }
-  setParaSpacing(beforePt: number | null, afterPt: number | null) { this.paraCmd("hist.spacing", { before: beforePt === null ? null : Math.round(beforePt * 20), after: afterPt === null ? null : Math.round(afterPt * 20) }); }
+  paraCmd = formatMod.paraCmd;
+  setAlign = formatMod.setAlign;
+  setStyle = formatMod.setStyle;
+  setLineSpacing = formatMod.setLineSpacing;
+  setParaSpacing = formatMod.setParaSpacing;
   // ───────── tab stop ─────────
 
-  /** Tab stop efektif paragraf (twip dari margin kiri): style + format langsung, tanpa entri `clear`. */
-  tabStopsOf(p: XEl): TabStop[] {
-    const book = this.book;
-    if (!book) return [];
-    const base = book.styles.paraBase(val(first(p, "pPr"), "pStyle"), condForParagraph(book, p)).p;
-    return (mergeP(base, readP(first(p, "pPr"), book.styles.theme)).tabs ?? []).filter(t => t.val !== "clear");
-  }
-  private styleTabsOf(p: XEl): TabStop[] {
-    const book = this.book!;
-    return book.styles.paraBase(val(first(p, "pPr"), "pStyle"), condForParagraph(book, p)).p.tabs?.filter(t => t.val !== "clear") ?? [];
-  }
-  tabStopsAtCaret(): TabStop[] {
-    const s = this.selPoints();
-    return s ? this.tabStopsOf(s.a.p) : [];
-  }
-  /** Terapkan perubahan daftar tab ke semua paragraf terpilih (`mutate` menerima tab efektif tiap paragraf). */
-  private tabsCmd(label: string, mutate: (cur: TabStop[], p: XEl) => TabStop[]) {
-    this.paraCmd(label, p => {
-      const next = mutate(this.tabStopsOf(p), p).filter(t => t.pos > 0).sort((a, b) => a.pos - b.pos);
-      const styleTabs = this.styleTabsOf(p);
-      const same = (a: TabStop, b: TabStop) => a.pos === b.pos && a.val === b.val && (a.leader ?? "none") === (b.leader ?? "none");
-      const direct = next.filter(t => !styleTabs.some(st => same(st, t)));
-      const clears = styleTabs.filter(st => !next.some(n => n.pos === st.pos)).map(st => ({ pos: st.pos, val: "clear" as const }));
-      const all = [...direct.map(t => ({ pos: t.pos, val: t.val as "left" | "center" | "right" | "decimal" | "bar", leader: t.leader })), ...clears];
-      return { tabs: all.length ? all : null };
-    });
-  }
-  /** Ganti seluruh tab stop paragraf terpilih dengan `list` (twip). */
-  setTabStops(list: TabStop[]) { this.tabsCmd("hist.tabs", () => list.map(t => ({ pos: Math.round(t.pos), val: t.val, leader: t.leader }))); }
-  addTabStop(posTw: number, val: TabStop["val"] = "left", leader?: string) {
-    const pos = Math.round(posTw);
-    this.tabsCmd("hist.tabs", cur => [...cur.filter(t => t.pos !== pos), { pos, val, leader }]);
-  }
-  removeTabStop(posTw: number) { const pos = Math.round(posTw); this.tabsCmd("hist.tabs", cur => cur.filter(t => t.pos !== pos)); }
-  moveTabStop(fromTw: number, toTw: number) {
-    const from = Math.round(fromTw), to = Math.round(toTw);
-    this.tabsCmd("hist.tabs", cur => cur.map(t => (t.pos === from ? { ...t, pos: to } : t)).filter((t, i, a) => a.findIndex(x => x.pos === t.pos) === i));
-  }
-  clearTabStops() { this.tabsCmd("hist.tabs", () => []); }
+  tabStopsOf = formatMod.tabStopsOf;
+  styleTabsOf = tabsMod.styleTabsOf;
+  tabStopsAtCaret = tabsMod.tabStopsAtCaret;
+  tabsCmd = tabsMod.tabsCmd;
+  setTabStops = tabsMod.setTabStops;
+  addTabStop = tabsMod.addTabStop;
+  removeTabStop = tabsMod.removeTabStop;
+  moveTabStop = tabsMod.moveTabStop;
+  clearTabStops = tabsMod.clearTabStops;
 
-  setShading(color: string | null) { this.paraCmd("hist.color", { shd: color }); }
-  setParaBorder(on: boolean) { this.paraCmd("hist.border", { borders: on ? { top: "000000", left: "000000", bottom: "000000", right: "000000" } : null }); }
-  setIndent(leftPt: number | null, firstPt: number | null, hangingPt?: number | null) {
-    this.paraCmd("hist.indent", { indLeft: leftPt === null ? null : Math.round(leftPt * 20), ...(hangingPt ? { indHanging: Math.round(hangingPt * 20) } : { indFirst: firstPt === null ? null : Math.round(firstPt * 20) }) });
-  }
-  indent(delta: number) {
-    if (this.readonly || !this.book) return;
-    const sp = this.spans();
-    const sel = this.captureSel();
-    changeIndent(this.book, [...new Set(sp.map(s => s.p))], delta * 720);
-    for (const p of new Set(sp.map(s => s.p))) this.rerenderPara(p);
-    this.refreshNums(); this.restoreSel(sel); this.commit("hist.indent"); this.schedulePaginate();
-  }
+  setShading = tabsMod.setShading;
+  setParaBorder = tabsMod.setParaBorder;
+  setIndent = tabsMod.setIndent;
+  indent = tabsMod.indent;
   // ───────── galeri & pengelolaan daftar ─────────
 
   readonly listPresets: readonly ListPreset[] = LIST_PRESETS;
-  /** Ringkasan daftar pada kursor (undefined bila bukan daftar). */
-  listInfoAtCaret(): ListInfo | undefined {
-    const s = this.selPoints();
-    return this.book && s ? listInfo(this.book, s.a.p) : undefined;
-  }
-  private listParas(): XEl[] { return [...new Set(this.spans().map(s => s.p))]; }
-  private afterListChange(sel: ReturnType<DocxView["captureSel"]>) {
-    this.refreshNums();
-    this.restoreSel(sel);
-    this.commit("hist.list");
-    this.schedulePaginate();
-  }
-  /**
-   * Terapkan gaya daftar dari galeri. Seleksi yang sudah berada dalam SATU daftar → gaya daftar itu diganti (seluruh item);
-   * selain itu seleksi menjadi daftar baru (penomoran mulai dari awal).
-   */
-  applyListPreset(presetId: string): boolean {
-    const book = this.book;
-    const ps = this.listParas();
-    if (!book || this.readonly || !ps.length || !LIST_PRESETS.some(p => p.id === presetId)) return false;
-    const sel = this.captureSel();
-    const infos = ps.map(p => listOf(book, p));
-    const one = infos[0] && infos.every(i => i && i.numId === infos[0]!.numId) ? infos[0]!.numId : undefined;
-    if (one !== undefined) {
-      // gaya seluruh daftar berganti: definisi baru + pindahkan semua itemnya (referensi numPr berada di body sehingga ikut undo)
-      const numId = createList(book, presetId);
-      this.moveToList([...book.paragraphs()].map(x => x.p).filter(p => listOf(book, p)?.numId === one), numId);
-    } else {
-      const numId = createList(book, presetId);
-      ps.forEach((p, i) => {
-        applyParaPatch(p, { num: { numId, ilvl: infos[i]?.ilvl ?? 0 } });
-        if (book.styles.has("ListParagraph") && !val(first(p, "pPr"), "pStyle")) applyParaPatch(p, { style: "ListParagraph" });
-        this.rerenderPara(p);
-      });
-    }
-    this.afterListChange(sel);
-    return true;
-  }
-  /** Paragraf pertama terpilih beserta semua paragraf berikutnya dalam daftar (numId) yang sama. */
-  private listTail(): { numId: number; paras: XEl[]; first: XEl } | undefined {
-    const book = this.book;
-    const ps = this.listParas();
-    const l = book && ps.length ? listOf(book, ps[0]) : undefined;
-    if (!book || !l) return undefined;
-    const all = [...book.paragraphs()].map(x => x.p);
-    const start = all.indexOf(ps[0]);
-    return { numId: l.numId, first: ps[0], paras: all.slice(start).filter(p => listOf(book, p)?.numId === l.numId) };
-  }
-  private moveToList(paras: XEl[], numId: number) {
-    for (const p of paras) { const l = listOf(this.book!, p); applyParaPatch(p, { num: { numId, ilvl: l?.ilvl ?? 0 } }); }
-  }
-  /** Mulai ulang penomoran pada paragraf terpilih (dan item berikutnya dalam daftar yang sama) dari `start` (default 1). */
-  restartList(start = 1): boolean {
-    const t = this.listTail();
-    const book = this.book;
-    if (!t || !book || this.readonly) return false;
-    const abs = abstractIdOf(book, t.numId);
-    if (abs === undefined) return false;
-    const sel = this.captureSel();
-    const numId = createList(book, "num-dot", { abstractId: abs, start: Math.max(0, Math.floor(start)) });
-    this.moveToList(t.paras, numId);
-    this.afterListChange(sel);
-    return true;
-  }
-  /** Lanjutkan penomoran dari daftar bernomor terdekat di atas paragraf terpilih. */
-  continueList(): boolean {
-    const t = this.listTail();
-    const book = this.book;
-    if (!t || !book || this.readonly) return false;
-    const all = [...book.paragraphs()].map(x => x.p);
-    let prevNum: number | undefined;
-    for (let i = all.indexOf(t.first) - 1; i >= 0; i--) {
-      const l = listOf(book, all[i]);
-      if (l && l.numId !== t.numId && book.numbering.lvl(l.numId, 0)?.fmt !== "bullet") { prevNum = l.numId; break; }
-    }
-    if (prevNum === undefined) return false;
-    const sel = this.captureSel();
-    this.moveToList(t.paras, prevNum);
-    this.afterListChange(sel);
-    return true;
-  }
-  /** Nilai awal daftar pada paragraf terpilih (sama dengan mulai ulang dari `n`). */
-  setListStart(n: number): boolean { return this.restartList(n); }
+  listInfoAtCaret = listsMod.listInfoAtCaret;
+  listParas = listsMod.listParas;
+  afterListChange = listsMod.afterListChange;
+  applyListPreset = listsMod.applyListPreset;
+  listTail = listsMod.listTail;
+  moveToList = listsMod.moveToList;
+  restartList = listsMod.restartList;
+  continueList = listsMod.continueList;
+  setListStart = listsMod.setListStart;
 
-  toggleList(kind: "bullet" | "number") {
-    if (this.readonly || !this.book) return;
-    const sp = this.spans();
-    if (!sp.length) return;
-    const sel = this.captureSel();
-    const ps = [...new Set(sp.map(s => s.p))];
-    toggleList(this.book, ps, kind);
-    for (const p of ps) this.rerenderPara(p);
-    this.refreshNums(); this.restoreSel(sel); this.commit("hist.list"); this.schedulePaginate();
-  }
+  toggleList = listsMod.toggleList;
 
   // ───────── tautan / sisip ─────────
 
-  setLink(url: string | null, tooltip?: string) {
-    const book = this.book;
-    const sp = this.spans();
-    if (!book || !sp.length || this.readonly) return;
-    const sel = this.captureSel();
-    for (const s of sp) {
-      if (url === null) unlinkRange(book, s.p, s.a, s.b);
-      else if (s.b > s.a) wrapRunsInLink(book, s.p, s.a, s.b, url, tooltip);
-      else {
-        const l = linkAt(s.p, s.a);
-        if (l) { const rid = attr(l, "id"); if (rid) book.setLinkTarget(rid, url); else setAttr(l, "anchor", url.replace(/^#/, "")); }
-      }
-      this.rerenderPara(s.p);
-    }
-    this.restoreSel(sel); this.commit("hist.link"); this.schedulePaginate();
-  }
+  setLink = listsMod.setLink;
 
   insertTable(rows: number, cols: number) {
     const book = this.book;
@@ -1706,7 +1176,7 @@ export class DocxView {
     const secs = this.book?.sections();
     return secs?.[Math.min(Number(page?.dataset.sec ?? 0), (secs?.length ?? 1) - 1)];
   }
-  private firstParaIn(el: XEl): XEl | undefined { let r: XEl | undefined; walkBlocks(el.name.local === "tbl" ? mk("x", undefined, [el]) : el, x => { if (!r && x.name.local === "p") r = x; }); return r; }
+  firstParaIn(el: XEl): XEl | undefined { let r: XEl | undefined; walkBlocks(el.name.local === "tbl" ? mk("x", undefined, [el]) : el, x => { if (!r && x.name.local === "p") r = x; }); return r; }
 
   // ───────── tabel ─────────
 
@@ -1742,917 +1212,122 @@ export class DocxView {
     return { tbl, g, cell, rect };
   }
 
-  /** Sel (`tc`) milik `tbl` yang memuat paragraf `p` (menembus tabel bersarang), atau undefined. */
-  private cellInTable(p: XEl, tbl: XEl): XEl | undefined {
-    const book = this.book!;
-    let cur: XEl | undefined = p;
-    while (cur) {
-      if (cur.name.local === "tc") {
-        const tr = book.parentOf(cur);
-        if (tr && book.parentOf(tr) === tbl) return cur;
-      }
-      cur = book.parentOf(cur);
-    }
-    return undefined;
-  }
+  private cellInTable = tableMod.cellInTable;
 
-  private outermostTable(tbl: XEl): XEl {
-    let cur = tbl;
-    for (;;) {
-      const tc = this.book!.parentOf(cur);
-      if (!tc || tc.name.local !== "tc") return cur;
-      const tr = this.book!.parentOf(tc), up = tr ? this.book!.parentOf(tr) : undefined;
-      if (!up) return cur;
-      cur = up;
-    }
-  }
-  private finishTable(tbl: XEl, label: string, focusTc?: XEl) {
-    const book = this.book!;
-    book.reindex();
-    const top = this.outermostTable(tbl);
-    const old = this.reg.domOf.get(top);
-    if (old) {
-      const sec = old.dataset.sec ?? "0";
-      const nd = renderTable(this.makeCtx(this.contentWOf(Number(sec)), book.doc.partName), top);
-      nd.dataset.sec = sec;
-      old.replaceWith(nd);
-    } else this.renderAll({ sel: null });
-    this.refreshNums();
-    this.applyCellSelVisual();
-    let target = focusTc;
-    if (!target || !this.book!.parentOf(target)) {
-      const g2 = buildGrid(tbl);
-      const lc = this.lastCell;
-      target = lc ? g2.map[Math.min(lc.row, g2.rows.length - 1)]?.[Math.min(lc.col, g2.ncols - 1)]?.origin.el : undefined;
-    }
-    if (target) { const p = this.firstParaIn(target); if (p) this.focusPara(p, 0, false); }
-    this.commit(label);
-    this.schedulePaginate(30);
-  }
-  private lastCell: { row: number; col: number } | null = null;
+  outermostTable = tableMod.outermostTable;
+  finishTable = tableMod.finishTable;
+  lastCell: { row: number; col: number } | null = null;
 
-  /** Perintah tabel. `arg` bergantung pada `op`. */
-  table(op: string, arg?: unknown): void {
-    const c = this.tctx();
-    const book = this.book;
-    if (!c || !book || this.readonly) return;
-    const { tbl, g, rect, cell } = c;
-    const focusTc = cell.el;
-    this.lastCell = { row: rect.r1, col: rect.c1 };
-    const cellsInRect = () => { const set = new Set<XEl>(); for (let r = rect.r1; r <= rect.r2; r++) for (let cc = rect.c1; cc <= rect.c2; cc++) { const x = g.map[r]?.[cc]?.origin; if (x) set.add(x.el); } return [...set]; };
-    const sides = (p: string): T.BorderSide[] => p === "all" ? ["top", "left", "bottom", "right", "insideH", "insideV"] : p === "outer" ? ["top", "left", "bottom", "right"] : p === "inner" ? ["insideH", "insideV"] : [p as T.BorderSide];
-    switch (op) {
-      case "insertRowAbove": T.insertRow(tbl, rect.r1, "above"); return this.finishTable(tbl, "hist.tblRow", focusTc);
-      case "insertRowBelow": T.insertRow(tbl, rect.r2, "below"); return this.finishTable(tbl, "hist.tblRow", focusTc);
-      case "insertColLeft": T.insertCol(tbl, rect.c1, "left"); return this.finishTable(tbl, "hist.tblCol", focusTc);
-      case "insertColRight": T.insertCol(tbl, rect.c2, "right"); return this.finishTable(tbl, "hist.tblCol", focusTc);
-      case "deleteRows": if (T.deleteRows(tbl, rect.r1, rect.r2) === "table") return this.table("deleteTable"); this.clearCellSel(); return this.finishTable(tbl, "hist.tblDelRow");
-      case "deleteCols": if (T.deleteCols(tbl, rect.c1, rect.c2) === "table") return this.table("deleteTable"); this.clearCellSel(); return this.finishTable(tbl, "hist.tblDelCol");
-      case "deleteTable": {
-        const parent = book.parentOf(tbl);
-        if (!parent) return;
-        const sibs = this.blockSiblings(parent); const nx = sibs[sibs.indexOf(tbl) + 1] ?? sibs[sibs.indexOf(tbl) - 1];
-        deleteBlock(parent, tbl);
-        this.cellSel = null;
-        this.commitStructural("hist.tblDelete");
-        const p = nx && nx.name.local === "p" ? nx : undefined;
-        if (p) this.focusPara(p, 0, false);
-        return;
-      }
-      case "merge": { const k = T.mergeCells(tbl, rect); if (!k) return; this.clearCellSel(); return this.finishTable(tbl, "hist.tblMerge", k); }
-      case "split": { const k = T.splitCell(tbl, cell.row, cell.col, typeof arg === "number" ? arg : 2); this.clearCellSel(); return this.finishTable(tbl, "hist.tblSplit", k); }
-      case "shade": for (const tc of cellsInRect()) T.setCellShading(tc, arg as string | null); return this.finishTable(tbl, "hist.tblShade", focusTc);
-      case "valign": for (const tc of cellsInRect()) T.setCellVAlign(tc, arg as "top" | "center" | "bottom"); return this.finishTable(tbl, "hist.tblAlign", focusTc);
-      case "noWrap": for (const tc of cellsInRect()) T.setCellNoWrap(tc, !!arg); return this.finishTable(tbl, "hist.tbl", focusTc);
-      case "direction": for (const tc of cellsInRect()) T.setCellDirection(tc, arg as "lrTb" | "btLr" | "tbRl"); return this.finishTable(tbl, "hist.tbl", focusTc);
-      case "cellMargins": for (const tc of cellsInRect()) T.setCellMargins(tc, arg as { top?: number; left?: number; bottom?: number; right?: number } | null); return this.finishTable(tbl, "hist.tbl", focusTc);
-      case "borders": {
-        const a = arg as { preset: string; spec: T.BorderSpec | null; scope?: "cells" | "table" };
-        const whole = a.scope === "table" || (rect.r1 === 0 && rect.c1 === 0 && rect.r2 === g.rows.length - 1 && rect.c2 === g.ncols - 1);
-        if (whole) { if (a.preset === "all" || a.preset === "none") T.clearCellBorders(tbl); T.setTableBorders(tbl, sides(a.preset === "none" ? "all" : a.preset), a.preset === "none" ? null : a.spec); }
-        else for (const cl of g.cells) {
-          if (cl.row < rect.r1 || cl.row > rect.r2 || cl.col < rect.c1 || cl.col > rect.c2) continue;
-          const ss = a.preset === "none" ? (["top", "left", "bottom", "right"] as T.BorderSide[]) : this.cellSides(a.preset, cl, rect);
-          T.setCellBorders(cl.el, ss, a.preset === "none" ? null : a.spec);
-        }
-        return this.finishTable(tbl, "hist.tblBorder", focusTc);
-      }
-      case "align": T.setTableAlign(tbl, arg as "left" | "center" | "right"); return this.finishTable(tbl, "hist.tblAlign", focusTc);
-      case "style": T.setTableStyle(tbl, arg as string | null); return this.finishTable(tbl, "hist.tblStyle", focusTc);
-      case "look": T.setTableLook(tbl, arg as Parameters<typeof T.setTableLook>[1]); return this.finishTable(tbl, "hist.tblStyle", focusTc);
-      case "layout": T.setTableLayout(tbl, !!arg); return this.finishTable(tbl, "hist.tbl", focusTc);
-      case "width": { const a = arg as { mode: "auto" | "pct" | "dxa"; value?: number }; T.setTableWidthMode(tbl, a.mode, a.value); if (a.mode === "dxa" && a.value) { const w = T.gridWidths(g); const sum = w.reduce((x, y) => x + y, 0); T.setTableWidths(tbl, w.map(x => (x * a.value!) / sum)); } return this.finishTable(tbl, "hist.tbl", focusTc); }
-      case "rowHeight": for (const r of new Set(Array.from({ length: rect.r2 - rect.r1 + 1 }, (_, i) => g.rows[rect.r1 + i]))) T.setRowHeight(r, arg === null ? null : Math.round((arg as number) * 20)); return this.finishTable(tbl, "hist.tbl", focusTc);
-      case "headerRow": for (const r of new Set(Array.from({ length: rect.r2 - rect.r1 + 1 }, (_, i) => g.rows[rect.r1 + i]))) T.setHeaderRow(r, !!arg); return this.finishTable(tbl, "hist.tbl", focusTc);
-      case "distCols": T.distributeColumns(tbl, rect.c1 === rect.c2 ? 0 : rect.c1, rect.c1 === rect.c2 ? g.ncols - 1 : rect.c2); return this.finishTable(tbl, "hist.tblResize", focusTc);
-      case "caption": { const a = arg as { title?: string; desc?: string }; T.setTableCaption(tbl, a.title, a.desc); return this.finishTable(tbl, "hist.tbl", focusTc); }
-      case "select": { this.setCellSel(tbl, { r1: 0, c1: 0, r2: g.rows.length - 1, c2: g.ncols - 1 }); return; }
-      case "selectRow": { this.setCellSel(tbl, { r1: rect.r1, c1: 0, r2: rect.r2, c2: g.ncols - 1 }); return; }
-      case "selectCol": { this.setCellSel(tbl, { r1: 0, c1: rect.c1, r2: g.rows.length - 1, c2: rect.c2 }); return; }
-      default: return;
-    }
-  }
-  private cellSides(preset: string, cl: GCell, rect: Rect): T.BorderSide[] {
-    const endR = cl.row + cl.rowspan - 1, endC = cl.col + cl.colspan - 1;
-    if (preset === "all") return ["top", "left", "bottom", "right"];
-    if (preset === "outer") { const o: T.BorderSide[] = []; if (cl.row === rect.r1) o.push("top"); if (endR === rect.r2) o.push("bottom"); if (cl.col === rect.c1) o.push("left"); if (endC === rect.c2) o.push("right"); return o; }
-    if (preset === "inner") { const o: T.BorderSide[] = []; if (cl.row > rect.r1) o.push("top"); if (endR < rect.r2) o.push("bottom"); if (cl.col > rect.c1) o.push("left"); if (endC < rect.c2) o.push("right"); return o; }
-    if (preset === "top") return cl.row === rect.r1 ? ["top"] : [];
-    if (preset === "bottom") return endR === rect.r2 ? ["bottom"] : [];
-    if (preset === "left") return cl.col === rect.c1 ? ["left"] : [];
-    if (preset === "right") return endC === rect.c2 ? ["right"] : [];
-    if (preset === "insideH") return [...(cl.row > rect.r1 ? ["top" as const] : []), ...(endR < rect.r2 ? ["bottom" as const] : [])];
-    if (preset === "insideV") return [...(cl.col > rect.c1 ? ["left" as const] : []), ...(endC < rect.c2 ? ["right" as const] : [])];
-    return [];
-  }
+  table = tableMod.table;
+  cellSides = tableMod.cellSides;
 
-  private clearCells() {
-    const c = this.tctx();
-    if (!c) return;
-    const sel = c.g.cells.filter(x => x.row >= c.rect.r1 && x.row <= c.rect.r2 && x.col >= c.rect.c1 && x.col <= c.rect.c2);
-    for (const cl of sel) { const keep = cl.el.children.find(k => isEl(k) && k.name.local === "tcPr"); cl.el.children = keep ? [keep, mk("p")] : [mk("p")]; }
-    this.finishTable(c.tbl, "hist.delete");
-  }
+  private clearCells = tableMod.clearCells;
 
-  private tableNavigate(c: NonNullable<ReturnType<DocxView["tctx"]>>, dir: 1 | -1) {
-    const { g, cell } = c;
-    const order = g.cells.filter(x => x.vm !== "continue");
-    const i = order.indexOf(cell) + dir;
-    if (i >= 0 && i < order.length) { const p = this.firstParaIn(order[i].el); if (p) this.focusPara(p, 0, false); return; }
-    if (dir === 1 && !this.readonly) {
-      T.insertRow(c.tbl, g.rows.length - 1, "below");
-      const g2 = buildGrid(c.tbl);
-      const target = g2.map[g2.rows.length - 1]?.[0]?.el;
-      this.finishTable(c.tbl, "hist.tblRow", target);
-    }
-  }
+  private tableNavigate = tableMod.tableNavigate;
 
-  setCellSel(tbl: XEl, r: Rect) {
-    const g = buildGrid(tbl);
-    const rect = T.expandRect(g, r);
-    this.cellSel = { tbl, ...rect };
-    this.applyCellSelVisual();
-    this.scheduleSelection();
-  }
-  clearCellSel() { this.cellSel = null; this.applyCellSelVisual(); this.scheduleSelection(); }
-  private applyCellSelVisual() {
-    this.pagesEl.querySelectorAll(".dx-sel").forEach(e => e.classList.remove("dx-sel"));
-    if (!this.cellSel) return;
-    const g = buildGrid(this.cellSel.tbl);
-    const r = T.expandRect(g, this.cellSel);
-    for (const cl of g.cells) {
-      if (cl.vm === "continue" || cl.row < r.r1 || cl.row > r.r2 || cl.col < r.c1 || cl.col > r.c2) continue;
-      this.reg.domOf.get(cl.el)?.classList.add("dx-sel");
-    }
-  }
+  setCellSel = tableMod.setCellSel;
+  clearCellSel = tableMod.clearCellSel;
+  applyCellSelVisual = tableMod.applyCellSelVisual;
 
   // ───────── gambar ─────────
 
-  private drawingParaEl(el: HTMLElement) { return el.closest<HTMLElement>(".dx-p"); }
-  selectImageEl(el: HTMLElement | undefined | null) {
-    if (!el || el.classList.contains("dx-ole")) { this.clearImageSel(); return; }
-    const dr = this.reg.elOf.get(el);
-    if (!dr || dr.name.local !== "drawing") { this.clearImageSel(); return; }
-    this.imgSel = { el, drawing: dr };
-    this.lockAspect = readDrawing(dr)?.lockAspect ?? this.lockAspect;
-    // pindahkan caret tepat sebelum gambar agar info paragraf/tabel di status bar mengikuti gambar (bukan seleksi lama)
-    const pd = el.closest<HTMLElement>(".dx-p");
-    const pp = pd ? this.reg.elOf.get(pd) : undefined;
-    if (pp && this.isBodyPara(pp)) {
-      const u = units(pp).find(x => x.piece === dr || descendAll(x.piece, "drawing").includes(dr));
-      this.saved = { a: { p: pp, off: u?.start ?? 0 }, b: { p: pp, off: u?.start ?? 0 } };
-      this.cellSel = null;
-      this.applyCellSelVisual();
-      const f = flatToDomPos(pd!, u?.start ?? 0);
-      window.getSelection()?.setBaseAndExtent(f.node, f.offset, f.node, f.offset);
-    }
-    this.updateOverlay();
-    this.scheduleSelection();
-    el.classList.add("dx-selected");
-  }
-  clearImageSel() { if (this.imgSel) { this.imgSel.el.classList.remove("dx-selected"); this.imgSel = null; this.updateOverlay(); this.scheduleSelection(); } }
+  drawingParaEl = tableMod.drawingParaEl;
+  selectImageEl = imageMod.selectImageEl;
+  clearImageSel = imageMod.clearImageSel;
 
-  updateOverlay() {
-    this.overlay.querySelectorAll(".dx-imgsel").forEach(e => e.remove());
-    const s = this.imgSel;
-    if (!s || !s.el.isConnected) return;
-    const r = s.el.getBoundingClientRect(), o = this.stage.getBoundingClientRect();
-    const box = document.createElement("div");
-    box.className = "dx-imgsel";
-    box.style.cssText = `left:${r.left - o.left}px;top:${r.top - o.top}px;width:${r.width}px;height:${r.height}px;`;
-    if (!this.readonly) for (const h of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
-      const hd = document.createElement("div");
-      hd.className = `dx-h dx-h-${h}`; hd.dataset.h = h;
-      hd.addEventListener("mousedown", ev => { ev.preventDefault(); ev.stopPropagation(); this.imgDragStart(h, ev); });
-      box.appendChild(hd);
-    }
-    const label = document.createElement("div");
-    label.className = "dx-imglabel";
-    label.textContent = `${Math.round(s.el.offsetWidth)} × ${Math.round(s.el.offsetHeight)} px`;
-    box.appendChild(label);
-    if (s.el.dataset.wrap === "abs" && !this.readonly) {
-      box.style.pointerEvents = "auto"; box.style.cursor = "move";
-      box.addEventListener("mousedown", ev => { if ((ev.target as HTMLElement).classList.contains("dx-h")) return; ev.preventDefault(); this.imgDragStart("move", ev); });
-    }
-    this.overlay.appendChild(box);
-  }
+  updateOverlay = imageMod.updateOverlay;
 
-  private imgDragStart(handle: string, e: MouseEvent) {
-    const s = this.imgSel;
-    if (!s) return;
-    const w0 = s.el.offsetWidth, h0 = s.el.offsetHeight;
-    this.imgDrag = { mode: handle === "move" ? "move" : "resize", handle, sx: e.clientX, sy: e.clientY, w0, h0, l0: parseFloat(s.el.style.left) || 0, t0: parseFloat(s.el.style.top) || 0, ratio: w0 / Math.max(1, h0), el: s.el, drawing: s.drawing };
-  }
-  private imgDragMove(e: MouseEvent) {
-    const d = this.imgDrag!;
-    const dx = (e.clientX - d.sx) / this.zoom, dy = (e.clientY - d.sy) / this.zoom;
-    if (d.mode === "move") {
-      let l = d.l0 + dx, t = d.t0 + dy;
-      d.el.style.left = `${l}px`; d.el.style.top = `${t}px`;
-      if (this.snapGuides && !e.altKey) { // menempel ke garis bantu penggaris (Alt = tanpa snap)
-        const sn = this.snapGuides(d.el.getBoundingClientRect());
-        if (sn.dx || sn.dy) { l += sn.dx; t += sn.dy; d.el.style.left = `${l}px`; d.el.style.top = `${t}px`; }
-      }
-      this.updateOverlay();
-      return;
-    }
-    const h = d.handle;
-    let w = d.w0, hh = d.h0;
-    if (h.includes("e")) w = d.w0 + dx; if (h.includes("w")) w = d.w0 - dx;
-    if (h.includes("s")) hh = d.h0 + dy; if (h.includes("n")) hh = d.h0 - dy;
-    const lock = this.lockAspect !== e.shiftKey;
-    const corner = h.length === 2;
-    if (lock) {
-      if (corner) { const sx = w / d.w0, sy = hh / d.h0; const k = Math.abs(sx - 1) > Math.abs(sy - 1) ? sx : sy; w = d.w0 * k; hh = d.h0 * k; }
-      else if (h === "e" || h === "w") hh = w / d.ratio;
-      else w = hh * d.ratio;
-    }
-    w = Math.max(12, w); hh = Math.max(12, hh);
-    d.el.style.width = `${w}px`; d.el.style.height = `${hh}px`;
-    if (d.el.dataset.wrap === "abs") { if (h.includes("w")) d.el.style.left = `${d.l0 + (d.w0 - w)}px`; if (h.includes("n")) d.el.style.top = `${d.t0 + (d.h0 - hh)}px`; }
-    this.updateOverlay();
-  }
-  private imgDragEnd() {
-    const d = this.imgDrag!;
-    this.imgDrag = null;
-    const book = this.book!;
-    const info = readDrawing(d.drawing);
-    if (d.mode === "move") {
-      const fr = info ? this.paginator.anchorBase(d.el, info) : undefined;
-      if (info && fr) {
-        const x = fr.px0 + (parseFloat(d.el.style.left) || 0), y = fr.py0 + (parseFloat(d.el.style.top) || 0);
-        const relH = info.posH?.rel ?? "page", relV = info.posV?.rel ?? "page";
-        setPosition(d.drawing, (x - fr.baseX(relH)[0]) * 9525, (y - fr.baseY(relV)[0]) * 9525, relH, relV);
-        const hfm = this.hfOf(d.el);
-        if (hfm) this.book!.touchHF(hfm);
-        this.commit("hist.imgMove");
-        this.paginator.layoutAnchors();
-      }
-      this.updateOverlay();
-      return;
-    }
-    const w = d.el.offsetWidth, h = d.el.offsetHeight;
-    if (Math.abs(w - d.w0) < 1 && Math.abs(h - d.h0) < 1) return;
-    setSize(d.drawing, w * 9525, h * 9525);
-    void book;
-    this.afterImageChange("hist.imgResize");
-  }
+  imgDragStart = imageMod.imgDragStart;
+  private imgDragMove = imageMod.imgDragMove;
+  private imgDragEnd = imageMod.imgDragEnd;
 
-  /** relId header/footer tempat elemen berada (undefined bila di body). */
-  private hfOf(el: HTMLElement): string | undefined { return el.closest<HTMLElement>("[data-hf]")?.dataset.hf; }
+  hfOf = imageMod.hfOf;
 
-  /** Perubahan pada gambar di header/footer: simpan ke pohon header, gambar ulang semua halaman, pilih ulang gambar. */
-  private afterHFImageChange(label: string, relId: string, reselect: boolean) {
-    const drawing = this.imgSel?.drawing;
-    this.book!.touchHF(relId);
-    this.commit(label);
-    this.paginate();
-    this.selectImageEl(reselect && drawing ? this.reg.domOf.get(drawing) : null);
-  }
+  afterHFImageChange = imageMod.afterHFImageChange;
 
-  private afterImageChange(label: string, reselect = true) {
-    const hf = this.imgSel ? this.hfOf(this.imgSel.el) : undefined;
-    if (hf) { this.afterHFImageChange(label, hf, reselect); return; }
-    const s = this.imgSel;
-    const p = s ? this.reg.elOf.get(this.drawingParaEl(s.el) ?? s.el) : undefined;
-    const drawing = s?.drawing;
-    if (p) this.rerenderPara(p);
-    if (reselect && drawing) this.selectImageEl(this.reg.domOf.get(drawing));
-    this.commit(label);
-    this.schedulePaginate(30);
-  }
+  afterImageChange = imageMod.afterImageChange;
 
-  imgInfo(): ImgSelInfo | undefined {
-    const s = this.imgSel;
-    if (!s || !this.book) return undefined;
-    const i = readDrawing(s.drawing);
-    if (!i) return undefined;
-    let natural: { w: number; h: number } | undefined;
-    let format = "";
-    if (i.relId) {
-      const part = this.book.mediaPart(i.relId);
-      if (part) { const z = sniffImageSize(part.data); if (z) natural = { w: z.w, h: z.h }; format = part.contentType.replace("image/", "") + ` · ${Math.round(part.data.length / 1024)} KB`; }
-    }
-    return { name: i.name, descr: i.descr, wPx: Math.round(i.cx / 9525), hPx: Math.round(i.cy / 9525), wrap: i.wrap, lock: this.lockAspect, rot: i.rot, content: i.content, floating: i.kind === "anchor", format, relId: i.relId, natural };
-  }
+  imgInfo = imageMod.imgInfo;
 
-  imgSetSize(wPx: number | null, hPx: number | null) {
-    const s = this.imgSel;
-    if (!s || this.readonly) return;
-    const i = readDrawing(s.drawing);
-    if (!i) return;
-    let w = wPx ?? i.cx / 9525, h = hPx ?? i.cy / 9525;
-    if (this.lockAspect) { const r = i.cx / Math.max(1, i.cy); if (wPx !== null && hPx === null) h = w / r; else if (hPx !== null && wPx === null) w = h * r; }
-    setSize(s.drawing, Math.max(8, w) * 9525, Math.max(8, h) * 9525);
-    this.afterImageChange("hist.imgResize");
-  }
-  imgSetLock(on: boolean) { this.lockAspect = on; if (this.imgSel) setLockAspect(this.imgSel.drawing, on); this.updateOverlay(); this.scheduleSelection(); }
-  imgSetWrap(mode: WrapMode, h?: "left" | "center" | "right") {
-    const s = this.imgSel;
-    if (!s || this.readonly) return;
-    setWrapMode(s.drawing, mode, { h, rel: mode === "behind" || mode === "front" ? "margin" : undefined });
-    this.afterImageChange("hist.imgWrap");
-  }
-  imgSetAlt(descr: string, title?: string) { if (this.imgSel && !this.readonly) { setAlt(this.imgSel.drawing, descr, title); this.afterImageChange("hist.imgAlt"); } }
-  imgRotate(deg: number) { const s = this.imgSel; if (!s || this.readonly) return; setRotation(s.drawing, deg); this.afterImageChange("hist.imgRotate"); }
-  imgFlip(axis: "h" | "v") { const s = this.imgSel; if (!s || this.readonly) return; const i = readDrawing(s.drawing)!; setRotation(s.drawing, i.rot, axis === "h" ? !i.flipH : i.flipH, axis === "v" ? !i.flipV : i.flipV); this.afterImageChange("hist.imgRotate"); }
-  imgCrop(c: { l: number; t: number; r: number; b: number } | null) { const s = this.imgSel; if (!s || this.readonly) return; setCrop(s.drawing, c ? { l: c.l * 1000, t: c.t * 1000, r: c.r * 1000, b: c.b * 1000 } : null); this.afterImageChange("hist.imgCrop"); }
-  imgReset() {
-    const s = this.imgSel; const i = s && readDrawing(s.drawing);
-    if (!s || !i?.relId || this.readonly) return;
-    const part = this.book!.mediaPart(i.relId);
-    const z = part && sniffImageSize(part.data);
-    if (!z) return;
-    setSize(s.drawing, z.w * 9525 * 0.75, z.h * 9525 * 0.75);
-    setCrop(s.drawing, null); setRotation(s.drawing, 0, false, false);
-    this.afterImageChange("hist.imgResize");
-  }
-  imgNudge(dx: number, dy: number) {
-    const s = this.imgSel; const i = s && readDrawing(s.drawing);
-    if (!s || !i || i.kind !== "anchor") return;
-    const fr = this.paginator.anchorBase(s.el, i);
-    if (!fr) return;
-    const x = fr.px0 + (parseFloat(s.el.style.left) || 0) + dx, y = fr.py0 + (parseFloat(s.el.style.top) || 0) + dy;
-    const relH = i.posH?.rel ?? "page", relV = i.posV?.rel ?? "page";
-    setPosition(s.drawing, (x - fr.baseX(relH)[0]) * 9525, (y - fr.baseY(relV)[0]) * 9525, relH, relV);
-    this.paginator.layoutAnchors(); this.updateOverlay(); this.commit("hist.imgMove", "hist.imgMove");
-  }
-  imgDelete() {
-    const s = this.imgSel;
-    if (!s || this.readonly || !this.book) return;
-    const p = this.reg.elOf.get(this.drawingParaEl(s.el) ?? s.el);
-    if (!p) return;
-    const u = units(p).find(x => x.piece === s.drawing || descendAll(x.piece, "drawing").includes(s.drawing));
-    if (!u) return;
-    const hf = this.hfOf(s.el);
-    deleteRange(p, u.start, u.end);
-    normalize(p);
-    if (hf) { this.afterHFImageChange("hist.imgDelete", hf, false); return; }
-    this.imgSel = null;
-    this.rerenderPara(p);
-    this.setCaret(p, u.start);
-    this.updateOverlay();
-    this.commit("hist.imgDelete"); this.schedulePaginate(30);
-  }
-  imgDuplicate() { if (this.imgSel) { this.imgClip = cloneEl(this.imgSel.drawing); this.imgPaste(); } }
-  imgPaste() {
-    const book = this.book;
-    const s = this.selPoints();
-    if (!book || !this.imgClip || this.readonly) return;
-    let pt: Point | null = s ? { p: s.a.p, off: s.a.off } : null;
-    if (!pt && this.imgSel) { const p = this.reg.elOf.get(this.drawingParaEl(this.imgSel.el) ?? this.imgSel.el); if (p) pt = { p, off: flatLength(p) }; }
-    if (!pt) return;
-    if (s && !s.collapsed) { const d = this.deleteSelection(); if (d) pt = d; }
-    const nd = cloneDrawing(this.imgClip, maxDocPrId(book.body) + 1);
-    insertTextRunDrawing(pt.p, pt.off, nd);
-    this.rerenderPara(pt.p);
-    this.selectImageEl(this.reg.domOf.get(nd));
-    this.commit("hist.imgInsert"); this.schedulePaginate(30);
-  }
+  imgSetSize = imageMod.imgSetSize;
+  imgSetLock = imageMod.imgSetLock;
+  imgSetWrap = imageMod.imgSetWrap;
+  imgSetAlt = imageMod.imgSetAlt;
+  imgRotate = imageMod.imgRotate;
+  imgFlip = imageMod.imgFlip;
+  imgCrop = imageMod.imgCrop;
+  imgReset = imageMod.imgReset;
+  imgNudge = imageMod.imgNudge;
+  imgDelete = imageMod.imgDelete;
+  imgDuplicate = imageMod.imgDuplicate;
+  imgPaste = imageMod.imgPaste;
 
-  async insertImageFile(file: File) {
-    const book = this.book;
-    if (!book || this.readonly) return;
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let size = sniffImageSize(bytes);
-      if (!size) size = await decodeImageSize(file);
-      if (!size) { this.hooks.toast("toast.imgUnsupported", { name: file.name }); return; }
-      const s = this.selPoints();
-      const ps = [...book.paragraphs()];
-      let pt: Point | null = s ? { p: s.a.p, off: s.a.off } : ps.length ? { p: ps[ps.length - 1].p, off: flatLength(ps[ps.length - 1].p) } : null;
-      if (!pt) return;
-      if (s && !s.collapsed) { const d = this.deleteSelection(); if (d) pt = d; }
-      const sec = this.sectionOfPara(pt.p);
-      const maxW = Math.min(MAX_IMG_W, sec ? ((sec.w - sec.ml - sec.mr) * 96) / 1440 : MAX_IMG_W);
-      const maxH = sec ? ((sec.h - sec.mt - sec.mb) * 96) / 1440 * 0.9 : 800;
-      let w = size.w * 0.75 > 4 ? size.w * 0.75 : size.w, h = size.h * 0.75 > 4 ? size.h * 0.75 : size.h;
-      const k = Math.min(1, maxW / w, maxH / h);
-      w = Math.max(8, w * k); h = Math.max(8, h * k);
-      const drawing = insertImageAt(book, pt.p, pt.off, bytes, w, h, file.name.replace(/\.[^.]+$/, ""), file.type || size.type);
-      this.rerenderPara(pt.p);
-      this.selectImageEl(this.reg.domOf.get(drawing));
-      this.commit("hist.imgInsert"); this.schedulePaginate(30);
-    } catch (err) {
-      this.hooks.log("error", "images", "log.imgInsertFail", { msg: err instanceof Error ? err.message : String(err) });
-      this.hooks.toast("toast.imgFail", { name: file.name });
-    }
-  }
+  insertImageFile = imageMod.insertImageFile;
   // ───────── objek OLE ─────────
 
-  /** Sisipkan objek OLE di kursor (mengganti seleksi bila ada). */
-  insertOle(prep: PreparedOle, size?: { wPx: number; hPx: number }): (DocxOleRef & { paragraph: number }) | undefined {
-    const book = this.book;
-    if (!book || this.readonly) return undefined;
-    const s = this.selPoints();
-    const ps = [...book.paragraphs()];
-    let pt: Point | null = s ? { p: s.a.p, off: s.a.off } : ps.length ? { p: ps[ps.length - 1].p, off: flatLength(ps[ps.length - 1].p) } : null;
-    if (!pt) return undefined;
-    if (s && !s.collapsed) { const d = this.deleteSelection(); if (d) pt = d; }
-    const sec = this.sectionOfPara(pt.p);
-    const maxW = sec ? ((sec.w - sec.ml - sec.mr) * 96) / 1440 : MAX_IMG_W;
-    const w = Math.min(size?.wPx ?? prep.previewWidth, maxW), h = (size?.hPx ?? prep.previewHeight) * (w / (size?.wPx ?? prep.previewWidth));
-    const { run, ref } = createOleRun(book, prep, { wPx: w, hPx: h });
-    insertRunAt(pt.p, pt.off, run);
-    this.rerenderPara(pt.p);
-    this.commit("hist.oleInsert");
-    this.schedulePaginate(30);
-    return { ...ref, paragraph: [...book.paragraphs()].findIndex(x => x.p === pt!.p) + 1 };
-  }
+  insertOle = imageMod.insertOle;
 
-  /** Ganti isi objek OLE `relId`. Mengembalikan referensi baru (relId berubah agar undo tetap benar). */
-  updateOle(relId: string, prep: PreparedOle, opts: { keepPreview?: boolean } = {}): ReturnType<typeof updateOleObject> | undefined {
-    const book = this.book;
-    if (!book || this.readonly) return undefined;
-    const found = findOleObject(book, relId);
-    if (!found) return undefined;
-    const res = updateOleObject(book, relId, prep, opts);
-    this.rerenderPara(found.p);
-    this.commit("hist.oleUpdate");
-    this.schedulePaginate(30);
-    return res;
-  }
+  updateOle = oleMod.updateOle;
 
-  /** Ubah ukuran tampilan objek OLE (px CSS). */
-  resizeOle(relId: string, wPx: number, hPx: number): boolean {
-    const book = this.book;
-    if (!book || this.readonly || !(wPx > 4) || !(hPx > 4)) return false;
-    const found = findOleObject(book, relId);
-    if (!found || !setOleSize(book, relId, wPx, hPx)) return false;
-    this.rerenderPara(found.p);
-    this.commit("hist.oleSize");
-    this.schedulePaginate(30);
-    return true;
-  }
-  oleDisplaySize(relId: string) { return this.book ? oleSize(this.book, relId) : undefined; }
+  resizeOle = oleMod.resizeOle;
+  oleDisplaySize = oleMod.oleDisplaySize;
 
-  /** Halaman yang paling dekat dengan pusat area gulir beserta ukuran & margin (px dokumen) — dasar penggaris. */
-  pageGeometry(): { el: HTMLElement; width: number; height: number; ml: number; mr: number; mt: number; mb: number; no: number } | null {
-    const pages = [...this.pagesEl.querySelectorAll<HTMLElement>(".dx-page")];
-    if (!pages.length) return null;
-    const sr = this.host.getBoundingClientRect(); // area gulir yang terlihat (bukan stage: tingginya seluruh dokumen)
-    const mid = sr.top + sr.height / 2;
-    let best = pages[0], bd = Infinity;
-    for (const p of pages) {
-      const r = p.getBoundingClientRect();
-      const d = mid >= r.top && mid <= r.bottom ? 0 : Math.min(Math.abs(r.top - mid), Math.abs(r.bottom - mid));
-      if (d < bd) { bd = d; best = p; }
-    }
-    const secs = this.book?.sections();
-    const sec = secs?.[Math.min(Number(best.dataset.sec ?? 0), (secs?.length ?? 1) - 1)];
-    const k = 96 / 1440;
-    return {
-      el: best, width: best.offsetWidth, height: best.offsetHeight, no: Number(best.dataset.no ?? 0),
-      ml: sec ? (sec.ml + sec.gutter) * k : 96, mr: sec ? sec.mr * k : 96, mt: sec ? sec.mt * k : 96, mb: sec ? sec.mb * k : 96,
-    };
-  }
+  pageGeometry = oleMod.pageGeometry;
 
-  async imgReplace(file: File) {
-    const s = this.imgSel; const book = this.book;
-    if (!s || !book || this.readonly) return;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const i = readDrawing(s.drawing);
-    const tmp = book.createImageDrawing(bytes, i?.cx ?? 914400, i?.cy ?? 914400, { name: i?.name, contentType: file.type || undefined });
-    const rid = readDrawing(tmp)?.relId;
-    if (rid) replaceBlip(s.drawing, rid);
-    this.afterImageChange("hist.imgReplace");
-  }
+  imgReplace = oleMod.imgReplace;
 
   // ───────── format painter ─────────
 
-  startPainter(sticky = false) {
-    const book = this.book;
-    const s = this.selPoints();
-    if (!book || !s || this.readonly) return;
-    const clip = captureFormat(book, s.a.p, s.a.off, !s.collapsed);
-    this.painter = { clip, sticky };
-    this.pagesEl.classList.add("dx-painter");
-    this.hooks.painter({ char: clip.desc.char, para: clip.desc.para, sticky });
-  }
-  cancelPainter() {
-    this.painter = null;
-    this.pagesEl.classList.remove("dx-painter");
-    this.hooks.painter(null);
-  }
-  private applyPainter() {
-    const pn = this.painter;
-    const book = this.book;
-    if (!pn || !book) return;
-    const sp = this.spans();
-    if (!sp.length) return;
-    const collapsed = sp.length === 1 && sp[0].a === sp[0].b;
-    const sel = this.captureSel();
-    const targets = sp.map(s => ({ ...s, whole: collapsed }));
-    const para = collapsed || sp.length > 1 || sp.some(s => s.a === 0 && s.b === flatLength(s.p));
-    applyFormat(book, targets, pn.clip, { char: true, para });
-    for (const s of sp) this.rerenderPara(s.p);
-    this.refreshNums(); this.restoreSel(sel);
-    this.commit("hist.painter"); this.schedulePaginate();
-    if (!pn.sticky) this.cancelPainter();
-  }
+  startPainter = oleMod.startPainter;
+  cancelPainter = painterMod.cancelPainter;
+  private applyPainter = painterMod.applyPainter;
 
   // ───────── pencarian ─────────
 
-  search(o: SearchOpts): SearchResult {
-    const r = this.book ? findAll(this.book, o) : { hits: [], truncated: false, paragraphs: 0 };
-    this.findHits = r.hits;
-    this.findCur = -1;
-    this.applyHighlights();
-    return r;
-  }
-  clearSearch() { this.findHits = []; this.findCur = -1; this.clearHighlights(); }
-  pageOfHit(h: Hit): number { return Number(this.reg.domOf.get(h.p)?.closest<HTMLElement>(".dx-page")?.dataset.no ?? 0); }
-  gotoHit(i: number) {
-    const h = this.findHits[i];
-    if (!h) return;
-    this.findCur = i;
-    const d = this.reg.domOf.get(h.p);
-    if (!d) return;
-    this.applyHighlights();
-    const r = rangeFromFlat(d, h.start, h.end);
-    if (typeof r.getBoundingClientRect === "function") {
-      const rect = r.getBoundingClientRect();
-      const hr = this.host.getBoundingClientRect();
-      if (rect.top < hr.top + 40 || rect.bottom > hr.bottom - 40) this.host.scrollTop += rect.top - hr.top - hr.height / 3;
-      if (rect.left < hr.left || rect.right > hr.right) this.host.scrollLeft += rect.left - hr.left - 60;
-    }
-    window.getSelection()?.setBaseAndExtent(r.startContainer, r.startOffset, r.endContainer, r.endOffset);
-  }
-  private clearHighlights() {
-    const hl = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-    hl?.delete("dx-find"); hl?.delete("dx-find-cur");
-  }
-  applyHighlights() {
-    const hl = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-    const H = (window as unknown as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
-    if (!hl || !H) return;
-    this.clearHighlights();
-    if (!this.findHits.length) return;
-    const all: Range[] = []; let cur: Range | undefined;
-    this.findHits.forEach((h, i) => {
-      const d = this.reg.domOf.get(h.p);
-      if (!d || !d.isConnected) return;
-      const r = rangeFromFlat(d, h.start, h.end);
-      if (i === this.findCur) cur = r; else all.push(r);
-    });
-    hl.set("dx-find", new H(...all));
-    if (cur) hl.set("dx-find-cur", new H(cur));
-  }
-  replaceHitsBy(hits: Hit[], o: SearchOpts, replacement: string): number {
-    if (!this.book || this.readonly || !hits.length) return 0;
-    const n = replaceHits(hits, o, replacement);
-    for (const p of new Set(hits.map(h => h.p))) { normalize(p); this.rerenderPara(p); }
-    this.commit("hist.replace"); this.schedulePaginate(30);
-    return n;
-  }
+  search = painterMod.search;
+  clearSearch = searchMod.clearSearch;
+  pageOfHit = searchMod.pageOfHit;
+  gotoHit = searchMod.gotoHit;
+  clearHighlights = searchMod.clearHighlights;
+  applyHighlights = searchMod.applyHighlights;
+  replaceHitsBy = searchMod.replaceHitsBy;
 
   // ───────── daftar isi ─────────
 
   /** Teks bawaan daftar isi (diisi editor sesuai bahasa). */
   tocText = { title: "Table of Contents", empty: "No table of contents entries found." };
 
-  tocList(): TocField[] { return this.book ? findTocs(this.book) : []; }
-  /** Nomor halaman tampil (sesuai `pgNumType`: mulai dari / format) tempat paragraf berada. */
-  private pageOfPara(p: XEl): string | undefined {
-    return this.reg.domOf.get(p)?.closest<HTMLElement>(".dx-page")?.dataset.disp || undefined;
-  }
-  private tocContentTw(): number {
-    const sc = this.book!.sections()[0];
-    return Math.max(1440, sc.w - sc.ml - sc.mr);
-  }
-  private ensureTocStyles() {
-    const book = this.book!;
-    if (ensureTocStyles(book, o => addStyle(book.doc, o))) book.rebuildEngines();
-  }
-  /** Sisipkan daftar isi di kursor (setelah paragraf aktif). Mengembalikan false bila tidak ada dokumen / readonly. */
-  insertToc(partial: Partial<TocOptions> = {}): boolean {
-    const book = this.book;
-    if (!book || this.readonly) return false;
-    const o: TocOptions = { ...DEFAULT_TOC, title: this.tocText.title, ...partial };
-    this.ensureTocStyles();
-    const pt = this.selPoints();
-    const ref = pt?.b.p;
-    const container = (ref && book.parentOf(ref)) || book.body;
-    const skip = new Set<XEl>();
-    const headings = tocHeadings(book, this.outline(), o, skip);
-    const paras = buildTocParagraphs({ book, headings, options: o, pageOf: p => this.pageOfPara(p), contentTw: this.tocContentTw(), emptyText: this.tocText.empty });
-    const kids = [...(o.title ? [buildTocTitle(book, o.title)] : []), ...paras];
-    const sdt = wrapTocSdt(kids);
-    if (ref && book.parentOf(ref)) insertAfter(container, ref, sdt);
-    else { container.children.push(sdt); container.selfClosing = false; }
-    book.reindex();
-    this.renderAll({ sel: null });
-    this.refreshTocPages();
-    this.commit("hist.toc");
-    return true;
-  }
-  /** Perbarui daftar isi (semua, atau satu menurut indeks) dari judul saat ini + nomor halaman terbaru. Mengembalikan jumlah yang diperbarui. */
-  updateToc(which?: number): number {
-    const book = this.book;
-    if (!book || this.readonly) return 0;
-    const tocs = findTocs(book);
-    if (!tocs.length || (which !== undefined && !tocs[which])) return 0;
-    this.ensureTocStyles();
-    this.rebuildTocs(which);
-    this.renderAll({ sel: null });
-    this.refreshTocPages(which);
-    this.commit("hist.toc");
-    return which === undefined ? tocs.length : 1;
-  }
-  private rebuildTocs(which?: number) {
-    const book = this.book!;
-    const tocs = findTocs(book);
-    const skip = new Set<XEl>(tocs.flatMap(t => t.paras));
-    const outline = this.outline();
-    for (const f of [...tocs].reverse()) {
-      if (which !== undefined && f.index !== which) continue;
-      const headings = tocHeadings(book, outline, f.options, skip);
-      const paras = buildTocParagraphs({ book, headings, options: f.options, pageOf: p => this.pageOfPara(p), contentTw: this.tocContentTw(), emptyText: this.tocText.empty });
-      const at = f.container.children.indexOf(f.paras[0]);
-      for (const p of f.paras) removeNode(f.container, p);
-      f.container.children.splice(Math.max(0, at), 0, ...paras);
-      f.container.selfClosing = false;
-    }
-    book.reindex();
-  }
-  /** Nomor halaman bergantung pada tata letak; ulangi (maks. 3 kali) sampai stabil. */
-  private refreshTocPages(which?: number) {
-    const book = this.book!;
-    const sig = () => this.outline().map(h => this.pageOfPara(h.p) ?? 0).join(",");
-    let last = sig();
-    for (let i = 0; i < 3; i++) {
-      this.rebuildTocs(which);
-      this.renderAll({ sel: null });
-      const now = sig();
-      if (now === last) break;
-      last = now;
-    }
-    void book;
-  }
-  /** Hapus daftar isi (semua, atau satu menurut indeks). Mengembalikan jumlah yang dihapus. */
-  removeToc(which?: number): number {
-    const book = this.book;
-    if (!book || this.readonly) return 0;
-    const tocs = findTocs(book);
-    let n = 0;
-    for (const f of [...tocs].reverse()) {
-      if (which !== undefined && f.index !== which) continue;
-      removeTocField(book, f); n++;
-    }
-    if (!n) return 0;
-    book.reindex();
-    this.renderAll({ sel: null });
-    this.commit("hist.toc");
-    return n;
-  }
+  tocList = tocMod.tocList;
+  pageOfPara = tocMod.pageOfPara;
+  tocContentTw = tocMod.tocContentTw;
+  ensureTocStyles = tocMod.ensureTocStyles;
+  insertToc = tocMod.insertToc;
+  updateToc = tocMod.updateToc;
+  rebuildTocs = tocMod.rebuildTocs;
+  refreshTocPages = tocMod.refreshTocPages;
+  removeToc = tocMod.removeToc;
 
   // ───────── navigasi & cari/ganti lintas jenis (event bus) ─────────
 
-  private findCursor = createFindCursor<{ m: FindMatch; hit?: number; link?: DocxLink }>();
+  findCursor = createFindCursor<{ m: FindMatch; hit?: number; link?: DocxLink }>();
 
-  /** Cari lintas jenis (`text`, `headerFooter`, `link`; default semuanya). Hasil pertama disorot kecuali `select === false`. */
-  findMatches(spec: FindSpec): FindResult {
-    const book = this.book;
-    const empty: FindResult = { query: spec.query, count: 0, matches: [], current: -1 };
-    if (!book || !spec.query) { this.clearSearch(); this.findCursor.clear(); return empty; }
-    const kinds = (spec.kinds?.length ? spec.kinds : ["text", "headerFooter", "link"]) as ReplaceKind[];
-    const limit = spec.limit ?? 2000;
-    const items: { m: FindMatch; hit?: number; link?: DocxLink }[] = [];
-    let error: string | undefined, truncated = false;
-    const add = (m: Omit<FindMatch, "index">, extra: { hit?: number; link?: DocxLink }) => { if (items.length < limit) items.push({ m: { ...m, index: items.length }, ...extra }); else truncated = true; };
-    if (kinds.includes("text")) {
-      const r = this.search({ query: spec.query, regex: !!spec.regex, caseSensitive: !!spec.caseSensitive, wholeWord: !!spec.wholeWord });
-      error = r.error; truncated ||= r.truncated;
-      r.hits.forEach((h, i) => add({
-        kind: "text", text: h.text, before: h.before, after: h.after,
-        location: h.where.kind === "table" ? `¶${h.where.para} · T${h.where.table} r${h.where.row} c${h.where.col}` : `¶${h.where.para}`,
-        target: { kind: "paragraph", index: h.where.para, start: h.start, end: h.end },
-      }, { hit: i }));
-    } else this.clearSearch();
-    if (kinds.includes("headerFooter")) {
-      for (const h of findInHeaderFooter(book, spec, limit)) add({ kind: "headerFooter", text: h.text, before: h.before, after: h.after, location: h.part, target: { kind: "page", page: 1 } }, {});
-    }
-    for (const sk of ["notes", "comment"] as const) {
-      if (!kinds.includes(sk)) continue;
-      for (const h of findInSideParts(book, sk, spec, limit)) {
-        const para = sideRefParagraph(book, h.part, h.id);
-        add({ kind: sk, text: h.text, before: h.before, after: h.after, location: `${h.part === "comments" ? "Comment" : h.part === "endnotes" ? "Endnote" : "Footnote"} ${h.id}${h.author ? ` · ${h.author}` : ""}`, target: para ? { kind: "paragraph", index: para } : { kind: "page", page: 1 } }, {});
-      }
-    }
-    if (kinds.includes("link")) {
-      const { re } = compileFind(spec);
-      if (re) for (const l of listLinks(book)) {
-        re.lastIndex = 0;
-        if (re.test(l.url)) add({ kind: "link", text: l.url, before: "", after: l.text, location: `¶${l.para}`, target: { kind: "link", id: l.id } }, { link: l });
-      }
-    }
-    this.findCursor.set(items, -1);
-    const res: FindResult = { query: spec.query, count: items.length, matches: items.map(i => i.m), error, truncated, current: -1 };
-    if (spec.select !== false && items.length) res.current = this.findStep(1)?.index ?? -1;
-    return res;
-  }
-  /** Maju/mundur ke hasil cari berikutnya (berputar) dan fokuskan. */
-  findStep(dir: 1 | -1): FindMatch | undefined {
-    const it = this.findCursor.step(dir);
-    if (!it) return undefined;
-    if (it.hit !== undefined) this.gotoHit(it.hit);
-    else if (it.link) { this.focusPara(it.link.p, 0, true); }
-    else this.gotoPage(1);
-    return it.m;
-  }
-  findClear() { this.findCursor.clear(); this.clearSearch(); }
+  findMatches = searchMod.findMatches;
+  findStep = searchMod.findStep;
+  findClear = searchMod.findClear;
   get findIndex() { return this.findCursor.index; }
 
-  private gotoPage(n: number): boolean {
-    const pages = [...this.pagesEl.querySelectorAll<HTMLElement>(".dx-page")];
-    const pg = pages.find(p => Number(p.dataset.no) === n);
-    if (!pg) return false;
-    pg.scrollIntoView({ block: "start", behavior: "auto" });
-    const firstP = pg.querySelector<HTMLElement>(".dx-p");
-    const p = firstP ? this.reg.elOf.get(firstP) : undefined;
-    if (p && this.isBodyPara(p)) { this.focusPara(p, 0, false); }
-    return true;
-  }
-  private firstParaOfCell(tc: XEl): XEl | undefined { return this.firstParaIn(tc); }
+  gotoPage = searchMod.gotoPage;
+  firstParaOfCell = searchMod.firstParaOfCell;
 
-  /** Pindahkan fokus/viewport ke target. Mengembalikan hasil (ok=false bila target tidak ditemukan). */
-  gotoTarget(t: DocxNavTarget): NavEvent {
-    const book = this.book;
-    const fail = (): NavEvent => ({ target: t, ok: false });
-    if (!book) return fail();
-    const paras = () => [...book.paragraphs()].map(x => x.p);
-    const toPara = (p: XEl | undefined, start?: number, end?: number, label?: string): NavEvent => {
-      if (!p) return fail();
-      if (start !== undefined && end !== undefined && end > start) { this.focusPara(p, start, true); this.selectRange(p, start, end); }
-      else this.focusPara(p, start ?? 0, true);
-      return { target: t, ok: true, label };
-    };
-    switch (t.kind) {
-      case "page": {
-        const n = Math.max(1, Math.min(this.paginator.count || 1, Math.round(t.page)));
-        return this.gotoPage(n) ? { target: t, ok: true, label: `${n}/${this.paginator.count}` } : fail();
-      }
-      case "paragraph": { const l = paras(); return toPara(l[Math.round(t.index) - 1], t.start, t.end, `¶${t.index}/${l.length}`); }
-      case "heading": {
-        const o = this.outline();
-        const h = t.index !== undefined ? o[t.index] : t.text ? o.find(x => x.text.toLowerCase() === t.text!.toLowerCase()) ?? o.find(x => x.text.toLowerCase().includes(t.text!.toLowerCase())) : undefined;
-        return toPara(h?.p, 0, undefined, h?.text);
-      }
-      case "bookmark": {
-        const bs = descendAll(book.body, "bookmarkStart").find(b => attr(b, "name") === t.name);
-        if (!bs) return fail();
-        const p = paras().find(q => descendAll(q, "bookmarkStart").includes(bs));
-        return p ? toPara(p, 0, undefined, t.name) : (this.scrollToBookmark(t.name), { target: t, ok: true, label: t.name });
-      }
-      case "table": {
-        const tbl = book.tables()[Math.round(t.index) - 1];
-        if (!tbl) return fail();
-        const rows = els(tbl, "tr");
-        const tr = rows[Math.max(0, Math.min(rows.length - 1, (t.row ?? 1) - 1))];
-        const cells = tr ? els(tr, "tc") : [];
-        const tc = cells[Math.max(0, Math.min(cells.length - 1, (t.col ?? 1) - 1))];
-        return toPara(tc ? this.firstParaOfCell(tc) : undefined, 0, undefined, `T${t.index}`);
-      }
-      case "toc": { const f = this.tocList()[t.index ?? 0]; return toPara(f?.paras[0], 0, undefined, "TOC"); }
-      case "link": { const l = listLinks(book).find(x => x.id === t.id); return toPara(l?.p, 0, undefined, l?.url); }
-      case "search": {
-        const r = this.findMatches({ query: t.query, regex: t.regex, caseSensitive: t.caseSensitive, wholeWord: t.wholeWord, kinds: ["text"], select: false });
-        const i = t.occurrence ?? 0;
-        if (!r.count || i < 0 || i >= r.count) return fail();
-        this.findCursor.index = i - 1;
-        const m = this.findStep(1);
-        return { target: t, ok: !!m, label: `${i + 1}/${r.count}` };
-      }
-      case "match": {
-        const m = this.findCursor.items[t.index];
-        if (!m) return fail();
-        this.findCursor.index = t.index - 1;
-        this.findStep(1);
-        return { target: t, ok: true, label: `${t.index + 1}/${this.findCursor.items.length}` };
-      }
-      case "start": { const p = paras()[0]; return toPara(p, 0, undefined, "start"); }
-      case "end": { const l = paras(); const p = l[l.length - 1]; return toPara(p, p ? flatLength(p) : 0, undefined, "end"); }
-    }
-  }
+  gotoTarget = searchMod.gotoTarget;
 
-  /** Daftar hyperlink dokumen (body). */
-  linkItems(): LinkItem[] { return this.book ? listLinks(this.book).map(toLinkItem) : []; }
-  /** Pasang/ubah tautan pada hyperlink hasil `linkItems()` (id). */
-  updateLink(id: string, patch: { url?: string; tooltip?: string }): boolean {
-    const book = this.book;
-    if (!book || this.readonly) return false;
-    const l = listLinks(book).find(x => x.id === id);
-    if (!l) return false;
-    if (patch.url !== undefined) setLinkTarget(book, l.el, patch.url, patch.tooltip);
-    else if (patch.tooltip !== undefined) { l.el.attrs = l.el.attrs.filter(a => a.name.local !== "tooltip"); if (patch.tooltip) setAttr(l.el, "tooltip", patch.tooltip); }
-    this.rerenderPara(l.p);
-    this.commit("hist.link");
-    return true;
-  }
-  removeLinkById(id: string): boolean {
-    const book = this.book;
-    if (!book || this.readonly) return false;
-    const l = listLinks(book).find(x => x.id === id);
-    if (!l) return false;
-    removeLink(book, l);
-    this.rerenderPara(l.p);
-    this.commit("hist.link");
-    return true;
-  }
-  /** Ganti URL massal (substring/regex pada URL tautan). Mengembalikan jumlah tautan yang berubah. */
-  replaceLinks(spec: { query: string; regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean }, replacement: string): number {
-    const book = this.book;
-    if (!book || this.readonly) return 0;
-    const n = replaceLinkUrls(book, spec, replacement);
-    if (n) { this.renderAll({ sel: null }); this.commit("hist.link"); }
-    return n;
-  }
+  linkItems = searchMod.linkItems;
+  updateLink = searchMod.updateLink;
+  removeLinkById = searchMod.removeLinkById;
+  replaceLinks = searchMod.replaceLinks;
 
-  /**
-   * Ganti berdasarkan jenis (satu riwayat undo untuk seluruh permintaan).
-   * `text`/`headerFooter`/`link`: `query` teks/regex; `font`/`color`/`fill`: `query` nilai persis, `replacement` kosong = hapus (warna).
-   */
-  replaceKinds(spec: ReplaceSpec, onlyCurrent = false): ReplaceReport {
-    const book = this.book;
-    const kinds = (spec.kinds?.length ? spec.kinds : ["text"]) as ReplaceKind[];
-    const rep = (counts: Partial<Record<ReplaceKind, number>>) => makeReport(kinds, DOCX_REPLACE_KINDS, counts);
-    if (!book || this.readonly || !spec.query) return { ...rep({}), error: this.readonly ? "readonly" : undefined };
-    const counts: Partial<Record<ReplaceKind, number>> = {};
-    const touched = new Set<XEl>();
-    let structural = false;
-    const supported = kinds.filter(k => DOCX_REPLACE_KINDS.includes(k));
-    if (onlyCurrent && supported.every(k => !isValueKind(k))) {
-      // satu hasil saja: yang aktif (atau pertama) menurut jenis yang diminta
-      if (!this.findCursor.items.length) this.findMatches({ ...spec, kinds: supported, select: false });
-      const cur = this.findCursor.current ?? this.findCursor.items[0];
-      if (!cur) return rep({});
-      if (cur.hit !== undefined) {
-        const hit = this.findHits[cur.hit];
-        if (hit) { counts.text = replaceHits([hit], searchOpts(spec), spec.replacement); normalize(hit.p); touched.add(hit.p); }
-      } else if (cur.link) {
-        const { re } = compileFind(spec);
-        if (re) { const r = replaceInString(cur.link.url, re, spec.replacement, !!spec.regex); if (r.count && r.text.trim()) { setLinkTarget(book, cur.link.el, r.text); counts.link = 1; structural = true; } }
-      } else if (cur.m.kind === "notes" || cur.m.kind === "comment") {
-        const sk = cur.m.kind;
-        const all = findInSideParts(book, sk, spec);
-        const idx = this.findCursor.items.filter(x => x.m.kind === sk).indexOf(cur);
-        if (all[idx]) { counts[sk] = replaceInSideHitAt(book, all[idx], spec, spec.replacement); structural = true; }
-      } else if (cur.m.kind === "headerFooter") {
-        // hasil header/footer tunggal: ganti kemunculan pertama pada urutan yang sama dengan pencarian
-        const all = findInHeaderFooter(book, spec);
-        const idx = this.findCursor.items.filter(x => x.m.kind === "headerFooter").indexOf(cur);
-        if (all[idx]) { counts.headerFooter = replaceInHeaderFooterAt(book, all[idx], spec, spec.replacement); structural = true; }
-      }
-    } else {
-      for (const k of supported) {
-        if (k === "text") {
-          const r = findAll(book, searchOpts(spec));
-          counts.text = replaceHits(r.hits, searchOpts(spec), spec.replacement);
-          for (const h of r.hits) { normalize(h.p); touched.add(h.p); }
-        } else if (k === "headerFooter") { counts.headerFooter = replaceInHeaderFooter(book, spec, spec.replacement); structural ||= !!counts.headerFooter; }
-        else if (k === "notes" || k === "comment") { counts[k] = replaceInSideParts(book, k, spec, spec.replacement); structural ||= !!counts[k]; }
-        else if (k === "link") { counts.link = replaceLinkUrls(book, spec, spec.replacement); structural ||= !!counts.link; }
-        else if (k === "font") { counts.font = replaceFonts(book, spec.query, spec.replacement); structural ||= !!counts.font; }
-        else if (k === "color") { counts.color = replaceTextColors(book, spec.query, spec.replacement); structural ||= !!counts.color; }
-        else if (k === "fill") { counts.fill = replaceFills(book, spec.query, spec.replacement); structural ||= !!counts.fill; }
-      }
-    }
-    const report = rep(counts);
-    if (report.total) {
-      if (structural) this.renderAll({ sel: null });
-      else for (const p of touched) this.rerenderPara(p);
-      this.commit("hist.replace");
-      this.schedulePaginate(30);
-      this.findCursor.clear(); this.clearSearch();
-    }
-    return report;
-  }
-  /** Hitungan nilai (font/warna/isi) untuk pratinjau sebelum mengganti. */
-  countValue(kind: "font" | "color" | "fill", value: string): number {
-    const b = this.book;
-    if (!b) return 0;
-    return kind === "font" ? findFonts(b, value) : kind === "color" ? findTextColors(b, value) : findFills(b, value);
-  }
+  replaceKinds = searchMod.replaceKinds;
+  countValue = searchMod.countValue;
 
   // ───────── info ─────────
 
@@ -2674,7 +1349,7 @@ export class DocxView {
   }
   scrollToPara(p: XEl) { this.reg.domOf.get(p)?.scrollIntoView({ block: "start", behavior: "smooth" }); }
 
-  private scheduleSelection() { if (this.selRaf) return; this.selRaf = requestAnimationFrame(() => { this.selRaf = 0; this.emitSelection(); }); }
+  scheduleSelection() { if (this.selRaf) return; this.selRaf = requestAnimationFrame(() => { this.selRaf = 0; this.emitSelection(); }); }
 
   emitSelection() {
     const book = this.book;
@@ -2767,18 +1442,7 @@ export class DocxView {
 
 }
 
-// ───────── util ─────────
 
-function serializeShort(el: XEl, max = 1200): string { const s = serialize(el); return s.length > max ? s.slice(0, max) + `… (+${s.length - max})` : s; }
-function ps0(tc: XEl, book: DocxBook): XEl | undefined { let r: XEl | undefined; walkBlocks(tc, el => { if (!r && el.name.local === "p") r = el; }); void book; return r; }
-function insertTextRunDrawing(p: XEl, off: number, drawing: XEl) {
-  insertRunAt(p, off, mk("r", undefined, [mk("rPr", undefined, [mk("noProof")]), drawing]));
-}
-async function decodeImageSize(file: Blob): Promise<{ w: number; h: number; type: string } | undefined> {
-  try {
-    const bmp = await createImageBitmap(file);
-    const r = { w: bmp.width, h: bmp.height, type: file.type };
-    bmp.close();
-    return r;
-  } catch { return undefined; }
-}
+
+
+

@@ -122,3 +122,10 @@ Lihat `editor-kit/README.md` untuk kontrak umum. Khusus maxGraph:
 - `cell.list({kind?})`, `cell.update(id, { label?, x?, y?, w?, h?, style? })`, `cell.remove(ids?)`, `cell.order("front"|"back", ids?)`, `cell.align(mode, ids?)`.
 - **Penggaris**: prop `ruler` / `rulerUnit` (default `px`), tombol di toolbar, API `api.ruler` dan perintah `ruler.show/hide/toggle/setUnit/addGuide/removeGuide/clearGuides/getGuides/measure/setMeasureMode`. Titik nol mengikuti translate/zoom/scroll diagram. Garis bantu hanya referensi visual (tidak menempelkan sel).
 
+### Mode tata letak
+
+Prop `layout="auto|desktop|compact|touch"`, `api.layout.get()/set()`, perintah `layout.get`/`layout.set` (maxGraph: `api.uiLayout`, event `ui-layout`, karena `layout` sudah dipakai tata letak otomatis diagram); lihat `editor-kit/README.md` ("Mode tata letak").
+
+### Drop eksternal
+
+Prop `drop`, `api.drop.handle/accept/setAccept`, perintah `drop.handle` / `drop.accept`, event `drop`. Gambar, berkas format editor, teks, dan tautan ditangani; lihat tabel di `editor-kit/README.md` ("Drop eksternal").

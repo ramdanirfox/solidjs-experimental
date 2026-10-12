@@ -5,6 +5,7 @@ import DocxEditor, { type DocxEditorApi } from "./DocxEditor";
 import { DocxBook } from "./docx-model";
 import { listOle, readCfb } from "./docx-ole";
 import { dispatchCommand } from "../editor-kit/events";
+import { serialize } from "./docx-xml";
 
 beforeAll(() => {
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class { observe() {} disconnect() {} unobserve() {} };
@@ -307,5 +308,89 @@ describe("DocxEditor — format.* & struktur lewat bus", () => {
     expect(api.blocks.insertParagraph({ text: "x" })).toBeUndefined();
     expect(api.tables.insert(2, 2)).toBeUndefined();
     expect(api.blocks.insertPageBreak()).toBe(false);
+  });
+});
+
+
+describe("DocxEditor — layout (mode tata letak)", () => {
+  it("prop layout → data-layout; layout.get/set lewat bus & API; event layout; nilai tak valid ditolak", async () => {
+    const { api, root } = await mount({ layout: "touch" });
+    expect(root.dataset.layout).toBe("touch");
+    expect(api.layout.get().mode).toBe("touch");
+    expect(api.layout.get().setting).toBe("touch");
+    const ev = vi.fn();
+    api.on("layout", ev);
+    expect(await api.run("layout.set", "compact")).toBe(true);
+    expect(root.dataset.layout).toBe("compact");
+    expect(ev.mock.calls.at(-1)![0]).toMatchObject({ mode: "compact", setting: "compact" });
+    expect((await dispatchCommand<{ mode: string }>(root, "docx-editor", "layout.get")).mode).toBe("compact");
+    expect(await api.run("layout.set", "phone")).toBe(false);
+    expect(root.dataset.layout).toBe("compact");
+    expect(api.layout.set("auto")).toBe(true);
+    expect(api.layout.get().setting).toBe("auto");
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["layout.get", "layout.set"]));
+  });
+
+  it("tanpa prop: auto → desktop di lingkungan uji (lebar 0, pointer halus)", async () => {
+    const { root } = await mount();
+    expect(root.dataset.layout).toBe("desktop");
+  });
+});
+
+
+describe("DocxEditor — drop (jalur bersama)", () => {
+  // jsdom belum punya Blob.arrayBuffer
+  if (!File.prototype.arrayBuffer) File.prototype.arrayBuffer = function (this: Blob) { return new Promise<ArrayBuffer>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result as ArrayBuffer); fr.onerror = () => rej(fr.error); fr.readAsArrayBuffer(this); }); };
+  const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const png = () => new File([Uint8Array.from(atob(PNG), c => c.charCodeAt(0))], "p.png", { type: "image/png" });
+
+  it("gambar, teks, url, berkas office lewat api.drop.handle & bus; event drop; saringan jenis", async () => {
+    const { api } = await mount();
+    const ev = vi.fn();
+    api.on("drop", ev);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["drop.handle", "drop.accept"]));
+    expect(await api.run<string[]>("drop.accept")).toEqual(["image", "office", "text", "url"]);
+    const draw0 = (api.getText().match(/\[image\]/g) ?? []).length;
+    const body = () => serialize(api.getBook()!.body);
+    const n0 = (body().match(/<w:drawing/g) ?? []).length;
+    const r = await api.run<{ handled: unknown[]; rejected: unknown[] }>("drop.handle", { files: [png()] });
+    expect(r.handled).toHaveLength(1);
+    expect((body().match(/<w:drawing/g) ?? []).length).toBe(n0 + 1);
+    void draw0;
+    const t = await api.drop.handle({ text: "Teks jatuhan\nbaris dua" });
+    expect(t.handled).toHaveLength(1);
+    expect(api.getText()).toContain("Teks jatuhan");
+    expect(api.getText()).toContain("baris dua");
+    expect((await api.drop.handle({ url: "https://example.com/drop" })).handled).toHaveLength(1);
+    expect(api.getText()).toContain("https://example.com/drop");
+    expect(ev.mock.calls.map(c => c[0].info.items.map((i: { kind: string }) => i.kind))).toEqual([["image"], ["text"], ["url"]]);
+    expect(ev).toHaveBeenCalledTimes(3);
+    expect(ev.mock.calls[0][0].report.handled[0].kind).toBe("image");
+    // berkas sembarang tidak diterima kecuali diminta
+    const pdf = new File(["%PDF"], "a.pdf", { type: "application/pdf" });
+    expect((await api.drop.handle({ files: [pdf] })).rejected[0]).toMatchObject({ reason: "not-accepted" });
+    expect(await api.run("drop.accept", ["image"])).toBe(true);
+    expect((await api.drop.handle({ text: "x" })).rejected[0]).toMatchObject({ reason: "not-accepted" });
+    expect(await api.run("drop.accept", ["bogus"])).toBe(false);
+    // berkas docx dibuka
+    (window as unknown as { confirm: () => boolean }).confirm = () => true;
+    api.drop.setAccept(["office"]);
+    const bytes = (await api.getBytes())!;
+    const loaded = api.events.wait("load", 10000);
+    const o = await api.drop.handle({ files: [new File([bytes as BlobPart], "lain.docx")] });
+    expect(o.handled).toHaveLength(1);
+    await loaded;
+  });
+
+  it("before membatalkan, readonly menolak, drop={false} menonaktifkan", async () => {
+    const a = await mount({ drop: { before: () => false } });
+    expect((await a.api.drop.handle({ text: "x" })).cancelled).toBe(true);
+    unmount?.(); document.body.innerHTML = "";
+    const b = await mount({ readonly: true });
+    expect((await b.api.drop.handle({ text: "x" })).rejected[0]).toMatchObject({ reason: "readonly" });
+    unmount?.(); document.body.innerHTML = "";
+    const c = await mount({ drop: false });
+    expect(c.api.drop.accept()).toEqual([]);
+    expect((await c.api.drop.handle({ text: "x" })).handled).toEqual([]);
   });
 });

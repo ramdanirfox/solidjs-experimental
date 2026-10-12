@@ -29,6 +29,8 @@ function mount(props: Record<string, unknown> = {}) {
   return { api, wrap, root: wrap.querySelector(".mgx-root") as HTMLElement };
 }
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** Panel/dialog dimuat malas (dynamic import): tunggu sampai muncul. */
+const until = async (f: () => unknown, ms = 3000) => { for (let t = 0; t < ms && !f(); t += 10) await wait(10); };
 
 describe("SharedMaxgraphNodeEditor — event", () => {
   it("memancarkan event ke bus, onEvent, dan CustomEvent DOM", async () => {
@@ -232,7 +234,7 @@ describe("SharedMaxgraphNodeEditor — log & info", () => {
     const { api, root } = mount();
     await api.importDrawio(DRAWIO);
     api.showPanel("log");
-    await wait(0);
+    await until(() => root.querySelector(".mgx-dock"));
     expect(root.querySelector(".mgx-dock")).toBeTruthy();
     expect(root.querySelector(".mgx-log-row")).toBeTruthy();
     api.graph.setSelectionCell(api.graph.getDataModel().getCell("b")!);
@@ -317,7 +319,7 @@ describe("SharedMaxgraphNodeEditor — kelompok, label HTML, layar penuh, zoom",
     const c = api.addNode("process", 40, 40, "Satu\nDua")!;
     api.graph.setSelectionCell(c);
     api.openLabelEditor();
-    await wait(0);
+    await until(() => root.querySelector(".mgx-modal"));
     expect(root.querySelector(".mgx-modal")).toBeTruthy();
     expect(root.querySelector<HTMLTextAreaElement>(".mgx-src")!.value).toBe("Satu\nDua");
     [...root.querySelectorAll<HTMLButtonElement>(".mgx-seg button")].find(b => b.textContent === "HTML")!.click();
@@ -650,5 +652,72 @@ describe("SharedMaxgraphNodeEditor — format.*, struktur sel, penggaris", () =>
     expect(api.format.apply({ target: { kind: "all" }, props: { bold: true } }).targets).toBe(0);
     expect(api.cells.remove(["a"])).toBe(0);
     expect(api.cells.update("a", { label: "x" })).toBe(false);
+  });
+});
+
+describe("SharedMaxgraphNodeEditor — layout UI (mode tata letak)", () => {
+  it("prop layout → data-layout; uiLayout & layout.get/set; event ui-layout; layout.* tidak bentrok dengan tata letak otomatis", async () => {
+    const { api, root } = mount({ layout: "touch" });
+    expect(root.dataset.layout).toBe("touch");
+    expect(api.uiLayout.get()).toMatchObject({ mode: "touch", setting: "touch" });
+    const ev = vi.fn();
+    api.on("ui-layout", ev);
+    expect(await api.run("layout.set", "compact")).toBe(true);
+    expect(root.dataset.layout).toBe("compact");
+    expect(ev.mock.calls.at(-1)![0]).toMatchObject({ mode: "compact" });
+    expect((await dispatchCommand<{ mode: string }>(root, "maxgraph-editor", "layout.get")).mode).toBe("compact");
+    expect(await api.run("layout.set", "bogus")).toBe(false);
+    expect(api.uiLayout.set("auto")).toBe(true);
+    // perintah "layout" lama (tata letak otomatis diagram) tetap ada
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["layout", "layout.get", "layout.set"]));
+    expect(() => api.layout("tree" as never)).not.toThrow();
+  });
+});
+
+
+describe("SharedMaxgraphNodeEditor — drop (jalur bersama)", () => {
+  if (!File.prototype.text) File.prototype.text = function (this: Blob) { return new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = () => rej(fr.error); fr.readAsText(this); }); };
+  // jsdom belum punya Blob.arrayBuffer
+  if (!File.prototype.arrayBuffer) File.prototype.arrayBuffer = function (this: Blob) { return new Promise<ArrayBuffer>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result as ArrayBuffer); fr.onerror = () => rej(fr.error); fr.readAsArrayBuffer(this); }); };
+  const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const png = () => new File([Uint8Array.from(atob(PNG), c => c.charCodeAt(0))], "p.png", { type: "image/png" });
+
+  it("gambar → simpul gambar, teks/url → simpul berlabel, .drawio diimpor; seret palet tetap ada; saringan & event", async () => {
+    const { api, root } = mount();
+    const ev = vi.fn();
+    api.on("drop", ev);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["drop.handle", "drop.accept"]));
+    const n0 = api.cells.list({ kind: "vertex" }).length;
+    const r = await api.run<{ handled: unknown[] }>("drop.handle", { files: [png()] });
+    expect(r.handled).toHaveLength(1);
+    const added = api.cells.list({ kind: "vertex" });
+    expect(added.length).toBe(n0 + 1);
+    expect(added.at(-1)!.style).toContain("image");
+    expect(api.getSelection()).toHaveLength(1);
+    expect((await api.drop.handle({ text: "Simpul dari teks" })).handled).toHaveLength(1);
+    expect((await api.drop.handle({ url: "https://example.com/drop" })).handled).toHaveLength(1);
+    expect(api.cells.list().map(c => c.label)).toEqual(expect.arrayContaining(["Simpul dari teks", "https://example.com/drop"]));
+    // undo: satu langkah per drop
+    api.undo();
+    expect(api.cells.list().map(c => c.label)).not.toContain("https://example.com/drop");
+    // berkas draw.io diimpor (ganti isi diagram)
+    const o = await api.drop.handle({ files: [new File([DRAWIO], "x.drawio")] });
+    expect(o.handled).toHaveLength(1);
+    expect(api.cells.list().map(c => c.label)).toEqual(expect.arrayContaining(["A", "B"]));
+    const pdf = new File(["%PDF"], "a.pdf", { type: "application/pdf" });
+    expect((await api.drop.handle({ files: [pdf] })).rejected[0]).toMatchObject({ reason: "not-accepted" });
+    expect(ev.mock.calls.length).toBeGreaterThanOrEqual(5);
+    expect(root.querySelector(".mgx-palette-item")).toBeTruthy();
+  });
+
+  it("before membatalkan, readonly menolak, drop={false} menonaktifkan", async () => {
+    const a = mount({ drop: { before: () => false } });
+    expect((await a.api.drop.handle({ text: "x" })).cancelled).toBe(true);
+    unmount?.(); document.body.innerHTML = "";
+    const b = mount({ readonly: true });
+    expect((await b.api.drop.handle({ text: "x" })).rejected[0]).toMatchObject({ reason: "readonly" });
+    unmount?.(); document.body.innerHTML = "";
+    const c = mount({ drop: false });
+    expect(c.api.drop.accept()).toEqual([]);
   });
 });

@@ -18,11 +18,12 @@ import { anchorRect, buildLayout, colW, measureTextPx, pxToColChars, pxToPt, rec
 import { extractRefs, isErr, nodeToString, SUPPORTED_FUNCTIONS, toText, type Node as FNode, type Val } from "./xlsx-formula";
 import { analyzeFormula, describeCellType, type FormulaIssue } from "./xlsx-formula-check";
 import { shiftRefs } from "./xlsx-cf";
-import { createSampleWorkbook } from "./xlsx-sample";
 import { resolveColor } from "./xlsx-style";
 import { createEventBus, type EditorEventBus } from "../editor-kit/events";
 import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
 import { RulerKit, type RulerEventMap } from "../editor-kit/ruler-kit";
+import { createLayoutController, type LayoutController, type LayoutInfo, type LayoutSetting, type OfficeLayoutEvents } from "../editor-kit/layout";
+import { createDropController, type DropConfig, type DropController, type DropKind, type OfficeDropEvents } from "../editor-kit/drop";
 import { ColorField, type ColorValue } from "../editor-kit/ColorField";
 import { LinkPanel, LINK_LABELS_ID } from "../editor-kit/LinkPanel";
 import { compileFind, createFindCursor, isValueKind, makeReport, matchRanges, replaceInString, snippet, type FindMatch, type FindResult, type FindSpec, type NavEvent, type OfficeNavEvents, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
@@ -49,7 +50,7 @@ export type XlsxNavTarget =
   | { kind: "start" } | { kind: "end" };
 export type XlsxScope = "sheet" | "book" | "selection";
 
-export interface XlsxPreviewEventMap extends Omit<OfficeCommonEvents, "locale">, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, RulerEventMap {
+export interface XlsxPreviewEventMap extends Omit<OfficeCommonEvents, "locale">, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, OfficeLayoutEvents, OfficeDropEvents, RulerEventMap {
   ready: { api: XlsxPreviewApi };
   /** Isi/format workbook berubah (kasar: dipicu setiap perubahan model; cek `modified`). */
   "cell-edit": { sheet: string; row: number; col: number; address: string; text: string };
@@ -138,6 +139,14 @@ export interface XlsxPreviewApi {
   };
   /** Penggaris (px dokumen, 96 dpi), garis bantu — gambar yang dipindah menempel ke garis bantu — dan alat ukur. */
   readonly ruler: RulerKit;
+  /** Mode tata letak yang berlaku (`desktop` | `compact` | `touch`) dan pengaturannya. */
+  readonly layout: { get(): LayoutInfo; set(setting: LayoutSetting): boolean };
+  /** Jalur drop bersama: `handle` menjalankan jalur yang sama dengan drop DOM; `accept`/`setAccept` jenis yang diterima. */
+  readonly drop: {
+    handle(input: { files?: File[]; text?: string; url?: string; x?: number; y?: number }): Promise<import("../editor-kit/drop").DropReport>;
+    accept(): DropKind[];
+    setAccept(list: DropKind[]): boolean;
+  };
   readonly ole: {
     list(sheet?: string): XlsxOleObject[];
     /** Sisipkan berkas apa pun sebagai objek OLE di sel aktif (atau `opts.cell`, mis. "C5"). */
@@ -171,6 +180,16 @@ export interface XlsxPreviewProps {
   ruler?: boolean;
   /** Satuan penggaris. Default "cm". */
   rulerUnit?: RulerUnit;
+  /**
+   * Mode tata letak: `auto` (default; sentuh bila pointer kasar, ringkas bila lebar editor sempit), atau paksa `desktop` | `compact` | `touch`.
+   * Dipasang sebagai `data-layout` pada akar; bisa diubah saat berjalan lewat prop, `api.layout.set` atau perintah `layout.set`.
+   */
+  layout?: LayoutSetting;
+  /**
+   * Drop eksternal (berkas, teks, tautan). `false` = nonaktif. `accept` default `["image","office","text","url"]` (tambahkan `"file"` agar berkas
+   * sembarang disisipkan sebagai objek OLE), `maxSize` byte, `before(info)` dapat membatalkan (`false`). Lihat `editor-kit/README.md`.
+   */
+  drop?: boolean | DropConfig;
 }
 
 const ICONS: Record<string, string> = {
@@ -240,6 +259,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   let oleUpdInput!: HTMLInputElement;
   let oleTarget: string | null = null;
   let ruler: RulerKit | undefined;
+  let layoutCtl: LayoutController | undefined;
+  let dropCtl: DropController | undefined;
   let api: XlsxPreviewApi | undefined;
   let loadSource: XlsxPreviewEventMap["load"]["source"] = "api";
   const ownBus = !props.bus;
@@ -404,7 +425,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     setBusy("Membuat contoh…");
     loadSource = "sample";
     try {
-      const wb = await createSampleWorkbook();
+      const wb = await (await import("./xlsx-sample")).createSampleWorkbook();
       const b = new XlsxBook(wb, "contoh-penjualan.xlsx", 0);
       b.refreshFormulaCaches(); // simpan hasil formula sebagai cache seperti berkas dari Excel
       b.sourceBytes = await b.toBytes(); // "file sumber" untuk workbook contoh
@@ -887,17 +908,19 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     setSelImage(undefined); bumpLayout(); toast("Objek dihapus (Ctrl+Z untuk urungkan)");
     queueMicrotask(() => gridApi?.focus());
   }
-  async function insertImageFile(f: File | undefined | null) {
-    const b = book(), w = ws(); if (!f || !b || !w || ro()) return;
+  async function insertImageFile(f: File | undefined | null, at?: { row: number; col: number }): Promise<boolean> {
+    const b = book(), w = ws(); if (!f || !b || !w || ro()) return false;
     try {
-      const r = b.insertImage(w, new Uint8Array(await f.arrayBuffer()), active().row, active().col);
+      const r = b.insertImage(w, new Uint8Array(await f.arrayBuffer()), (at ?? active()).row, (at ?? active()).col);
       b.commit([r.record], { styleOnly: true });
       setSelImage(`${w.title}#${r.index}`); bumpLayout();
-      pushLog(logEntry("ok", "Gambar", `Gambar “${f.name}” disisipkan di ${addr(active().row, active().col)} (${r.width}×${r.height}px)`));
+      pushLog(logEntry("ok", "Gambar", `Gambar “${f.name}” disisipkan di ${addr((at ?? active()).row, (at ?? active()).col)} (${r.width}×${r.height}px)`));
       toast("Gambar disisipkan — seret untuk memindah, tarik sudut untuk mengubah ukuran");
+      return true;
     } catch (e: any) {
       pushLog(logEntry("error", "Gambar", `Gagal menyisipkan “${f.name}”: ${e?.message ?? e}`, "Format yang didukung: PNG, JPEG, GIF, BMP, WebP, TIFF, SVG, EMF, WMF"));
       toast("Gambar tidak dapat disisipkan — lihat Log");
+      return false;
     }
   }
 
@@ -1435,6 +1458,12 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       },
     },
     ruler: ruler!,
+    drop: {
+      handle: input => dropCtl?.handle(input) ?? Promise.resolve({ handled: [], rejected: [], cancelled: false }),
+      accept: () => dropCtl?.accept() ?? [],
+      setAccept: l => !!dropCtl?.setAccept(l),
+    },
+    layout: { get: () => layoutCtl?.info() ?? { setting: props.layout ?? "auto", mode: "desktop", width: 0, coarse: false, narrow: false }, set: s => !!layoutCtl?.set(s) },
     ole: { list: sheet => (sheet ? book()?.oleList().filter(o => o.sheet === sheet) : book()?.oleList()) ?? [], insert: oleInsert, update: oleUpdate, getBytes: id => book()?.oleBytes(id) ?? Promise.resolve(undefined), resize: oleResize },
   });
   const registerCommands = () => {
@@ -1457,6 +1486,8 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       "link.replace": (f: string, to: string, o?: { regex?: boolean; caseSensitive?: boolean }) => a.links.replace(f, to, o), "link.open": (u: string) => a.links.open(u),
       "ole.list": (s?: string) => a.ole.list(s), "ole.insert": (f: FileInput, o?: object) => a.ole.insert(f, o),
       "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o), "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
+      "drop.handle": (i: Parameters<typeof a.drop.handle>[0]) => a.drop.handle(i), "drop.accept": (l?: DropKind[]) => (l ? a.drop.setAccept(l) : a.drop.accept()),
+      "layout.get": () => a.layout.get(), "layout.set": (s: LayoutSetting) => a.layout.set(s),
       "ruler.show": () => a.ruler.setVisible(true), "ruler.hide": () => a.ruler.setVisible(false), "ruler.toggle": () => a.ruler.toggle(),
       "ruler.setUnit": (u: RulerUnit) => a.ruler.setUnit(u), "ruler.addGuide": (axis: "x" | "y", pos: number) => a.ruler.addGuide(axis, pos),
       "ruler.removeGuide": (id: string) => a.ruler.removeGuide(id), "ruler.clearGuides": () => a.ruler.clearGuides(), "ruler.getGuides": () => a.ruler.getGuides(),
@@ -1465,6 +1496,24 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
     for (const [n, fn] of Object.entries(cmds)) onCleanup(bus.registerCommand(n, fn));
   };
   onMount(() => {
+    layoutCtl = createLayoutController(rootEl, { setting: props.layout, onChange: i => emit("layout", i) });
+    onCleanup(() => layoutCtl?.destroy());
+    createEffect(() => { const s = props.layout; if (s !== undefined) layoutCtl?.set(s); });
+    if (props.drop !== false) {
+      const dcfg: DropConfig = typeof props.drop === "object" ? props.drop : {};
+      dropCtl = createDropController(rootEl, {
+        accept: dcfg.accept, maxSize: dcfg.maxSize, before: dcfg.before, officeExt: /\.(xlsx|xlsm|xltx|xltm)$/i,
+        readonly: ro, onState: setDragOver, onReport: (info, report) => emit("drop", { info, report }),
+        handlers: {
+          image: (it, info) => insertImageFile(it.file, cellAtPoint(info)),
+          office: it => openFile(it.file),
+          text: (it, info) => dropText(it.text!, info),
+          url: (it, info) => dropText(it.text!, info),
+          file: async (it, info) => { const c = cellAtPoint(info) ?? active(); return !!(await api?.ole.insert(it.file!, { cell: addr(c.row, c.col) })); },
+        },
+      });
+      onCleanup(() => dropCtl?.destroy());
+    }
     ruler = new RulerKit({
       frame: frameEl, unit: rulerUnit(), visible: rulerOn(), getGeometry: rulerGeometry, emit: onRulerEvent,
       labels: { corner: "Satuan penggaris (klik untuk ganti)", removeGuide: "Seret untuk memindah. Seret ke penggaris atau klik ganda untuk menghapus." },
@@ -1761,7 +1810,14 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
   const fmtN = (n: number) => (Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 4 }));
 
   // ───────── drag & drop ─────────
-  const onDrop = (e: DragEvent) => { e.preventDefault(); setDragOver(false); void openFile(e.dataTransfer?.files?.[0]); };
+  /** Sel di bawah titik klien (hanya drop DOM); undefined untuk API atau di luar sel. */
+  const cellAtPoint = (info: { x: number; y: number; source: string }) => (info.source === "dom" ? gridApi?.cellAt(info.x, info.y) : undefined);
+  /** Teks/tautan yang dijatuhkan diisikan seperti tempel mulai dari sel di bawah titik. */
+  const dropText = (text: string, info: { x: number; y: number; source: string }) => {
+    const c = cellAtPoint(info);
+    if (c) onSelect({ r1: c.row, c1: c.col, r2: c.row, c2: c.col }, c);
+    pasteText(text);
+  };
 
   const openLink = (_r: number, _c: number, link: any) => {
     const b = book(); if (!b) return;
@@ -1799,9 +1855,7 @@ export default function XlsxPreview(props: XlsxPreviewProps) {
       onCopy={e => onCopyEvt(e)}
       onCut={e => onCopyEvt(e, true)}
       onPaste={onPasteEvt}
-      onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false); }}
-      onDrop={onDrop}
+
     >
       <input ref={imgInput} type="file" hidden accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml,image/tiff" onChange={e => { void insertImageFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
       <input ref={oleInput} type="file" hidden onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void oleInsertUi(f); }} />

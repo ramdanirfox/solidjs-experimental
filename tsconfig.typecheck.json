@@ -1,0 +1,1 @@
+{"extends":"./tsconfig.json","include":["src/**/*"],"exclude":["src-tauri","scripts","node_modules"]}

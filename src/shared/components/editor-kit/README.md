@@ -107,3 +107,52 @@ Setiap operasi struktur memancarkan event `structure` `{ scope, action, ok, deta
 Catatan batas: penyisipan/penghapusan **baris & kolom XLSX** belum ada (library tidak menyediakan penyesuaian referensi rumus); `ruler.*` di maxGraph adalah referensi visual (garis bantu tidak menempelkan sel).
 
 Berkas: `format.ts` (`FormatProps`, `FormatReport`, `splitFormatKeys`, event `format`/`structure`).
+
+## Mode tata letak (`layout`) — desktop / compact / touch
+
+Prop `layout?: "auto" | "desktop" | "compact" | "touch"` (default `auto`) pada keempat editor; mode yang berlaku dipasang di akar sebagai `data-layout="…"` (+ `data-narrow="true"` bila lebar editor < 720px). Semua CSS (`layout.css`) dan JS membaca nilai yang sama.
+
+| Mode | Perilaku |
+| --- | --- |
+| `desktop` | Pita/toolbar penuh, target kursor presisi. |
+| `compact` | Bilah satu baris yang dapat digulir (tanpa keterangan grup), panel samping → lembar bawah, miniatur PPTX → strip horizontal, palet maxGraph → strip, catatan PPTX disembunyikan, bilah status satu baris. |
+| `touch` | Target sentuh ≥ 40px, gagang seleksi diperbesar, menu dibatasi lebar layar, `touch-action: manipulation`; perilaku ringkas di atas berlaku bila lebar sempit. |
+
+`auto`: `touch` bila pointer utama kasar (`(pointer: coarse)`), selain itu `compact` bila lebar **editor itu sendiri** (bukan jendela) < 720px, selain itu `desktop`. Developer dapat memaksa mode lewat prop (bisa diubah saat berjalan), `api.layout.get()/set(setting)` (maxGraph: `api.uiLayout`) atau perintah bus `layout.get` / `layout.set`; event `layout` (maxGraph: `ui-layout`) membawa `{ setting, mode, width, coarse, narrow }`. Nilai tak valid ditolak (`false`).
+
+DOCX: pada mode ringkas/sentuh yang sempit halaman otomatis diskalakan selebar layar (sekali, selama zoom belum diatur manual). Berkas: `layout.ts` (`createLayoutController`, `resolveLayout`), `layout.css`.
+
+Belum (tahap berikutnya): gestur sentuh pada kanvas (pan/pinch-zoom, tekan-lama = klik kanan, gagang jangkauan sel XLSX), penyuntingan header/footer & tab stop tanpa klik ganda.
+
+## Drop eksternal (`drop.ts`)
+
+Satu jalur untuk berkas/teks/tautan yang dijatuhkan ke editor: **klasifikasi → saringan → `before` (dapat membatalkan) → handler per jenis → laporan**. Jalur yang sama dipakai drop DOM dan `api.drop.handle(...)` / perintah `drop.handle`, jadi dapat diuji tanpa `DragEvent`.
+
+| Jenis | Isi | Default |
+| --- | --- | --- |
+| `image` | berkas `image/*` | diterima |
+| `office` | berkas format editor ini (docx / pptx / xlsx / drawio·xml·svg) → dibuka atau diimpor | diterima |
+| `text` | teks polos | diterima |
+| `url` | satu tautan http(s)/mailto | diterima |
+| `file` | berkas lain → objek OLE | **harus diminta** (`accept` memuat `"file"`) |
+
+Prop `drop?: boolean | { accept?, maxSize?, before? }` (`false` = nonaktif; `maxSize` default 25 MB). `before(info)` menerima item yang lolos saringan dan boleh mengembalikan `false` untuk membatalkan seluruh drop. Event `drop` `{ info, report }`; `report = { handled[], rejected[{item, reason}], cancelled }` dengan `reason` ∈ `readonly | not-accepted | too-large | unsupported | cancelled | error`. API: `api.drop.handle({ files?, text?, url?, x?, y? })`, `api.drop.accept()`, `api.drop.setAccept(list)`; bus `drop.handle`, `drop.accept` (tanpa argumen = baca, dengan daftar = ubah). Drag internal (palet node maxGraph, urutan miniatur PPTX) diabaikan kontroler.
+
+| Editor | image | office | text / url | file (opt-in) |
+| --- | --- | --- | --- | --- |
+| DOCX | di paragraf bawah pointer | buka .docx | sisip di titik (baris baru → paragraf) | objek OLE di titik |
+| PPTX | gambar di titik jatuh | buka .pptx | kotak teks di titik | objek OLE di titik |
+| XLSX | gambar di sel bawah pointer | buka .xlsx/.xlsm | diisikan seperti tempel mulai sel bawah pointer (TSV → blok sel; **menimpa isi**, satu undo) | objek OLE di sel |
+| maxGraph | simpul gambar di titik | impor .drawio / XML / pustaka bentuk / `.svg` (sebagai pustaka bentuk) | simpul berlabel di titik | — |
+
+Koordinat jatuh hanya berlaku untuk drop DOM; lewat API item ditaruh di posisi aktif (caret, sel aktif, tengah slide/kanvas). maxGraph menandai akar dengan `data-dropping` selama drag eksternal berada di atasnya.
+
+## Modularitas & ukuran bundel
+
+- **Permukaan publik** tiap folder = `index.ts` (`editor-kit`, `docx-editor`, `pptx-editor`, `xlsx-preview`, `maxgraph-editor`). Modul lain internal. `public-api.test.ts` menjaga ekspor yang dipakai host; data contoh (`*-sample`) sengaja tidak diekspor dan dimuat malas saat `sample` dipakai.
+- **Batas modul** (dijaga `boundaries.test.ts`): `editor-kit` dan `office-shared` tidak mengimpor editor mana pun; satu editor tidak mengimpor editor lain (satu-satunya pengecualian `editor-kit/office-events.ts` → tipe OLE bersama).
+- **Tree-shaking**: `src/shared/components/package.json` mendeklarasikan `"sideEffects": ["**/*.css"]` sehingga mengimpor satu fungsi lewat barrel tidak menyeret modul lain maupun CSS-nya (diukur: 0,4 kB tanpa CSS vs 7,4 kB CSS bila deklarasi dihapus). Pustaka `@office-kit/*` sudah ESM `sideEffects:false`.
+- **Muat malas**: contoh data (`import()` di `openSample`) dan panel/dialog maxGraph (`lazy()`: panel debug, dialog label HTML, dialog tautan). Belum: `cfb` (~64 kB, dipakai sinkron di ~10 titik OLE).
+- **Berkas besar dipecah per fitur**: `docx-view.ts` (2.804 → 1.448 baris + `docx-view-{hf,format,tabs,lists,toc,search,table,image,ole,painter,shared}.ts`), `pptx-view.ts` (1.700 → 1.031 + `pptx-view-*.ts`), `xlsx-model.ts` (1.366 → 852 + `xlsx-model-*.ts`). Setiap pecahan adalah fungsi `this: Kelas` yang dipasang di kelas sebagai properti, jadi `view.nama(...)` tidak berubah. Alat: `scripts/split-class.mjs`, `scripts/extract-top.mjs`, `scripts/fix-split-imports.mjs` (juga `--relax` untuk melepas `private`).
+- **Perintah**: `npm run analyze:editors` (ukuran per entri, awal vs malas, rincian per paket; `--modules` per berkas; `--file=...` untuk konsumen yang hanya mengimpor satu fungsi) dan `npm run typecheck` (tsconfig tanpa `scripts/`; masih ada galat lama di `drawio.ts`, `XlsxShape.tsx`, `pptx-ole*.ts`, dan beberapa berkas uji).
+

@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount } from "solid-js";
 import {
     type Cell,
     type CellStyle,
@@ -32,11 +32,14 @@ import { ColorField, type ColorValue } from "../editor-kit/ColorField";
 import { compileFind, createFindCursor, isValueKind, makeReport, matchRanges, snippet, type FindMatch, type FindResult, type FindSpec, type NavEvent, type ReplaceKind, type ReplaceReport, type ReplaceSpec } from "../editor-kit/find-replace";
 import { normalizeLink, openExternal, type LinkItem } from "../editor-kit/hyperlink";
 import { RulerKit, type RulerEventMap } from "../editor-kit/ruler-kit";
+import { createLayoutController, type LayoutController, type LayoutSetting } from "../editor-kit/layout";
+import { createDropController, type DropConfig, type DropController, type DropKind } from "../editor-kit/drop";
 import { RULER_UNITS, type RulerUnit } from "../editor-kit/ruler-core";
 import { MAXGRAPH_FORMAT_KEYS, applyFormat, listCells, readFormat, resolveCells, updateCell, type CellPatch, type MaxgraphFormatTarget } from "./maxgraph-format";
 import type { FormatSpec } from "../editor-kit/format";
 import { MAXGRAPH_REPLACE_KINDS, allCells, cellName, collectUnits as gCollectUnits, countStyleValue as gCountStyleValue, linkOf, listLinks as gListLinks, replaceStyleValue as gReplaceStyleValue, setCellAttr, type GUnit } from "./maxgraph-nav";
-import { MaxgraphLinksDialog } from "./MaxgraphLinksDialog";
+// Panel/dialog dimuat malas: hanya diunduh saat pertama dibuka
+const MaxgraphLinksDialog = lazy(() => import("./MaxgraphLinksDialog").then(m => ({ default: m.MaxgraphLinksDialog })));
 import {
     DEFAULT_NODE_SIZE,
     DEFAULT_NODE_TYPES,
@@ -61,8 +64,9 @@ import {
     type DrawioPage,
 } from "./drawio";
 import { MaxgraphLogger } from "./logger";
-import { MaxgraphHtmlLabelDialog } from "./MaxgraphHtmlLabelDialog";
-import { MaxgraphDebugPanel, type DebugTab } from "./MaxgraphDebugPanel";
+const MaxgraphHtmlLabelDialog = lazy(() => import("./MaxgraphHtmlLabelDialog").then(m => ({ default: m.MaxgraphHtmlLabelDialog })));
+import type { DebugTab } from "./MaxgraphDebugPanel";
+const MaxgraphDebugPanel = lazy(() => import("./MaxgraphDebugPanel").then(m => ({ default: m.MaxgraphDebugPanel })));
 import { MAX_THUMBNAILS, createThumbnailer, detectShapeLibrary, readShapeLibrary, registerStencils, specToNodeType } from "./shapes";
 import { exportGraphSvg } from "./svg";
 import type {
@@ -190,6 +194,8 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
     let canvasEl!: HTMLDivElement;
     let frameEl!: HTMLDivElement;
     let ruler: RulerKit | undefined;
+    let layoutCtl: LayoutController | undefined;
+    let dropCtl: DropController | undefined;
     const [rulerOn, setRulerOn] = createSignal(!!props.ruler);
     const [rulerUnit, setRulerUnit] = createSignal<RulerUnit>(props.rulerUnit ?? "px");
     let outlineHost: HTMLDivElement | undefined;
@@ -1227,7 +1233,7 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
         // seret dari palet / jatuhkan berkas
         const onDragOver = (e: DragEvent) => {
             if (isReadonly()) return;
-            if (e.dataTransfer?.types.includes(NODE_MIME) || e.dataTransfer?.types.includes("Files")) {
+            if (e.dataTransfer?.types.includes(NODE_MIME)) {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "copy";
             }
@@ -1235,11 +1241,7 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
         const onDrop = (e: DragEvent) => {
             if (isReadonly()) return;
             const files = e.dataTransfer?.files;
-            if (files?.length && !e.dataTransfer?.getData(NODE_MIME)) {
-                e.preventDefault();
-                void (async () => { for (const f of [...files]) await routeFile(f); })();
-                return;
-            }
+            if (files?.length && !e.dataTransfer?.getData(NODE_MIME)) return; // berkas ditangani kontroler drop bersama
             const id = e.dataTransfer?.getData(NODE_MIME);
             if (!id) return;
             e.preventDefault();
@@ -1476,6 +1478,59 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
             else if (type === "ruler:unit") setRulerUnit((payload as RulerEventMap["ruler:unit"]).unit);
             emit(type, payload as never);
         };
+        layoutCtl = createLayoutController(rootEl, { setting: props.layout, onChange: i => emit("ui-layout", i) });
+        disposers.push(() => layoutCtl?.destroy());
+        createEffect(() => { const s = props.layout; if (s !== undefined) layoutCtl?.set(s); });
+        if (props.drop !== false) {
+            const dcfg: DropConfig = typeof props.drop === "object" ? props.drop : {};
+            /** Titik klien → koordinat diagram (hanya drop DOM). */
+            const clientToGraph = (info: { x: number; y: number; source: string }) => {
+                if (info.source !== "dom") return undefined;
+                const v = g.getView(), r = canvasEl.getBoundingClientRect();
+                return { x: (info.x - r.left + canvasEl.scrollLeft) / v.scale - v.translate.x, y: (info.y - r.top + canvasEl.scrollTop) / v.scale - v.translate.y };
+            };
+            const addTextNode = (text: string, info: { x: number; y: number; source: string }) => {
+                const t = nodeTypes()[0];
+                if (!t) return false;
+                const pt = clientToGraph(info);
+                const w = t.width ?? DEFAULT_NODE_SIZE.width, h = t.height ?? DEFAULT_NODE_SIZE.height;
+                return !!addNode(t.id, pt ? pt.x - w / 2 : undefined, pt ? pt.y - h / 2 : undefined, text.length > 120 ? text.slice(0, 117) + "…" : text);
+            };
+            const addImageNode = async (file: File, info: { x: number; y: number; source: string }) => {
+                if (isReadonly()) return false;
+                const dataUrl = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.onerror = () => rej(fr.error); fr.readAsDataURL(file); });
+                const dim = await new Promise<{ w: number; h: number }>(res => { const im = new Image(); const fallback = setTimeout(() => res({ w: 120, h: 80 }), 1500); /* decode macet / lingkungan tanpa pemuatan gambar */ im.onload = () => { clearTimeout(fallback); res({ w: im.naturalWidth || 120, h: im.naturalHeight || 80 }); }; im.onerror = () => { clearTimeout(fallback); res({ w: 120, h: 80 }); }; im.src = dataUrl; });
+                const k = Math.min(1, 240 / dim.w, 240 / dim.h);
+                const w = Math.max(16, Math.round(dim.w * k)), h = Math.max(16, Math.round(dim.h * k));
+                const pt = clientToGraph(info);
+                const v = g.getView();
+                const cx = pt?.x ?? (canvasEl.scrollLeft + canvasEl.clientWidth / 2) / v.scale - v.translate.x;
+                const cy = pt?.y ?? (canvasEl.scrollTop + canvasEl.clientHeight / 2) / v.scale - v.translate.y;
+                let cell: Cell | null = null;
+                g.batchUpdate(() => {
+                    cell = g.insertVertex({
+                        parent: g.getDefaultParent(), value: "", position: [Math.max(0, snapped(cx - w / 2)), Math.max(0, snapped(cy - h / 2))], size: [w, h],
+                        style: { shape: "image", image: dataUrl, imageAspect: true, verticalLabelPosition: "bottom", verticalAlign: "top", strokeColor: "none", fillColor: "none" },
+                    });
+                });
+                if (cell) { g.setSelectionCell(cell); logger.debug("api", `Gambar "${file.name}" dijatuhkan sebagai simpul`, { id: (cell as Cell).getId(), w, h }); }
+                return !!cell;
+            };
+            dropCtl = createDropController(rootEl, {
+                accept: dcfg.accept, maxSize: dcfg.maxSize, before: dcfg.before,
+                // .svg dianggap pustaka bentuk (perilaku lama); gambar raster menjadi simpul gambar
+                officeExt: /\.(drawio|dio|xml|mxlibrary|svg)$/i,
+                readonly: isReadonly, onReport: (info, report) => emit("drop", { info, report }), onState: on => rootEl.toggleAttribute("data-dropping", on),
+                ignore: dt => dt.types.includes(NODE_MIME),
+                handlers: {
+                    image: (it, info) => addImageNode(it.file!, info),
+                    office: async it => { await routeFile(it.file!); },
+                    text: (it, info) => addTextNode(it.text!, info),
+                    url: (it, info) => addTextNode(it.text!, info),
+                },
+            });
+            disposers.push(() => dropCtl?.destroy());
+        }
         ruler = new RulerKit({ frame: frameEl, unit: rulerUnit(), visible: rulerOn(), scrollEl: canvasEl, getGeometry: rulerGeometry, emit: onRulerEvent });
         const refreshRuler = () => ruler?.refresh();
         for (const ev of [InternalEvent.SCALE, InternalEvent.TRANSLATE, InternalEvent.SCALE_AND_TRANSLATE]) g.getView().addListener(ev, refreshRuler);
@@ -1566,6 +1621,12 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
             replaceKinds: () => [...MAXGRAPH_REPLACE_KINDS],
             links: linkApi,
             ruler: ruler!,
+            drop: {
+                handle: input => dropCtl?.handle(input) ?? Promise.resolve({ handled: [], rejected: [], cancelled: false }),
+                accept: () => dropCtl?.accept() ?? [],
+                setAccept: l => !!dropCtl?.setAccept(l),
+            },
+            uiLayout: { get: () => layoutCtl!.info(), set: (s: LayoutSetting) => layoutCtl!.set(s) },
             format: {
                 keys: () => [...MAXGRAPH_FORMAT_KEYS],
                 apply: (spec: FormatSpec<MaxgraphFormatTarget>) => {
@@ -1606,6 +1667,8 @@ export const SharedMaxgraphNodeEditor = (props: SharedMaxgraphNodeEditorProps) =
             "format.keys": () => api!.format.keys(), "format.apply": (s: FormatSpec<MaxgraphFormatTarget>) => api!.format.apply(s), "format.get": (t?: MaxgraphFormatTarget) => api!.format.get(t),
             "cell.list": (f?: { kind?: "vertex" | "edge" }) => api!.cells.list(f), "cell.update": (id: string, p: CellPatch) => api!.cells.update(id, p), "cell.remove": (ids?: string[]) => api!.cells.remove(ids),
             "cell.order": (op: "front" | "back", ids?: string[]) => api!.cells.order(op, ids), "cell.align": (m: Parameters<MaxgraphNodeEditorApi["cells"]["align"]>[0], ids?: string[]) => api!.cells.align(m, ids),
+            "drop.handle": (i: Parameters<MaxgraphNodeEditorApi["drop"]["handle"]>[0]) => api!.drop.handle(i), "drop.accept": (l?: DropKind[]) => (l ? api!.drop.setAccept(l) : api!.drop.accept()),
+            "layout.get": () => api!.uiLayout.get(), "layout.set": (s: LayoutSetting) => api!.uiLayout.set(s),
             "ruler.show": () => ruler!.setVisible(true), "ruler.hide": () => ruler!.setVisible(false), "ruler.toggle": () => ruler!.toggle(),
             "ruler.setUnit": (u: RulerUnit) => ruler!.setUnit(u), "ruler.addGuide": (axis: "x" | "y", pos: number) => ruler!.addGuide(axis, pos),
             "ruler.removeGuide": (id: string) => ruler!.removeGuide(id), "ruler.clearGuides": () => ruler!.clearGuides(), "ruler.getGuides": () => ruler!.getGuides(),

@@ -1,0 +1,6 @@
+{
+  "name": "@sjx/editors",
+  "private": true,
+  "type": "module",
+  "sideEffects": ["**/*.css"]
+}

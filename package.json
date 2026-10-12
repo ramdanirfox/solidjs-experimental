@@ -8,6 +8,8 @@
     "test": "vitest run",
     "test-watch": "vitest",
     "test-ui": "vitest --ui",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "analyze:editors": "node scripts/analyze-editors.mjs",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "tauri": "tauri",

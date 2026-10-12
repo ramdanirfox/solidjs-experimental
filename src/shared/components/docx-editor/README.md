@@ -150,3 +150,10 @@ Lihat `editor-kit/README.md` untuk kontrak umum. Khusus DOCX:
 - Struktur: `paragraph.count/insert({text?,style?,after?})/remove(index)`, `pageBreak.insert(paragraph?)`, `table.list/ops/insert(rows,cols,after?)`, `table.apply({index,row?,col?,toRow?,toCol?,op,arg?})` dengan `op` ∈ `insertRowAbove/Below`, `insertColLeft/Right`, `deleteRows/Cols/Table`, `merge`, `split`, `shade`, `valign`, `noWrap`, `direction`, `cellMargins`, `borders`, `align`, `style`, `look`, `layout`, `width`, `rowHeight`, `headerRow`, `distCols`, `caption`.
 - Ganti baru: `notes` (catatan kaki & akhir) dan `comment` (komentar). Bagian ini memakai mekanisme yang sama dengan header/footer (`book.hf`/`touchHF`): ikut undo dan ditulis ulang saat simpan; paragraf pemisah bawaan dilewati. Hasil `find` menunjuk ke paragraf yang memuat penanda rujukan.
 
+### Mode tata letak
+
+Prop `layout="auto|desktop|compact|touch"`, `api.layout.get()/set()`, perintah `layout.get`/`layout.set`; lihat `editor-kit/README.md` ("Mode tata letak").
+
+### Drop eksternal
+
+Prop `drop`, `api.drop.handle/accept/setAccept`, perintah `drop.handle` / `drop.accept`, event `drop`. Gambar, berkas format editor, teks, dan tautan ditangani; lihat tabel di `editor-kit/README.md` ("Drop eksternal").

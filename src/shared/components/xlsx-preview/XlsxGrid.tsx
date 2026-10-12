@@ -18,6 +18,8 @@ import type { ResolvedStyle } from "./xlsx-style";
 export interface GridApi {
   scrollTo(row: number, col: number): void;
   focus(): void;
+  /** Sel di bawah titik klien (undefined di luar area sel). */
+  cellAt(clientX: number, clientY: number): { row: number; col: number } | undefined;
   /** Posisi area gulir pada layar + gulir saat ini (px sheet ter-zoom) — dasar penggaris. */
   viewport(): { left: number; top: number; scrollX: number; scrollY: number; headerW: number; headerH: number };
 }
@@ -146,6 +148,7 @@ export default function XlsxGrid(props: XlsxGridProps) {
     props.ref?.({
       scrollTo: (r, c) => ensureVisible(r, c),
       focus: () => scroller.focus({ preventScroll: true }),
+      cellAt: (x, y) => { const h = hit(x, y); return h.zone === "cell" ? { row: h.row, col: h.col } : undefined; },
       viewport: () => { const r = scroller.getBoundingClientRect(); return { left: r.left, top: r.top, scrollX: scroller.scrollLeft, scrollY: scroller.scrollTop / geo().scaleY, headerW: HEADER_W, headerH: HEADER_H }; },
     });
     onCleanup(() => ro.disconnect());

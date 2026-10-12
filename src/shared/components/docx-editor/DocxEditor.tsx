@@ -7,17 +7,18 @@ import { For, Show, batch, createEffect, createMemo, createSignal, on, onCleanup
 import { DocxBook, DocxLoadError, PAGE_SIZES } from "./docx-model";
 import { DocxView, DOCX_FORMAT_KEYS, DOCX_TABLE_OPS, type DocxFormatTarget, type DocxNavTarget, type ImgSelInfo, type PainterInfo, type SelInfo } from "./docx-view";
 import type { FormatProps, FormatReport, FormatSpec, OfficeFormatEvents, OfficeStructureEvents } from "../editor-kit/format";
-import { createSampleBook } from "./docx-sample";
 import { exportHtml, exportText } from "./docx-export";
 import { hexDump, isCfb, listOle, readCfb, readVba, streamBytes, vbaPart, type CfbInfo, type OleObject, type VbaInfo } from "./docx-ole";
 import { resolveRevisions } from "./docx-ops";
 import { compileQuery, type Hit, type SearchResult } from "./docx-search";
 import { createI18n, type Lang } from "./docx-i18n";
-import { formatBytes } from "./docx-util";
+import { formatBytes } from "../office-shared/bytes";
 import { oleBytes, oleSize } from "./docx-ole-edit";
 import { createEventBus, type EditorEventBus } from "../editor-kit/events";
 import { readFileInput, oleEventInfo, type FileInput, type OfficeCommonEvents, type OfficeOleEvents, type OleEventInfo, type OleInsertOptions } from "../editor-kit/office-events";
 import { RulerKit, type RulerEventMap, type RulerRegion, type TabType } from "../editor-kit/ruler-kit";
+import { createLayoutController, type LayoutController, type LayoutInfo, type LayoutSetting, type OfficeLayoutEvents } from "../editor-kit/layout";
+import { createDropController, type DropConfig, type DropController, type DropKind, type OfficeDropEvents } from "../editor-kit/drop";
 import { ColorField, type ColorValue } from "../editor-kit/ColorField";
 import { LinkPanel, LINK_LABELS_EN, LINK_LABELS_ID } from "../editor-kit/LinkPanel";
 import type { FindMatch, FindResult, FindSpec, NavEvent, OfficeNavEvents, ReplaceReport, ReplaceSpec } from "../editor-kit/find-replace";
@@ -33,7 +34,7 @@ import { canPreviewOle, prepareOlePreview, type OlePreviewData } from "../office
 import "./docx-editor.css";
 
 /** Event yang dipancarkan editor DOCX (bus: `api.events`; DOM: CustomEvent `docx-editor:<tipe>` pada elemen akar). */
-export interface DocxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, RulerEventMap {
+export interface DocxEditorEventMap extends OfficeCommonEvents, OfficeOleEvents, OfficeNavEvents, OfficeLinkEvents, OfficeFormatEvents, OfficeStructureEvents, OfficeLayoutEvents, OfficeDropEvents, RulerEventMap {
   /** Editor siap dipakai (dokumen mungkin belum selesai dimuat → tunggu `load`). */
   ready: { api: DocxEditorApi };
   selection: { info: SelInfo };
@@ -161,6 +162,14 @@ export interface DocxEditorApi {
   };
   /** Penggaris, garis bantu (alignment), dan alat ukur. */
   readonly ruler: RulerKit;
+  /** Mode tata letak yang berlaku (`desktop` | `compact` | `touch`) dan pengaturannya. */
+  readonly layout: { get(): LayoutInfo; set(setting: LayoutSetting): boolean };
+  /** Jalur drop bersama: `handle` menjalankan jalur yang sama dengan drop DOM; `accept`/`setAccept` jenis yang diterima. */
+  readonly drop: {
+    handle(input: { files?: File[]; text?: string; url?: string; x?: number; y?: number }): Promise<import("../editor-kit/drop").DropReport>;
+    accept(): DropKind[];
+    setAccept(list: DropKind[]): boolean;
+  };
   readonly ole: {
     list(): OleObject[];
     /** Sisipkan berkas apa pun sebagai objek OLE di kursor. */
@@ -208,6 +217,16 @@ export interface DocxEditorProps {
   ruler?: boolean;
   /** Satuan penggaris. Default "cm". */
   rulerUnit?: RulerUnit;
+  /**
+   * Mode tata letak: `auto` (default; sentuh bila pointer kasar, ringkas bila lebar editor sempit), atau paksa `desktop` | `compact` | `touch`.
+   * Dipasang sebagai `data-layout` pada akar; bisa diubah saat berjalan lewat prop, `api.layout.set` atau perintah `layout.set`.
+   */
+  layout?: LayoutSetting;
+  /**
+   * Drop eksternal (berkas, teks, tautan). `false` = nonaktif. `accept` default `["image","office","text","url"]` (tambahkan `"file"` agar berkas
+   * sembarang disisipkan sebagai objek OLE), `maxSize` byte, `before(info)` dapat membatalkan (`false`). Lihat `editor-kit/README.md`.
+   */
+  drop?: boolean | DropConfig;
 }
 
 const ICONS: Record<string, string> = {
@@ -299,6 +318,8 @@ export default function DocxEditor(props: DocxEditorProps) {
   let oleUpdInput!: HTMLInputElement;
   let oleTarget: string | null = null;
   let ruler: RulerKit | undefined;
+  let layoutCtl: LayoutController | undefined;
+  let dropCtl: DropController | undefined;
   let api: DocxEditorApi | undefined;
   let loadSource: DocxEditorEventMap["load"]["source"] = "api";
   const ownBus = !props.bus;
@@ -397,6 +418,7 @@ export default function DocxEditor(props: DocxEditorProps) {
     if (fq()) runSearch();
     ruler?.clearGuides();
     ruler?.refresh();
+    queueMicrotask(autoFitNarrow);
     emit("load", { fileName: b.fileName, size: b.originalBytes.length, source: loadSource });
     loadSource = "api";
   };
@@ -425,7 +447,7 @@ export default function DocxEditor(props: DocxEditorProps) {
     if (book()?.modified && !ro() && !window.confirm(t("confirm.discard"))) return;
     setBusy("busy.sample");
     loadSource = "sample";
-    try { attach(await createSampleBook({ lang: lang() })); } catch (e) { setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: "parse", name: "sample" }); setBusy(null); emit("load-error", { message: e instanceof Error ? e.message : String(e), code: "parse", fileName: "sample" }); }
+    try { attach(await (await import("./docx-sample")).createSampleBook({ lang: lang() })); } catch (e) { setLoadErr({ msg: e instanceof Error ? e.message : String(e), code: "parse", name: "sample" }); setBusy(null); emit("load-error", { message: e instanceof Error ? e.message : String(e), code: "parse", fileName: "sample" }); }
   };
   const newBlank = async () => {
     const { createDocx } = await import("@office-kit/docx");
@@ -703,6 +725,12 @@ export default function DocxEditor(props: DocxEditorProps) {
       clear: () => view?.clearTabStops(),
     },
     ruler: ruler!,
+    drop: {
+      handle: input => dropCtl?.handle(input) ?? Promise.resolve({ handled: [], rejected: [], cancelled: false }),
+      accept: () => dropCtl?.accept() ?? [],
+      setAccept: l => !!dropCtl?.setAccept(l),
+    },
+    layout: { get: () => layoutCtl?.info() ?? { setting: props.layout ?? "auto", mode: "desktop", width: 0, coarse: false, narrow: false }, set: s => !!layoutCtl?.set(s) },
     ole: {
       list: () => oleList(), insert: oleInsert, update: oleUpdate,
       getBytes: relId => { const b = book(); return b ? oleBytes(b, relId)?.data : undefined; },
@@ -743,6 +771,8 @@ export default function DocxEditor(props: DocxEditorProps) {
       "ole.update": (id: string, f: FileInput, o?: OleInsertOptions) => a.ole.update(id, f, o),
       "ole.getBytes": (id: string) => a.ole.getBytes(id), "ole.resize": (id: string, w: number, h: number) => a.ole.resize(id, w, h),
       "ole.preview": (id: string) => a.ole.preview(id), "ole.closePreview": () => a.ole.closePreview(),
+      "drop.handle": (i: Parameters<typeof a.drop.handle>[0]) => a.drop.handle(i), "drop.accept": (l?: DropKind[]) => (l ? a.drop.setAccept(l) : a.drop.accept()),
+      "layout.get": () => a.layout.get(), "layout.set": (s: LayoutSetting) => a.layout.set(s),
       "ruler.show": () => a.ruler.setVisible(true), "ruler.hide": () => a.ruler.setVisible(false), "ruler.toggle": () => a.ruler.toggle(),
       "ruler.setUnit": (u: RulerUnit) => a.ruler.setUnit(u), "ruler.addGuide": (axis: "x" | "y", pos: number) => a.ruler.addGuide(axis, pos),
       "ruler.removeGuide": (id: string) => a.ruler.removeGuide(id), "ruler.clearGuides": () => a.ruler.clearGuides(), "ruler.getGuides": () => a.ruler.getGuides(),
@@ -755,6 +785,24 @@ export default function DocxEditor(props: DocxEditorProps) {
     view = new DocxView(hostEl, hooks());
     view.readonly = ro();
     view.tocText = { title: t("toc.title"), empty: t("toc.empty") };
+    layoutCtl = createLayoutController(rootEl, { setting: props.layout, onChange: i => { emit("layout", i); autoFitNarrow(); } });
+    onCleanup(() => layoutCtl?.destroy());
+    createEffect(() => { const s = props.layout; if (s !== undefined) layoutCtl?.set(s); });
+    if (props.drop !== false) {
+      const dcfg: DropConfig = typeof props.drop === "object" ? props.drop : {};
+      dropCtl = createDropController(rootEl, {
+        accept: dcfg.accept, maxSize: dcfg.maxSize, before: dcfg.before, officeExt: /\.(docx|docm|dotx|dotm)$/i,
+        readonly: ro, onState: setDragOver, onReport: (info, report) => emit("drop", { info, report }),
+        handlers: {
+          image: (it, info) => view?.insertImageAtPoint(it.file!, info.x, info.y),
+          office: it => { void openFile(it.file); },
+          text: (it, info) => view?.insertTextAtPoint(it.text!, info.x, info.y),
+          url: (it, info) => view?.insertTextAtPoint(it.text!, info.x, info.y),
+          file: async (it, info) => { view?.placeCaretAtPoint(info.x, info.y); return !!(await api?.ole.insert(it.file!)); },
+        },
+      });
+      onCleanup(() => dropCtl?.destroy());
+    }
     ruler = new RulerKit({
       frame: frameEl, unit: rulerUnit(), visible: rulerOn(), scrollEl: hostEl, getGeometry: rulerGeometry, getRegions: rulerRegions, emit: onRulerEvent,
       labels: { corner: t("ruler.corner"), removeGuide: t("ruler.removeGuide"), tabType: t("ruler.tabType"), tabs: { left: t("tabs.left"), center: t("tabs.center"), right: t("tabs.right"), decimal: t("tabs.decimal"), bar: t("tabs.bar") } },
@@ -805,7 +853,15 @@ export default function DocxEditor(props: DocxEditorProps) {
   createEffect(on(() => props.rulerUnit, v => { if (v) ruler?.setUnit(v); }, { defer: true }));
   createEffect(on(dark, () => ruler?.refresh(), { defer: true }));
 
-  const setZoom = (z: number) => { view?.setZoom(z); setZoomSig(view?.zoom ?? z); };
+  /** Zoom yang dipilih pengguna/API tidak ditimpa "lebar penuh otomatis" saat tata letak sempit. */
+  let userZoomed = false;
+  const setZoom = (z: number) => { userZoomed = true; view?.setZoom(z); setZoomSig(view?.zoom ?? z); };
+  /** Mode ringkas/sentuh yang sempit: halaman diskalakan agar pas selebar layar (sekali, bila belum diatur manual). */
+  const autoFitNarrow = () => {
+    const i = layoutCtl?.info();
+    if (!view?.book || userZoomed || !i || !i.narrow || i.mode === "desktop") return;
+    view.fitWidth(); setZoomSig(view.zoom);
+  };
   const toggleFs = async () => {
     if (fs()) { if (document.fullscreenElement) await document.exitFullscreen().catch(() => {}); setCssFs(false); setFs(false); return; }
     try { await rootEl.requestFullscreen(); setFs(true); } catch { setCssFs(true); setFs(true); }
@@ -1252,8 +1308,8 @@ export default function DocxEditor(props: DocxEditorProps) {
         <Btn icon="plus" title={t("v.zoomIn")} onClick={() => setZoom(zoom() + 0.1)} />
         <span class="dxe-lbl">{Math.round(zoom() * 100)}%</span>
         <Btn label="100%" onClick={() => setZoom(1)} />
-        <Btn label={t("v.fitWidth")} onClick={() => { view?.fitWidth(); setZoomSig(view?.zoom ?? 1); }} />
-        <Btn label={t("v.fitPage")} onClick={() => { view?.fitPage(); setZoomSig(view?.zoom ?? 1); }} />
+        <Btn label={t("v.fitWidth")} onClick={() => { userZoomed = true; view?.fitWidth(); setZoomSig(view?.zoom ?? 1); }} />
+        <Btn label={t("v.fitPage")} onClick={() => { userZoomed = true; view?.fitPage(); setZoomSig(view?.zoom ?? 1); }} />
       </Grp>
       <Grp cap={t("g.show")}>
         <label class="dxe-chk"><input type="checkbox" checked={marks()} onChange={e => setMarks(e.currentTarget.checked)} />{t("v.marks")}</label>
@@ -1551,9 +1607,7 @@ export default function DocxEditor(props: DocxEditorProps) {
   return (
     <div ref={rootEl} class={`dxe-root ${props.class ?? ""}`} classList={{ dark: dark(), "dxe-fs": cssFs() }} style={{ height: props.height ?? "78vh" }} tabIndex={-1}
       onKeyDown={onRootKey}
-      onDragOver={e => { if (e.dataTransfer?.types.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
-      onDragLeave={e => { if (e.currentTarget === e.target) setDragOver(false); }}
-      onDrop={() => setDragOver(false)}>
+      >
       <input ref={fileInput} type="file" hidden accept=".docx,.docm,.dotx,.dotm,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e => { void openFile(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
       <input ref={imgInput} type="file" hidden accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml" onChange={e => { const f = e.currentTarget.files?.[0]; if (f) void view?.insertImageFile(f); e.currentTarget.value = ""; }} />
       <input ref={replInput} type="file" hidden accept="image/*" onChange={e => { const f = e.currentTarget.files?.[0]; if (f) void view?.imgReplace(f); e.currentTarget.value = ""; }} />

@@ -123,3 +123,10 @@ Lihat `editor-kit/README.md` untuk kontrak umum. Khusus PPTX:
 - Slide: `slide.list/layouts/add({layout?,at?})/duplicate/remove/move/setBackground/setNotes/setHidden/setLayout`. Indeks berbasis 0; tanpa indeks = slide aktif; slide terakhir tidak bisa dihapus.
 - Bentuk: `shape.list/add/remove/duplicate/align/order/group/ungroup`. `shape.add({type:"textbox"|"shape"|"line"|"table"|"chart", x,y,w,h (px), text?, preset?, fill?, rows?, cols?, chart?})` mengembalikan id bentuk.
 
+### Mode tata letak
+
+Prop `layout="auto|desktop|compact|touch"`, `api.layout.get()/set()`, perintah `layout.get`/`layout.set`; lihat `editor-kit/README.md` ("Mode tata letak").
+
+### Drop eksternal
+
+Prop `drop`, `api.drop.handle/accept/setAccept`, perintah `drop.handle` / `drop.accept`, event `drop`. Gambar, berkas format editor, teks, dan tautan ditangani; lihat tabel di `editor-kit/README.md` ("Drop eksternal").

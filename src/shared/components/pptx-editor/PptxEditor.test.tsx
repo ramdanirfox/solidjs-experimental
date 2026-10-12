@@ -194,3 +194,76 @@ describe("PptxEditor — format.* & struktur lewat bus", () => {
     expect(api.shapes.add({ type: "textbox" })).toBeUndefined();
   });
 });
+
+
+describe("PptxEditor — layout (mode tata letak)", () => {
+  it("prop layout → data-layout; layout.get/set lewat bus & API; event layout; nilai tak valid ditolak", async () => {
+    const { api, root } = await mount({ layout: "touch" });
+    expect(root.dataset.layout).toBe("touch");
+    expect(api.layout.get().mode).toBe("touch");
+    expect(api.layout.get().setting).toBe("touch");
+    const ev = vi.fn();
+    api.on("layout", ev);
+    expect(await api.run("layout.set", "compact")).toBe(true);
+    expect(root.dataset.layout).toBe("compact");
+    expect(ev.mock.calls.at(-1)![0]).toMatchObject({ mode: "compact", setting: "compact" });
+    expect((await dispatchCommand<{ mode: string }>(root, "pptx-editor", "layout.get")).mode).toBe("compact");
+    expect(await api.run("layout.set", "phone")).toBe(false);
+    expect(root.dataset.layout).toBe("compact");
+    expect(api.layout.set("auto")).toBe(true);
+    expect(api.layout.get().setting).toBe("auto");
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["layout.get", "layout.set"]));
+  });
+
+  it("tanpa prop: auto → desktop di lingkungan uji (lebar 0, pointer halus)", async () => {
+    const { root } = await mount();
+    expect(root.dataset.layout).toBe("desktop");
+  });
+});
+
+
+describe("PptxEditor — drop (jalur bersama)", () => {
+  // jsdom belum punya Blob.arrayBuffer
+  if (!File.prototype.arrayBuffer) File.prototype.arrayBuffer = function (this: Blob) { return new Promise<ArrayBuffer>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result as ArrayBuffer); fr.onerror = () => rej(fr.error); fr.readAsArrayBuffer(this); }); };
+  const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const png = () => new File([Uint8Array.from(atob(PNG), c => c.charCodeAt(0))], "p.png", { type: "image/png" });
+
+  it("gambar → gambar di slide, teks/url → kotak teks, berkas pptx dibuka; saringan & event", async () => {
+    const { api } = await mount();
+    const ev = vi.fn();
+    api.on("drop", ev);
+    expect(api.events.commands()).toEqual(expect.arrayContaining(["drop.handle", "drop.accept"]));
+    const kinds = () => api.shapes.list().map(s => s.kind);
+    const pics0 = kinds().filter(k => k === "picture").length;
+    const r = await api.run<{ handled: unknown[] }>("drop.handle", { files: [png()] });
+    expect(r.handled).toHaveLength(1);
+    await wait(30);
+    expect(kinds().filter(k => k === "picture").length).toBe(pics0 + 1);
+    const n0 = api.shapes.list().length;
+    expect((await api.drop.handle({ text: "Teks jatuhan" })).handled).toHaveLength(1);
+    expect((await api.drop.handle({ url: "https://example.com/drop" })).handled).toHaveLength(1);
+    const texts = api.shapes.list().map(s => s.text);
+    expect(texts).toEqual(expect.arrayContaining(["Teks jatuhan", "https://example.com/drop"]));
+    expect(api.shapes.list().length).toBe(n0 + 2);
+    expect(ev).toHaveBeenCalledTimes(3);
+    const pdf = new File(["%PDF"], "a.pdf", { type: "application/pdf" });
+    expect((await api.drop.handle({ files: [pdf] })).rejected[0]).toMatchObject({ reason: "not-accepted" });
+    (window as unknown as { confirm: () => boolean }).confirm = () => true;
+    api.drop.setAccept(["office"]);
+    const bytes = (await api.getBytes())!;
+    const loaded = api.events.wait("load", 20000);
+    expect((await api.drop.handle({ files: [new File([bytes as BlobPart], "lain.pptx")] })).handled).toHaveLength(1);
+    await loaded;
+  });
+
+  it("before membatalkan, readonly menolak, drop={false} menonaktifkan", async () => {
+    const a = await mount({ drop: { before: () => false } });
+    expect((await a.api.drop.handle({ text: "x" })).cancelled).toBe(true);
+    unmount?.(); document.body.innerHTML = "";
+    const b = await mount({ readonly: true });
+    expect((await b.api.drop.handle({ text: "x" })).rejected[0]).toMatchObject({ reason: "readonly" });
+    unmount?.(); document.body.innerHTML = "";
+    const c = await mount({ drop: false });
+    expect(c.api.drop.accept()).toEqual([]);
+  });
+});

@@ -4,30 +4,28 @@
  * Reaktivitas dikelola komponen (signal "version").
  */
 import { loadWorkbook, workbookToBytes, fromArrayBuffer } from "@office-kit/xlsx/io";
-import { setFullCalcOnLoad, addWorksheet, moveSheet, removeSheet, renameSheet, setSheetState, type Workbook, type SheetRef } from "@office-kit/xlsx/workbook";
-import { addImageAt, loadImage } from "@office-kit/xlsx/drawing";
-import {
-  ensureCell, getFreezePanes, setAutoFilter, setFreezePanes, setRowDimension, getCellExtent,
-  setColumnWidth, setRowHeight, countCellsByKind, mergeCells, unmergeCells,
-  type Worksheet,
-} from "@office-kit/xlsx/worksheet";
+import { setFullCalcOnLoad, type Workbook, type SheetRef } from "@office-kit/xlsx/workbook";
+import { ensureCell, getFreezePanes, getCellExtent, countCellsByKind, type Worksheet } from "@office-kit/xlsx/worksheet";
 import { setCellValue, makeFormula, type Cell, type CellValue } from "@office-kit/xlsx/cell";
-import {
-  getCellAlignment, getCellBorder, getCellDisplayText, getCellNumberFormat, setBold, setCellAlignment, setCellBackgroundColor, setCellBorder, setCellNumberFormat,
-  setFontColor, setFontName, setFontSize, setItalic, setStrikethrough, setUnderline, clearCellBackground, clearCellStyle,
-} from "@office-kit/xlsx/styles";
+import { getCellAlignment, getCellBorder, getCellDisplayText, getCellNumberFormat, setBold, setCellAlignment, setCellBackgroundColor, setCellBorder, setCellNumberFormat, setFontColor, setFontName, setFontSize, setItalic, setStrikethrough, setUnderline, clearCellBackground, clearCellStyle } from "@office-kit/xlsx/styles";
 import { OpenXmlError, OpenXmlUnsupportedFormatError, rangeBoundaries, columnIndexFromLetter, tupleToCoordinate } from "@office-kit/xlsx/utils";
 import { Evaluator, isErr, toCellValue, type Scalar } from "./xlsx-formula";
 import { StyleResolver, type ResolvedStyle } from "./xlsx-style";
 import { CfEngine } from "./xlsx-cf";
 import { anchorCell } from "./xlsx-layout";
 import { repairPackage } from "./xlsx-repair";
-import { openZip } from "@office-kit/xlsx/zip";
-import { OleStore, applyOlePatches, oleAnchorToDrawing, scanXlsxOle, type OleAnchor, type XlsxOleObject } from "./xlsx-ole";
-import type { PreparedOle } from "../office-shared/ole-embed";
-import type { XmlNode } from "@office-kit/xlsx/xml";
-import { parseShapeGroup, schemeLookup, shapePlainText, type ShapeGroup } from "./xlsx-shapes";
+import { OleStore, applyOlePatches } from "./xlsx-ole";
+import { type ShapeGroup } from "./xlsx-shapes";
 import { parseVbaProject, type VbaProject } from "./xlsx-vba";
+import * as xlsx_model_oleMod from "./xlsx-model-ole";
+import * as xlsx_model_styleMod from "./xlsx-model-style";
+import * as xlsx_model_sheetsMod from "./xlsx-model-sheets";
+import * as xlsx_model_linksMod from "./xlsx-model-links";
+import * as xlsx_model_mergeMod from "./xlsx-model-merge";
+import * as xlsx_model_drawingsMod from "./xlsx-model-drawings";
+import * as xlsx_model_filterMod from "./xlsx-model-filter";
+import * as xlsx_model_csvMod from "./xlsx-model-csv";
+import * as xlsx_model_searchMod from "./xlsx-model-search";
 
 // ───────────────────────── log ─────────────────────────
 export type LogLevel = "ok" | "info" | "warn" | "error";
@@ -86,27 +84,9 @@ export interface DrawingView {
   anchorCell: { row: number; col: number };
 }
 
-/** Salin node anchor mentah lalu tulis posisi/ukuran baru (from/to/ext/pos) ke dalamnya. */
-function patchRawAnchor(raw: XmlNode, a: any): XmlNode {
-  const n: XmlNode = structuredClone(raw);
-  const kid = (parent: XmlNode, name: string) => parent.children.find(c => c.name.replace(/^\{[^}]*\}/, "") === name);
-  const setPoint = (el: XmlNode | undefined, v: any) => {
-    if (!el || !v) return;
-    for (const [k, val] of [["col", v.col], ["colOff", v.colOff], ["row", v.row], ["rowOff", v.rowOff]] as const) { const c = kid(el, k); if (c) c.text = String(Math.round(val)); }
-  };
-  setPoint(kid(n, "from"), a.from);
-  setPoint(kid(n, "to"), a.to);
-  const ext = kid(n, "ext"); if (ext && a.ext) { ext.attrs.cx = String(Math.round(a.ext.cx)); ext.attrs.cy = String(Math.round(a.ext.cy)); }
-  const pos = kid(n, "pos"); if (pos && a.pos) { pos.attrs.x = String(Math.round(a.pos.x)); pos.attrs.y = String(Math.round(a.pos.y)); }
-  return n;
-}
 
-function collectText(n: any, out: string[] = []): string[] {
-  if (!n) return out;
-  if (typeof n.name === "string" && n.name.replace(/^\{[^}]*\}/, "") === "t" && n.text) out.push(n.text);
-  for (const c of n.children ?? []) collectText(c, out);
-  return out;
-}
+
+
 
 export interface FilterState {
   range: { minRow: number; minCol: number; maxRow: number; maxCol: number };
@@ -118,7 +98,7 @@ export interface FilterState {
 }
 
 export const BLANK_LABEL = "(Kosong)";
-const IMG_MIME: Record<string, string> = { png: "image/png", jpeg: "image/jpeg", gif: "image/gif", bmp: "image/bmp", webp: "image/webp", svg: "image/svg+xml" };
+
 
 export function addr(row: number, col: number, abs = false): string {
   return tupleToCoordinate(col, row, abs ? { absoluteCol: true, absoluteRow: true } : undefined);
@@ -165,12 +145,12 @@ export class XlsxBook {
   log: (e: LogEntry) => void = () => {};
 
   private textCache = new Map<Worksheet, Map<number, string>>();
-  private filters = new Map<Worksheet, FilterState | null>();
-  private drawings = new WeakMap<Worksheet, DrawingView[]>();
-  private urls: string[] = [];
-  private imageUrls = new WeakMap<Uint8Array, string>();
-  private undoStack: EditRecord[][] = [];
-  private redoStack: EditRecord[][] = [];
+  filters = new Map<Worksheet, FilterState | null>();
+  drawings = new WeakMap<Worksheet, DrawingView[]>();
+  urls: string[] = [];
+  imageUrls = new WeakMap<Uint8Array, string>();
+  undoStack: EditRecord[][] = [];
+  redoStack: EditRecord[][] = [];
 
   constructor(public wb: Workbook, public fileName: string, public byteSize: number) {
     this.ev = new Evaluator(wb);
@@ -199,60 +179,13 @@ export class XlsxBook {
   // ───── objek OLE ─────
   /** Objek OLE: yang ada di berkas (dipindai saat dibuka), sisipan baru, dan perbaruan — ditulis ke paket saat `toBytes()`. */
   ole = new OleStore();
-  async scanOle() {
-    if (!this.sourceBytes) return;
-    try { this.ole.existing = await scanXlsxOle(this.sourceBytes); }
-    catch (e: any) { this.log?.(logEntry("warn", "OLE", `Objek OLE pada berkas tidak dapat dipindai: ${e?.message ?? e}`)); }
-  }
-  oleList(ws?: Worksheet): XlsxOleObject[] { const all = this.ole.list(); return ws ? all.filter(o => o.sheet === ws.title) : all; }
-  private wsByTitle(title: string): Worksheet | undefined { for (const s of this.wb.sheets) if (s.kind === "worksheet" && s.sheet.title === title) return s.sheet; return undefined; }
-  /** Sisipkan objek OLE di `anchor` (basis 0). Kembalikan catatan undo/redo. */
-  insertOle(ws: Worksheet, prep: PreparedOle, anchor: OleAnchor, size: { w: number; h: number }): { record: EditRecord; id: string } {
-    const id = this.ole.nextId();
-    const ins = { id, sheet: ws.title, prep, anchor, widthPx: size.w, heightPx: size.h };
-    this.ole.inserts.push(ins);
-    this.invalidateDrawings(ws);
-    const record: EditRecord = {
-      sheet: ws.title, row: anchor.r1 + 1, col: anchor.c1 + 1, before: null, after: null,
-      undo: () => { const i = this.ole.inserts.indexOf(ins); if (i >= 0) this.ole.inserts.splice(i, 1); this.invalidateDrawings(ws); },
-      redo: () => { if (!this.ole.inserts.includes(ins)) this.ole.inserts.push(ins); this.invalidateDrawings(ws); },
-    };
-    return { record, id };
-  }
-  /** Isi embedding objek OLE `id` (sisipan, perbaruan, atau dari berkas sumber). */
-  async oleBytes(id: string): Promise<Uint8Array | undefined> {
-    const ins = this.ole.inserts.find(i => i.id === id);
-    if (ins) return ins.prep.bytes;
-    const up = this.ole.updates.get(id);
-    if (up) return up.bytes;
-    const o = this.ole.existing.find(x => x.id === id);
-    if (!o?.part || !this.sourceBytes || o.linked) return undefined;
-    const zip = await openZip(fromArrayBuffer(this.sourceBytes));
-    try { return zip.has(o.part) ? zip.read(o.part) : undefined; } finally { zip.close(); }
-  }
-  /** Pindah / ubah ukuran objek OLE. Hanya untuk sisipan sesi ini (posisi objek di berkas tidak ditulis ulang). */
-  moveOle(id: string, anchor: OleAnchor, size: { w: number; h: number }): { record: EditRecord } {
-    const ins = this.ole.inserts.find(i => i.id === id);
-    if (!ins) throw new Error("Posisi/ukuran objek OLE yang sudah ada di berkas belum dapat diubah — hanya objek yang disisipkan pada sesi ini.");
-    const ws = this.wsByTitle(ins.sheet)!;
-    const before = { anchor: ins.anchor, w: ins.widthPx, h: ins.heightPx };
-    const apply = (a: OleAnchor, w: number, h: number) => { ins.anchor = a; ins.widthPx = w; ins.heightPx = h; this.invalidateDrawings(ws); };
-    apply(anchor, size.w, size.h);
-    return { record: { sheet: ins.sheet, row: anchor.r1 + 1, col: anchor.c1 + 1, before: null, after: null, undo: () => apply(before.anchor, before.w, before.h), redo: () => apply(anchor, size.w, size.h) } };
-  }
-  /** Ganti isi objek OLE `id` (milik berkas atau sisipan sesi ini). */
-  updateOle(id: string, prep: PreparedOle): { record: EditRecord; target: XlsxOleObject } {
-    const target = this.ole.list().find(o => o.id === id);
-    if (!target) throw new Error(`Objek OLE "${id}" tidak ditemukan.`);
-    if (target.linked) throw new Error("Objek OLE tertaut (link) — isinya tidak dapat diganti.");
-    const ws = this.wsByTitle(target.sheet)!;
-    const ins = this.ole.inserts.find(i => i.id === id);
-    const old = ins ? ins.prep : this.ole.updates.get(id);
-    const set = (p: PreparedOle | undefined) => { if (ins) { if (p) ins.prep = p; } else if (p) this.ole.updates.set(id, p); else this.ole.updates.delete(id); this.invalidateDrawings(ws); };
-    set(prep);
-    const a = target.anchor;
-    return { target, record: { sheet: target.sheet, row: (a?.r1 ?? 0) + 1, col: (a?.c1 ?? 0) + 1, before: null, after: null, undo: () => set(old), redo: () => set(prep) } };
-  }
+  scanOle = xlsx_model_oleMod.scanOle;
+  oleList = xlsx_model_oleMod.oleList;
+  wsByTitle = xlsx_model_oleMod.wsByTitle;
+  insertOle = xlsx_model_oleMod.insertOle;
+  oleBytes = xlsx_model_oleMod.oleBytes;
+  moveOle = xlsx_model_oleMod.moveOle;
+  updateOle = xlsx_model_oleMod.updateOle;
 
   // ───── sheet ─────
   get sheets(): SheetRef[] { return this.wb.sheets; }
@@ -321,11 +254,11 @@ export class XlsxBook {
   }
 
   // ───── edit ─────
-  private snap(cell: Cell | undefined): CellSnap | null {
+  snap(cell: Cell | undefined): CellSnap | null {
     return cell ? { value: cell.value, styleId: cell.styleId } : null;
   }
 
-  private writeSnap(ws: Worksheet, r: number, c: number, s: CellSnap | null) {
+  writeSnap(ws: Worksheet, r: number, c: number, s: CellSnap | null) {
     if (!s) { ws.rows.get(r)?.delete(c); if (ws.rows.get(r)?.size === 0) ws.rows.delete(r); return; }
     const cell = ensureCell(ws, r, c);
     cell.value = s.value;
@@ -481,473 +414,86 @@ export class XlsxBook {
     return recs;
   }
 
-  /** Format painter: salin styleId ke seluruh rentang. */
-  applyStyleId(ws: Worksheet, sel: Sel, styleId: number): EditRecord[] {
-    const n = normSel(sel);
-    const recs: EditRecord[] = [];
-    if ((n.r2 - n.r1 + 1) * (n.c2 - n.c1 + 1) > 60000) return recs;
-    for (let r = n.r1; r <= n.r2; r++) for (let c = n.c1; c <= n.c2; c++) {
-      const cell = ws.rows.get(r)?.get(c);
-      if ((cell?.styleId ?? 0) === styleId) continue;
-      const before = this.snap(cell);
-      const t = cell ?? ensureCell(ws, r, c);
-      t.styleId = styleId;
-      recs.push({ sheet: ws.title, row: r, col: c, before, after: this.snap(t) });
-    }
-    return recs;
-  }
+  applyStyleId = xlsx_model_styleMod.applyStyleId;
 
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
 
-  undo(): EditRecord[] | undefined { return this.step(this.undoStack, this.redoStack, "before"); }
-  redo(): EditRecord[] | undefined { return this.step(this.redoStack, this.undoStack, "after"); }
+  undo = xlsx_model_styleMod.undo;
+  redo = xlsx_model_styleMod.redo;
 
-  private step(from: EditRecord[][], to: EditRecord[][], side: "before" | "after"): EditRecord[] | undefined {
-    const recs = from.pop();
-    if (!recs) return undefined;
-    for (const rec of [...recs].reverse()) {
-      const custom = side === "before" ? rec.undo : rec.redo;
-      if (custom) { custom(); continue; }
-      const ws = this.findSheet(rec.sheet);
-      if (ws) this.writeSnap(ws, rec.row, rec.col, rec[side]);
-    }
-    to.push(recs);
-    this.dirty = true;
-    this.invalidate();
-    return recs;
-  }
+  step = xlsx_model_styleMod.step;
 
   // ───── struktur sheet (dengan undo) ─────
-  private nameScopes() { return this.wb.definedNames.map(n => ({ n, scope: n.scope })); }
-  private restoreNames(saved: { n: { scope?: number }; scope: number | undefined }[]) { this.wb.definedNames = saved.map(x => { x.n.scope = x.scope; return x.n as never; }); }
-  private shiftNames(from: number, d: number) { for (const n of this.wb.definedNames) if (n.scope !== undefined && n.scope >= from) n.scope += d; }
-  private sheetRec(sheet: string, apply: () => void, revert: () => void): EditRecord {
-    return { sheet, row: 0, col: 0, before: null, after: null, undo: revert, redo: apply };
-  }
-  private validTitle(t: string, except?: string): string | undefined {
-    const name = t.trim();
-    if (!name) return "Nama sheet kosong";
-    if (name.length > 31) return "Nama sheet maksimal 31 karakter";
-    if (/[\\/?*[\]:]/.test(name)) return "Nama sheet tidak boleh memuat \\ / ? * [ ] :";
-    if (name.startsWith("'") || name.endsWith("'")) return "Nama sheet tidak boleh diawali/diakhiri apostrof";
-    if (this.wb.sheets.some(s => s.sheet.title.toLowerCase() === name.toLowerCase() && s.sheet.title !== except)) return `Sheet "${name}" sudah ada`;
-    return undefined;
-  }
-  /** Tambah worksheet kosong. `title` default "SheetN". */
-  addSheet(title?: string, index?: number): { records: EditRecord[]; title: string } | { error: string } {
-    let name = title?.trim();
-    if (!name) { let n = this.wb.sheets.length + 1; while (this.wb.sheets.some(s => s.sheet.title === `Sheet${n}`)) n++; name = `Sheet${n}`; }
-    const err = this.validTitle(name);
-    if (err) return { error: err };
-    const at = index === undefined ? this.wb.sheets.length : Math.max(0, Math.min(this.wb.sheets.length, Math.floor(index)));
-    let ref: SheetRef | undefined;
-    const apply = () => {
-      if (!ref) { addWorksheet(this.wb, name!, { index: at }); ref = this.wb.sheets[at]; }
-      else this.wb.sheets.splice(at, 0, ref);
-      this.shiftNames(at, 1);
-    };
-    const revert = () => removeSheet(this.wb, name!);
-    apply();
-    return { records: [this.sheetRec(name, apply, revert)], title: name };
-  }
-  /** Ganti nama sheet; referensi `Nama!A1` pada rumus ikut diperbarui. */
-  renameSheetTo(oldTitle: string, newTitle: string): { records: EditRecord[]; formulas: number } | { error: string } {
-    const nt = newTitle.trim();
-    if (!this.wb.sheets.some(s => s.sheet.title === oldTitle)) return { error: `Sheet "${oldTitle}" tidak ditemukan` };
-    if (nt === oldTitle) return { records: [], formulas: 0 };
-    const err = this.validTitle(nt, oldTitle);
-    if (err) return { error: err };
-    const edits: { cell: Cell; before: CellValue; after: CellValue }[] = [];
-    for (const s of this.wb.sheets) {
-      if (s.kind !== "worksheet") continue;
-      for (const row of s.sheet.rows.values()) for (const cell of row.values()) {
-        const v = cell.value as any;
-        if (v && typeof v === "object" && v.kind === "formula" && typeof v.formula === "string") {
-          const f = rewriteSheetRefs(v.formula, oldTitle, nt);
-          if (f !== v.formula) edits.push({ cell, before: cell.value, after: makeFormula(f) });
-        }
-      }
-    }
-    const apply = () => { renameSheet(this.wb, oldTitle, nt); for (const e of edits) e.cell.value = e.after; };
-    const revert = () => { renameSheet(this.wb, nt, oldTitle); for (const e of edits) e.cell.value = e.before; };
-    apply();
-    return { records: [this.sheetRec(nt, apply, revert)], formulas: edits.length };
-  }
-  /** Hapus sheet (minimal satu sheet terlihat tersisa). */
-  removeSheetByTitle(title: string): { records: EditRecord[] } | { error: string } {
-    const i = this.wb.sheets.findIndex(s => s.sheet.title === title);
-    if (i < 0) return { error: `Sheet "${title}" tidak ditemukan` };
-    if (!this.wb.sheets.some((s, k) => k !== i && s.kind === "worksheet" && s.state === "visible")) return { error: "Tidak bisa menghapus satu-satunya sheet yang terlihat" };
-    const ref = this.wb.sheets[i]!;
-    const names = this.nameScopes();
-    const apply = () => removeSheet(this.wb, title);
-    const revert = () => { this.wb.sheets.splice(i, 0, ref); this.restoreNames(names); };
-    apply();
-    return { records: [this.sheetRec(title, apply, revert)] };
-  }
-  moveSheetTo(title: string, to: number): { records: EditRecord[] } | { error: string } {
-    const from = this.wb.sheets.findIndex(s => s.sheet.title === title);
-    if (from < 0) return { error: `Sheet "${title}" tidak ditemukan` };
-    const dest = Math.max(0, Math.min(this.wb.sheets.length - 1, Math.floor(to)));
-    if (dest === from) return { records: [] };
-    const apply = () => moveSheet(this.wb, title, dest);
-    const revert = () => moveSheet(this.wb, title, from);
-    apply();
-    return { records: [this.sheetRec(title, apply, revert)] };
-  }
-  setSheetVisible(title: string, visible: boolean): { records: EditRecord[] } | { error: string } {
-    const ref = this.wb.sheets.find(s => s.sheet.title === title);
-    if (!ref) return { error: `Sheet "${title}" tidak ditemukan` };
-    const was = ref.state;
-    const now = visible ? "visible" : "hidden";
-    if (was === now) return { records: [] };
-    try { setSheetState(this.wb, title, now); } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
-    return { records: [this.sheetRec(title, () => setSheetState(this.wb, title, now), () => setSheetState(this.wb, title, was))] };
-  }
+  nameScopes = xlsx_model_styleMod.nameScopes;
+  restoreNames = xlsx_model_sheetsMod.restoreNames;
+  shiftNames = xlsx_model_sheetsMod.shiftNames;
+  sheetRec = xlsx_model_sheetsMod.sheetRec;
+  validTitle = xlsx_model_sheetsMod.validTitle;
+  addSheet = xlsx_model_sheetsMod.addSheet;
+  renameSheetTo = xlsx_model_sheetsMod.renameSheetTo;
+  removeSheetByTitle = xlsx_model_sheetsMod.removeSheetByTitle;
+  moveSheetTo = xlsx_model_sheetsMod.moveSheetTo;
+  setSheetVisible = xlsx_model_sheetsMod.setSheetVisible;
 
-  findSheet(title: string): Worksheet | undefined {
-    for (const s of this.wb.sheets) if (s.kind === "worksheet" && s.sheet.title === title) return s.sheet;
-    return undefined;
-  }
+  findSheet = xlsx_model_sheetsMod.findSheet;
 
-  resizeColumn(ws: Worksheet, col: number, chars: number) { setColumnWidth(ws, col, Math.max(0.5, chars)); this.dirty = true; }
-  resizeRow(ws: Worksheet, row: number, pt: number) { setRowHeight(ws, row, Math.max(2, pt)); this.dirty = true; }
+  resizeColumn = xlsx_model_sheetsMod.resizeColumn;
+  resizeRow = xlsx_model_sheetsMod.resizeRow;
 
-  freeze(ws: Worksheet, rows: number, cols: number) {
-    setFreezePanes(ws, rows === 0 && cols === 0 ? undefined : { rows, cols });
-    this.dirty = true;
-  }
+  freeze = xlsx_model_sheetsMod.freeze;
 
   // ───── gambar ─────
-  drawingsOf(ws: Worksheet): DrawingView[] {
-    let d = this.drawings.get(ws);
-    if (d) return d;
-    d = [];
-    (ws.drawing?.items ?? []).forEach((it: any, i: number) => {
-      const key = `${ws.title}#${i}`;
-      const content = it.content;
-      const base = { key, index: i, anchor: it.anchor, anchorCell: anchorCell(it.anchor) };
-      if (content.kind === "picture") {
-        const p = content.picture;
-        const img = p.image;
-        const mime = img ? IMG_MIME[img.format] : undefined;
-        let url: string | undefined;
-        if (img && mime) {
-          url = this.imageUrls.get(img.bytes);
-          if (!url) {
-            try { url = URL.createObjectURL(new Blob([img.bytes as BlobPart], { type: mime })); this.urls.push(url); this.imageUrls.set(img.bytes, url); } catch { /* abaikan */ }
-          }
-        }
-        d!.push({ ...base, kind: "picture", name: p.name, descr: p.descr, url, format: img?.format, bytes: img?.bytes.length, hidden: !!p.hidden, note: img ? (mime ? undefined : `Format ${img.format.toUpperCase()} tidak dapat dirender browser`) : "Data gambar tidak ditemukan" });
-      } else if (content.kind === "chart") {
-        d!.push({ ...base, kind: "chart", name: content.chart.isCx ? "Chart (chartex)" : "Chart", hidden: false, note: "Grafik belum dirender pada preview ini" });
-      } else {
-        const tag = String(content.rawTag).replace(/^\{[^}]*\}/, "");
-        const text = collectText(it.raw).join(" ").trim();
-        const shape = ["sp", "cxnSp", "grpSp"].includes(tag) ? parseShapeGroup(it.raw, schemeLookup(this.styles.palette)) : undefined;
-        if (shape) {
-          const first = shape.shapes[0]!;
-          d!.push({ ...base, kind: "shape", name: tag === "grpSp" ? `Grup (${shape.shapes.length})` : first.name, descr: first.descr, shape, text: shapePlainText(first.text) || text || undefined, hidden: shape.shapes.every(x => x.hidden), note: shape.approx ? "Sebagian geometri disederhanakan" : undefined });
-          return;
-        }
-        d!.push({ ...base, kind: "unsupported", name: tag, text: text || undefined, hidden: false, note: tag === "sp" ? "Shape/textbox — hanya teks & kotak yang ditampilkan" : `Objek drawing "${tag}" belum dirender` });
-      }
-    });
-    for (const o of this.oleList(ws)) {
-      let url: string | undefined;
-      const mime = o.previewFormat ? IMG_MIME[o.previewFormat] : undefined;
-      if (o.previewBytes && mime) {
-        url = this.imageUrls.get(o.previewBytes);
-        if (!url) { try { url = URL.createObjectURL(new Blob([o.previewBytes as BlobPart], { type: mime })); this.urls.push(url); this.imageUrls.set(o.previewBytes, url); } catch { /* abaikan */ } }
-      }
-      const anchor = o.anchor ? oleAnchorToDrawing(o.anchor) : { kind: "absolute", pos: { x: 0, y: 0 }, ext: { cx: 96 * 9525, cy: 72 * 9525 } };
-      d!.push({ key: `ole:${o.id}`, index: -1, kind: "ole", oleId: o.id, anchor, anchorCell: anchorCell(anchor), name: o.progId || "OLE", descr: `${o.description}${o.fileName ? ` — ${o.fileName}` : ""}`, url, format: o.previewFormat, bytes: o.size, hidden: false, note: url ? undefined : "Pratinjau objek tidak dapat ditampilkan browser (mis. EMF/WMF)" });
-    }
-    this.drawings.set(ws, d);
-    return d;
-  }
+  drawingsOf = xlsx_model_sheetsMod.drawingsOf;
 
   // ───── hyperlink & komentar ─────
-  private linkMaps = new WeakMap<Worksheet, { links: Map<number, any>; notes: Map<number, any> }>();
-  private maps(ws: Worksheet) {
-    let m = this.linkMaps.get(ws);
-    if (m) return m;
-    const links = new Map<number, any>(), notes = new Map<number, any>();
-    const expand = (ref: string, fn: (r: number, c: number) => void) => {
-      const b = parseAddress(ref); if (!b) return;
-      if ((b.r2 - b.r1 + 1) * (b.c2 - b.c1 + 1) > 5000) return;
-      for (let r = b.r1; r <= b.r2; r++) for (let c = b.c1; c <= b.c2; c++) fn(r, c);
-    };
-    for (const h of ws.hyperlinks ?? []) expand(h.ref, (r, c) => links.set(r * 16385 + c, h));
-    for (const cm of ws.legacyComments ?? []) expand(cm.ref, (r, c) => notes.set(r * 16385 + c, cm));
-    m = { links, notes };
-    this.linkMaps.set(ws, m);
-    return m;
-  }
-  /** Bangun ulang indeks hyperlink/komentar sheet (panggil setelah mengubah `ws.hyperlinks` / `ws.legacyComments`). */
-  invalidateLinks(ws: Worksheet) { this.linkMaps.delete(ws); this.invalidate(); }
-  hyperlinkAt(ws: Worksheet, r: number, c: number) { return this.maps(ws).links.get(r * 16385 + c); }
-  commentAt(ws: Worksheet, r: number, c: number) { return this.maps(ws).notes.get(r * 16385 + c); }
+  linkMaps = new WeakMap<Worksheet, { links: Map<number, any>; notes: Map<number, any> }>();
+  maps = xlsx_model_linksMod.maps;
+  invalidateLinks = xlsx_model_linksMod.invalidateLinks;
+  hyperlinkAt = xlsx_model_linksMod.hyperlinkAt;
+  commentAt = xlsx_model_linksMod.commentAt;
 
   // ───── merge ─────
-  private mergeMaps = new WeakMap<Worksheet, { anchors: Map<number, any>; covered: Map<number, any>; list: any[] }>();
-  mergeIndex(ws: Worksheet) {
-    let m = this.mergeMaps.get(ws);
-    if (m && m.list === ws.mergedCells) return m;
-    const anchors = new Map<number, any>(), covered = new Map<number, any>();
-    for (const g of ws.mergedCells ?? []) {
-      anchors.set(g.minRow * 16385 + g.minCol, g);
-      if ((g.maxRow - g.minRow + 1) * (g.maxCol - g.minCol + 1) <= 100000) {
-        for (let r = g.minRow; r <= g.maxRow; r++) for (let c = g.minCol; c <= g.maxCol; c++) if (r !== g.minRow || c !== g.minCol) covered.set(r * 16385 + c, g);
-      }
-    }
-    m = { anchors, covered, list: ws.mergedCells };
-    this.mergeMaps.set(ws, m);
-    return m;
-  }
+  mergeMaps = new WeakMap<Worksheet, { anchors: Map<number, any>; covered: Map<number, any>; list: any[] }>();
+  mergeIndex = xlsx_model_mergeMod.mergeIndex;
 
-  invalidateMerges() { this.mergeMaps = new WeakMap(); this.invalidate(); }
-  invalidateDrawings(ws: Worksheet) { this.drawings.delete(ws); }
+  invalidateMerges = xlsx_model_mergeMod.invalidateMerges;
+  invalidateDrawings = xlsx_model_mergeMod.invalidateDrawings;
 
-  mergeAt(ws: Worksheet, r: number, c: number): { minRow: number; minCol: number; maxRow: number; maxCol: number } | undefined {
-    if (!ws.mergedCells?.length) return undefined;
-    const m = this.mergeIndex(ws);
-    const k = r * 16385 + c;
-    return m.covered.get(k) ?? m.anchors.get(k);
-  }
+  mergeAt = xlsx_model_mergeMod.mergeAt;
 
-  /** Perluas seleksi agar selalu mencakup seluruh merge yang beririsan (perilaku Excel). Orientasi anchor/focus dipertahankan. */
-  expandSel(ws: Worksheet, sel: Sel): Sel {
-    const list = ws.mergedCells;
-    if (!list?.length) return sel;
-    let n = normSel(sel);
-    for (let guard = 0, changed = true; changed && guard < 50; guard++) {
-      changed = false;
-      for (const g of list) {
-        if (g.maxRow < n.r1 || g.minRow > n.r2 || g.maxCol < n.c1 || g.minCol > n.c2) continue;
-        if (g.minRow < n.r1 || g.maxRow > n.r2 || g.minCol < n.c1 || g.maxCol > n.c2) {
-          n = { r1: Math.min(n.r1, g.minRow), c1: Math.min(n.c1, g.minCol), r2: Math.max(n.r2, g.maxRow), c2: Math.max(n.c2, g.maxCol) };
-          changed = true;
-        }
-      }
-    }
-    const fr = sel.r1 <= sel.r2, fc = sel.c1 <= sel.c2;
-    return { r1: fr ? n.r1 : n.r2, r2: fr ? n.r2 : n.r1, c1: fc ? n.c1 : n.c2, c2: fc ? n.c2 : n.c1 };
-  }
+  expandSel = xlsx_model_mergeMod.expandSel;
 
-  private rangeStr(g: { minRow: number; minCol: number; maxRow: number; maxCol: number }) {
-    return `${addr(g.minRow, g.minCol)}:${addr(g.maxRow, g.maxCol)}`;
-  }
+  rangeStr = xlsx_model_mergeMod.rangeStr;
 
-  /** Gabungkan sel pada seleksi. Nilai selain sel kiri-atas dibuang (seperti Excel). */
-  mergeSelection(ws: Worksheet, sel: Sel): { records: EditRecord[]; lost: number } | { error: string } {
-    const n = normSel(this.expandSel(ws, sel));
-    if (n.r1 === n.r2 && n.c1 === n.c2) return { error: "Pilih lebih dari satu sel untuk digabung" };
-    const inner = (ws.mergedCells ?? []).filter(g => g.minRow >= n.r1 && g.maxRow <= n.r2 && g.minCol >= n.c1 && g.maxCol <= n.c2).map(g => ({ ...g }));
-    if (inner.length === 1 && inner[0]!.minRow === n.r1 && inner[0]!.maxRow === n.r2 && inner[0]!.minCol === n.c1 && inner[0]!.maxCol === n.c2) return { error: "Rentang ini sudah digabung" };
-    const records: EditRecord[] = [];
-    let lost = 0;
-    for (const [r, row] of ws.rows) {
-      if (r < n.r1 || r > n.r2) continue;
-      for (const [c, cell] of [...row.entries()]) {
-        if (c < n.c1 || c > n.c2 || (r === n.r1 && c === n.c1) || cell.value === null) continue;
-        records.push(this.setValueRaw(ws, r, c, null)); lost++;
-      }
-    }
-    const target = this.rangeStr({ minRow: n.r1, minCol: n.c1, maxRow: n.r2, maxCol: n.c2 });
-    const apply = () => { for (const g of inner) unmergeCells(ws, this.rangeStr(g)); mergeCells(ws, target); this.invalidateMerges(); };
-    const revert = () => { unmergeCells(ws, target); for (const g of inner) mergeCells(ws, this.rangeStr(g)); this.invalidateMerges(); };
-    apply();
-    records.push({ sheet: ws.title, row: n.r1, col: n.c1, before: null, after: null, undo: revert, redo: apply });
-    return { records, lost };
-  }
+  mergeSelection = xlsx_model_mergeMod.mergeSelection;
 
-  unmergeSelection(ws: Worksheet, sel: Sel): { records: EditRecord[]; count: number } | { error: string } {
-    const n = normSel(sel);
-    const hit = (ws.mergedCells ?? []).filter(g => !(g.maxRow < n.r1 || g.minRow > n.r2 || g.maxCol < n.c1 || g.minCol > n.c2)).map(g => ({ ...g }));
-    if (!hit.length) return { error: "Tidak ada sel gabungan pada seleksi" };
-    const apply = () => { for (const g of hit) unmergeCells(ws, this.rangeStr(g)); this.invalidateMerges(); };
-    const revert = () => { for (const g of hit) mergeCells(ws, this.rangeStr(g)); this.invalidateMerges(); };
-    apply();
-    return { records: [{ sheet: ws.title, row: n.r1, col: n.c1, before: null, after: null, undo: revert, redo: apply }], count: hit.length };
-  }
+  unmergeSelection = xlsx_model_mergeMod.unmergeSelection;
 
   // ───── gambar mengambang: pindah / ubah ukuran / hapus / sisip ─────
-  /** Gambar & shape (objek "unsupported" ber-raw) dapat dipindah/diubah ukurannya; grafik dipertahankan apa adanya. */
-  moveDrawing(ws: Worksheet, index: number, anchor: any): EditRecord | undefined {
-    const item: any = ws.drawing?.items[index];
-    const isShape = item?.content.kind === "unsupported" && !!item.raw;
-    if (!item || (item.content.kind !== "picture" && !isShape)) return undefined;
-    const old = item.anchor;
-    const oldRaw = item.raw;
-    // Shape ditulis ulang verbatim dari raw, jadi posisi harus ditulis ke dalam raw itu sendiri.
-    const set = (a: any) => { item.anchor = a; item.raw = isShape ? patchRawAnchor(oldRaw, a) : undefined; this.invalidateDrawings(ws); };
-    set(anchor);
-    return { sheet: ws.title, row: 0, col: 0, before: null, after: null, undo: () => { item.anchor = old; item.raw = oldRaw; this.invalidateDrawings(ws); }, redo: () => set(anchor) };
-  }
+  moveDrawing = xlsx_model_mergeMod.moveDrawing;
 
-  deleteDrawing(ws: Worksheet, index: number): EditRecord | undefined {
-    const items: any[] | undefined = ws.drawing?.items;
-    const item = items?.[index];
-    if (!items || !item || (item.content.kind !== "picture" && !(item.content.kind === "unsupported" && item.raw))) return undefined;
-    items.splice(index, 1);
-    this.invalidateDrawings(ws);
-    return {
-      sheet: ws.title, row: 0, col: 0, before: null, after: null,
-      undo: () => { items.splice(Math.min(index, items.length), 0, item); this.invalidateDrawings(ws); },
-      redo: () => { const i = items.indexOf(item); if (i >= 0) items.splice(i, 1); this.invalidateDrawings(ws); },
-    };
-  }
+  deleteDrawing = xlsx_model_drawingsMod.deleteDrawing;
 
-  insertImage(ws: Worksheet, bytes: Uint8Array, row: number, col: number): { record: EditRecord; index: number; width: number; height: number } {
-    const img = loadImage(bytes);
-    let w = img.width || 240, h = img.height || 160;
-    const max = 480;
-    if (w > max) { h = (h * max) / w; w = max; }
-    const item: any = addImageAt(ws, addr(row, col), img, { widthPx: Math.max(8, Math.round(w)), heightPx: Math.max(8, Math.round(h)) });
-    const items: any[] = ws.drawing!.items;
-    const index = items.indexOf(item);
-    this.invalidateDrawings(ws);
-    return {
-      index, width: Math.round(w), height: Math.round(h),
-      record: {
-        sheet: ws.title, row, col, before: null, after: null,
-        undo: () => { const i = items.indexOf(item); if (i >= 0) items.splice(i, 1); this.invalidateDrawings(ws); },
-        redo: () => { if (!items.includes(item)) items.splice(Math.min(index, items.length), 0, item); this.invalidateDrawings(ws); },
-      },
-    };
-  }
+  insertImage = xlsx_model_drawingsMod.insertImage;
 
   // ───── autofilter ─────
-  filterOf(ws: Worksheet): FilterState | undefined {
-    if (this.filters.has(ws)) return this.filters.get(ws) ?? undefined;
-    const af = ws.autoFilter ?? ws.tables?.find(t => t.autoFilter)?.autoFilter ?? undefined;
-    const ref = af?.ref ?? ws.tables?.[0]?.ref;
-    let st: FilterState | null = null;
-    if (ref && (ws.autoFilter || ws.tables?.length)) {
-      const b = parseAddress(ref);
-      if (b) {
-        st = { range: { minRow: b.r1, minCol: b.c1, maxRow: b.r2, maxCol: b.c2 }, selected: new Map(), hiddenRows: new Set(), written: new Set(), touched: false };
-        for (const fc of af?.filterColumns ?? []) {
-          if ((fc as any).kind === "filters") {
-            const vals = new Set<string>((fc as any).values as string[]);
-            if ((fc as any).blank) vals.add("");
-            st.selected.set(b.c1 + fc.colId, vals);
-          }
-        }
-        if (st.selected.size) {
-          // filter aktif dari file: atribut hidden pada baris data adalah hasil filter -> dihitung ulang oleh model
-          for (let r = b.r1 + 1; r <= b.r2; r++) { const d = ws.rowDimensions.get(r); if (d?.hidden) st.written.add(r); }
-          this.recomputeFilter(ws, st);
-          for (const r of st.written) setRowDimension(ws, r, { hidden: false });
-        }
-      }
-    }
-    this.filters.set(ws, st);
-    return st ?? undefined;
-  }
+  filterOf = xlsx_model_drawingsMod.filterOf;
 
-  enableFilter(ws: Worksheet, sel: Sel): FilterState | undefined {
-    const n = normSel(sel);
-    let range = { minRow: n.r1, minCol: n.c1, maxRow: n.r2, maxCol: n.c2 };
-    if (n.r1 === n.r2 && n.c1 === n.c2) {
-      // satu sel: otomatis perluas ke seluruh blok data (current region)
-      const ext = getCellExtent(ws);
-      if (!ext) return undefined;
-      range = { minRow: n.r1, minCol: ext.minCol, maxRow: ext.maxRow, maxCol: ext.maxCol };
-    }
-    const st: FilterState = { range, selected: new Map(), hiddenRows: new Set(), written: new Set(), touched: true };
-    this.filters.set(ws, st);
-    this.dirty = true;
-    return st;
-  }
+  enableFilter = xlsx_model_filterMod.enableFilter;
 
-  disableFilter(ws: Worksheet) {
-    this.filters.set(ws, null);
-    setAutoFilter(ws, undefined);
-    const keepTables = ws.tables?.length;
-    if (keepTables) for (const t of ws.tables) t.autoFilter = undefined as any;
-    this.dirty = true;
-  }
+  disableFilter = xlsx_model_filterMod.disableFilter;
 
-  recomputeFilter(ws: Worksheet, st: FilterState) {
-    st.hiddenRows = new Set();
-    const active = [...st.selected.entries()];
-    if (!active.length) return;
-    for (let r = st.range.minRow + 1; r <= st.range.maxRow; r++) {
-      for (const [col, allowed] of active) {
-        const t = this.textAt(ws, r, col);
-        if (!allowed.has(t)) { st.hiddenRows.add(r); break; }
-      }
-    }
-  }
+  recomputeFilter = xlsx_model_filterMod.recomputeFilter;
 
-  setFilterColumn(ws: Worksheet, st: FilterState, col: number, allowed: Set<string> | null) {
-    if (allowed === null) st.selected.delete(col); else st.selected.set(col, allowed);
-    st.touched = true;
-    this.dirty = true;
-    this.recomputeFilter(ws, st);
-  }
+  setFilterColumn = xlsx_model_filterMod.setFilterColumn;
 
-  uniqueValues(ws: Worksheet, st: FilterState, col: number): { value: string; count: number }[] {
-    const m = new Map<string, number>();
-    for (let r = st.range.minRow + 1; r <= st.range.maxRow; r++) {
-      const t = this.textAt(ws, r, col);
-      m.set(t, (m.get(t) ?? 0) + 1);
-    }
-    return [...m.entries()].map(([value, count]) => ({ value, count })).sort((a, b) => {
-      const na = Number(a.value), nb = Number(b.value);
-      if (a.value !== "" && b.value !== "" && !isNaN(na) && !isNaN(nb)) return na - nb;
-      return a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: "base" });
-    });
-  }
+  uniqueValues = xlsx_model_filterMod.uniqueValues;
 
-  /** Tulis keadaan filter ke model OOXML sebelum disimpan. */
-  private flushFilters() {
-    for (const [ws, st] of this.filters) {
-      if (!st || !st.touched) continue;
-      const ref = `${addr(st.range.minRow, st.range.minCol)}:${addr(st.range.maxRow, st.range.maxCol)}`;
-      const filterColumns = [...st.selected.entries()].map(([col, vals]) => ({
-        kind: "filters" as const,
-        colId: col - st.range.minCol,
-        values: [...vals].filter(v => v !== ""),
-        ...(vals.has("") ? { blank: true } : {}),
-      }));
-      setAutoFilter(ws, { ref, filterColumns } as any);
-      for (let r = st.range.minRow + 1; r <= st.range.maxRow; r++) {
-        if (st.hiddenRows.has(r)) { setRowDimension(ws, r, { hidden: true }); st.written.add(r); }
-        else if (st.written.has(r)) { setRowDimension(ws, r, { hidden: false }); st.written.delete(r); }
-      }
-    }
-  }
+  private flushFilters = xlsx_model_filterMod.flushFilters;
 
   // ───── simpan ─────
-  /** Isi ulang cache nilai formula agar viewer lain (tanpa kalkulasi) menampilkan hasil terbaru. */
-  refreshFormulaCaches(): number {
-    const prev = this.ev.live;
-    this.ev.live = true;
-    this.ev.invalidate();
-    let n = 0;
-    for (const s of this.wb.sheets) {
-      if (s.kind !== "worksheet") continue;
-      for (const [r, row] of s.sheet.rows) for (const [c, cell] of row) {
-        const f: any = cell.value;
-        if (!f || f.kind !== "formula") continue;
-        const res = this.ev.evalFormulaCell(s.sheet, r, c);
-        if (isErr(res) && (res.code === "#NAME?" || res.code === "#CIRC!")) continue;
-        const next: any = { ...f };
-        if (isErr(res)) { next.cachedValue = res.code; next.cachedValueType = "error"; }
-        else if (res === null) { delete next.cachedValue; delete next.cachedValueType; }
-        else { next.cachedValue = res; delete next.cachedValueType; }
-        cell.value = next;
-        n++;
-      }
-    }
-    this.ev.live = prev;
-    this.ev.invalidate();
-    return n;
-  }
+  refreshFormulaCaches = xlsx_model_filterMod.refreshFormulaCaches;
 
   async toBytes(): Promise<Uint8Array> {
     this.flushFilters();
@@ -1005,19 +551,7 @@ export class XlsxBook {
     return (opts.bom === false ? "" : "﻿") + lines.join("\r\n");
   }
 
-  toTsv(ws: Worksheet, sel: Sel): string {
-    const n = normSel(sel);
-    const rows: string[] = [];
-    for (let r = n.r1; r <= n.r2; r++) {
-      const cells: string[] = [];
-      for (let c = n.c1; c <= n.c2; c++) {
-        const t = this.textAt(ws, r, c);
-        cells.push(/[\t\r\n"]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t);
-      }
-      rows.push(cells.join("\t"));
-    }
-    return rows.join("\r\n");
-  }
+  toTsv = xlsx_model_csvMod.toTsv;
 
   /** Paste: baris TSV → array 2D (menangani kutipan Excel). */
   static parseTsv(text: string): string[][] {
@@ -1036,72 +570,11 @@ export class XlsxBook {
   }
 
   // ───── pencarian ─────
-  search(opts: SearchOptions): SearchResult {
-    const g = this.searchGen(opts);
-    let r = g.next();
-    while (!r.done) r = g.next();
-    return r.value;
-  }
+  search = xlsx_model_csvMod.search;
 
-  /** Pencarian bertahap: berhenti sejenak tiap ±16 ribu sel agar UI tidak membeku pada sheet raksasa. */
-  async searchAsync(opts: SearchOptions, cancelled: () => boolean, progress?: (scanned: number) => void): Promise<SearchResult | undefined> {
-    const g = this.searchGen(opts);
-    let scanned = 0;
-    for (;;) {
-      const r = g.next();
-      if (r.done) return r.value;
-      scanned += 16384;
-      progress?.(scanned);
-      await new Promise(res => setTimeout(res, 0));
-      if (cancelled()) return undefined;
-    }
-  }
+  searchAsync = xlsx_model_searchMod.searchAsync;
 
-  private *searchGen(opts: SearchOptions): Generator<void, SearchResult, void> {
-    const started = performance.now();
-    const results: SearchHit[] = [];
-    const q = opts.query;
-    if (!q) return { hits: [], truncated: false, ms: 0, perSheet: new Map() };
-    let re: RegExp | undefined;
-    if (opts.regex) { try { re = new RegExp(q, opts.matchCase ? "" : "i"); } catch { return { hits: [], truncated: false, ms: 0, perSheet: new Map(), error: "Regex tidak valid" }; } }
-    const needle = opts.matchCase ? q : q.toLowerCase();
-    const cols = opts.columns ? parseColumnSpec(opts.columns) : undefined;
-    const limit = opts.limit ?? 3000;
-    let truncated = false;
-    let scanned = 0;
-    const perSheet = new Map<string, number>();
-    const targets = opts.allSheets ? this.wb.sheets.filter(s => s.kind === "worksheet").map(s => (s as any).sheet as Worksheet) : opts.sheet ? [opts.sheet] : [];
-    outer: for (const ws of targets) {
-      const rowKeys = [...ws.rows.keys()].sort((a, b) => a - b);
-      for (const r of rowKeys) {
-        const row = ws.rows.get(r)!;
-        if (opts.selection && opts.sheet === ws && (r < opts.selection.r1 || r > opts.selection.r2)) continue;
-        for (const c of [...row.keys()].sort((a, b) => a - b)) {
-          if (cols && !cols.has(c)) continue;
-          if (opts.selection && opts.sheet === ws && (c < opts.selection.c1 || c > opts.selection.c2)) continue;
-          const cell = row.get(c)!;
-          if ((++scanned & 0x3fff) === 0) yield;
-          if (cell.value === null) continue;
-          const f: any = cell.value;
-          const isF = f && typeof f === "object" && f.kind === "formula";
-          const shown = this.cellText(ws, cell);
-          const fText = isF ? "=" + f.formula : "";
-          const candidates = opts.inFormulas && isF ? [shown, fText] : [shown];
-          let hitText: string | undefined;
-          for (const cand of candidates) {
-            const hay = opts.matchCase ? cand : cand.toLowerCase();
-            const ok = re ? re.test(cand) : opts.wholeCell ? hay === needle : hay.includes(needle);
-            if (ok) { hitText = cand; break; }
-          }
-          if (hitText === undefined) continue;
-          results.push({ sheet: ws.title, row: r, col: c, address: addr(r, c), text: shown, formula: isF ? fText : undefined, matchedIn: hitText === fText && isF ? "formula" : "value" });
-          perSheet.set(ws.title, (perSheet.get(ws.title) ?? 0) + 1);
-          if (results.length >= limit) { truncated = true; break outer; }
-        }
-      }
-    }
-    return { hits: results, truncated, ms: performance.now() - started, perSheet };
-  }
+  searchGen = xlsx_model_searchMod.searchGen;
 }
 
 export interface SearchOptions {
