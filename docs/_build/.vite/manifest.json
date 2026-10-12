@@ -1,13 +1,133 @@
 {
+  "_ColorField-BrDAQtNl.js": {
+    "file": "assets/ColorField-BrDAQtNl.js",
+    "name": "ColorField",
+    "imports": [
+      "_web-C02gwYou.js"
+    ],
+    "css": [
+      "assets/ColorField-CCkN09Co.css"
+    ]
+  },
+  "_ColorField-CCkN09Co.css": {
+    "file": "assets/ColorField-CCkN09Co.css",
+    "src": "_ColorField-CCkN09Co.css"
+  },
   "_Counter-CWIoMshG.css": {
     "file": "assets/Counter-CWIoMshG.css",
     "src": "_Counter-CWIoMshG.css"
+  },
+  "_LinkPanel-D0nnHwEk.css": {
+    "file": "assets/LinkPanel-D0nnHwEk.css",
+    "src": "_LinkPanel-D0nnHwEk.css"
+  },
+  "_LinkPanel-WoiOCKsS.js": {
+    "file": "assets/LinkPanel-WoiOCKsS.js",
+    "name": "LinkPanel",
+    "imports": [
+      "_web-C02gwYou.js",
+      "_ColorField-BrDAQtNl.js"
+    ],
+    "css": [
+      "assets/LinkPanel-D0nnHwEk.css"
+    ]
   },
   "_SJXContext-Dbo7iwQB.js": {
     "file": "assets/SJXContext-Dbo7iwQB.js",
     "name": "SJXContext",
     "imports": [
       "_web-C02gwYou.js"
+    ]
+  },
+  "_SJXDocxEditor-39P40Spm.js": {
+    "file": "assets/SJXDocxEditor-39P40Spm.js",
+    "name": "SJXDocxEditor",
+    "isDynamicEntry": true,
+    "imports": [
+      "_preload-helper-CgER5ffx.js",
+      "_web-C02gwYou.js",
+      "_office-events-H3JOV5AY.js",
+      "_ColorField-BrDAQtNl.js",
+      "_bytes-BLG5rZyk.js",
+      "_LinkPanel-WoiOCKsS.js"
+    ],
+    "dynamicImports": [
+      "src/shared/components/docx-editor/docx-sample.ts"
+    ],
+    "css": [
+      "assets/SJXDocxEditor-DKUumRdG.css"
+    ]
+  },
+  "_SJXDocxEditor-DKUumRdG.css": {
+    "file": "assets/SJXDocxEditor-DKUumRdG.css",
+    "src": "_SJXDocxEditor-DKUumRdG.css"
+  },
+  "_SJXMaxgraphEditor-BEAppNka.js": {
+    "file": "assets/SJXMaxgraphEditor-BEAppNka.js",
+    "name": "SJXMaxgraphEditor",
+    "isDynamicEntry": true,
+    "imports": [
+      "_preload-helper-CgER5ffx.js",
+      "_web-C02gwYou.js",
+      "_ColorField-BrDAQtNl.js"
+    ],
+    "dynamicImports": [
+      "src/shared/components/maxgraph-editor/MaxgraphLinksDialog.tsx",
+      "src/shared/components/maxgraph-editor/MaxgraphHtmlLabelDialog.tsx",
+      "src/shared/components/maxgraph-editor/MaxgraphDebugPanel.tsx"
+    ],
+    "css": [
+      "assets/SJXMaxgraphEditor-DWyN2nqT.css"
+    ]
+  },
+  "_SJXMaxgraphEditor-DWyN2nqT.css": {
+    "file": "assets/SJXMaxgraphEditor-DWyN2nqT.css",
+    "src": "_SJXMaxgraphEditor-DWyN2nqT.css"
+  },
+  "_SJXPptxEditor-CMYc6dxG.css": {
+    "file": "assets/SJXPptxEditor-CMYc6dxG.css",
+    "src": "_SJXPptxEditor-CMYc6dxG.css"
+  },
+  "_SJXPptxEditor-PQ1CcAP3.js": {
+    "file": "assets/SJXPptxEditor-PQ1CcAP3.js",
+    "name": "SJXPptxEditor",
+    "isDynamicEntry": true,
+    "imports": [
+      "_preload-helper-CgER5ffx.js",
+      "_web-C02gwYou.js",
+      "_office-events-H3JOV5AY.js",
+      "_ColorField-BrDAQtNl.js",
+      "_bytes-BLG5rZyk.js",
+      "_LinkPanel-WoiOCKsS.js"
+    ],
+    "dynamicImports": [
+      "_office-events-H3JOV5AY.js",
+      "src/shared/components/pptx-editor/pptx-sample.ts"
+    ],
+    "css": [
+      "assets/SJXPptxEditor-CMYc6dxG.css"
+    ]
+  },
+  "_SJXXlsxPreview-C_m--ClS.css": {
+    "file": "assets/SJXXlsxPreview-C_m--ClS.css",
+    "src": "_SJXXlsxPreview-C_m--ClS.css"
+  },
+  "_SJXXlsxPreview-yV91UMY5.js": {
+    "file": "assets/SJXXlsxPreview-yV91UMY5.js",
+    "name": "SJXXlsxPreview",
+    "isDynamicEntry": true,
+    "imports": [
+      "_preload-helper-CgER5ffx.js",
+      "_web-C02gwYou.js",
+      "_office-events-H3JOV5AY.js",
+      "_ColorField-BrDAQtNl.js",
+      "_LinkPanel-WoiOCKsS.js"
+    ],
+    "dynamicImports": [
+      "src/shared/components/xlsx-preview/xlsx-sample.ts"
+    ],
+    "css": [
+      "assets/SJXXlsxPreview-C_m--ClS.css"
     ]
   },
   "__commonjsHelpers-D6-XlEtG.js": {
@@ -25,20 +145,16 @@
     "file": "assets/app.constant-DCfKD7jM.js",
     "name": "app.constant"
   },
+  "_bytes-BLG5rZyk.js": {
+    "file": "assets/bytes-BLG5rZyk.js",
+    "name": "bytes"
+  },
   "_clientOnly-DvyEFGHI.js": {
     "file": "assets/clientOnly-DvyEFGHI.js",
     "name": "clientOnly",
     "imports": [
       "_web-C02gwYou.js"
     ]
-  },
-  "_docx-util-BLG5rZyk.js": {
-    "file": "assets/docx-util-BLG5rZyk.js",
-    "name": "docx-util"
-  },
-  "_events-DneH-7M4.js": {
-    "file": "assets/events-DneH-7M4.js",
-    "name": "events"
   },
   "_examples-B23c9E4A.js": {
     "file": "assets/examples-B23c9E4A.js",
@@ -93,6 +209,15 @@
       "assets/maplibre-gl-C1BAJi09.css"
     ]
   },
+  "_office-events-H3JOV5AY.js": {
+    "file": "assets/office-events-H3JOV5AY.js",
+    "name": "office-events",
+    "isDynamicEntry": true,
+    "imports": [
+      "_preload-helper-CgER5ffx.js",
+      "__commonjsHelpers-D6-XlEtG.js"
+    ]
+  },
   "_patch-deckgl-BOigIJ48.css": {
     "file": "assets/patch-deckgl-BOigIJ48.css",
     "src": "_patch-deckgl-BOigIJ48.css"
@@ -100,22 +225,6 @@
   "_preload-helper-CgER5ffx.js": {
     "file": "assets/preload-helper-CgER5ffx.js",
     "name": "preload-helper"
-  },
-  "_ruler-kit-Db4Q8f1_.css": {
-    "file": "assets/ruler-kit-Db4Q8f1_.css",
-    "src": "_ruler-kit-Db4Q8f1_.css"
-  },
-  "_ruler-kit-Wx-te_dl.js": {
-    "file": "assets/ruler-kit-Wx-te_dl.js",
-    "name": "ruler-kit",
-    "isDynamicEntry": true,
-    "imports": [
-      "_preload-helper-CgER5ffx.js",
-      "__commonjsHelpers-D6-XlEtG.js"
-    ],
-    "css": [
-      "assets/ruler-kit-Db4Q8f1_.css"
-    ]
   },
   "_store-Do5jbINm.js": {
     "file": "assets/store-Do5jbINm.js",
@@ -183,26 +292,6 @@
       "assets/index-DC5SOrQ9.css"
     ]
   },
-  "src/components/SJXDocxEditor.tsx": {
-    "file": "assets/SJXDocxEditor-DRzSiBui.js",
-    "name": "SJXDocxEditor",
-    "src": "src/components/SJXDocxEditor.tsx",
-    "isDynamicEntry": true,
-    "imports": [
-      "_preload-helper-CgER5ffx.js",
-      "_web-C02gwYou.js",
-      "_ruler-kit-Wx-te_dl.js",
-      "_docx-util-BLG5rZyk.js",
-      "_events-DneH-7M4.js",
-      "__commonjsHelpers-D6-XlEtG.js"
-    ],
-    "dynamicImports": [
-      "_ruler-kit-Wx-te_dl.js"
-    ],
-    "css": [
-      "assets/SJXDocxEditor-CsSOEs7U.css"
-    ]
-  },
   "src/components/SJXGlobeMaplibre.tsx": {
     "file": "assets/SJXGlobeMaplibre-BxyvOHyu.js",
     "name": "SJXGlobeMaplibre",
@@ -218,55 +307,6 @@
     ],
     "dynamicImports": [
       "node_modules/.pnpm/maplibre-local-glyphs@1.2.0/node_modules/maplibre-local-glyphs/protocol-glyphs.js"
-    ]
-  },
-  "src/components/SJXMaxgraphEditor.tsx": {
-    "file": "assets/SJXMaxgraphEditor-s4BdJg0w.js",
-    "name": "SJXMaxgraphEditor",
-    "src": "src/components/SJXMaxgraphEditor.tsx",
-    "isDynamicEntry": true,
-    "imports": [
-      "_web-C02gwYou.js",
-      "_events-DneH-7M4.js"
-    ],
-    "css": [
-      "assets/SJXMaxgraphEditor-0ILkV7lg.css"
-    ]
-  },
-  "src/components/SJXPptxEditor.tsx": {
-    "file": "assets/SJXPptxEditor-BDtjQ3Pr.js",
-    "name": "SJXPptxEditor",
-    "src": "src/components/SJXPptxEditor.tsx",
-    "isDynamicEntry": true,
-    "imports": [
-      "_web-C02gwYou.js",
-      "_preload-helper-CgER5ffx.js",
-      "_ruler-kit-Wx-te_dl.js",
-      "_docx-util-BLG5rZyk.js",
-      "_events-DneH-7M4.js",
-      "__commonjsHelpers-D6-XlEtG.js"
-    ],
-    "dynamicImports": [
-      "_ruler-kit-Wx-te_dl.js"
-    ],
-    "css": [
-      "assets/SJXPptxEditor-CZSR_gf4.css"
-    ]
-  },
-  "src/components/SJXXlsxPreview.tsx": {
-    "file": "assets/SJXXlsxPreview-BRT28aFM.js",
-    "name": "SJXXlsxPreview",
-    "src": "src/components/SJXXlsxPreview.tsx",
-    "isDynamicEntry": true,
-    "imports": [
-      "_web-C02gwYou.js",
-      "_ruler-kit-Wx-te_dl.js",
-      "_events-DneH-7M4.js",
-      "_preload-helper-CgER5ffx.js",
-      "__commonjsHelpers-D6-XlEtG.js"
-    ],
-    "css": [
-      "assets/SJXXlsxPreview-DGNs05XU.css"
     ]
   },
   "src/routes/aggrid.tsx?pick=default&pick=$css": {
@@ -302,7 +342,7 @@
     ]
   },
   "src/routes/docx-editor.tsx?pick=default&pick=$css": {
-    "file": "assets/docx-editor-DPZ4RYhO.js",
+    "file": "assets/docx-editor-1HQpjHzm.js",
     "name": "docx-editor",
     "src": "src/routes/docx-editor.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -314,7 +354,7 @@
       "_index-_XO1Ohf-.js"
     ],
     "dynamicImports": [
-      "src/components/SJXDocxEditor.tsx"
+      "_SJXDocxEditor-39P40Spm.js"
     ]
   },
   "src/routes/globe-maplibre.tsx?pick=default&pick=$css": {
@@ -387,7 +427,7 @@
     ]
   },
   "src/routes/maxgraph-editor.tsx?pick=default&pick=$css": {
-    "file": "assets/maxgraph-editor-3LAdjx75.js",
+    "file": "assets/maxgraph-editor-CfDuteZT.js",
     "name": "maxgraph-editor",
     "src": "src/routes/maxgraph-editor.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -399,11 +439,11 @@
       "_index-_XO1Ohf-.js"
     ],
     "dynamicImports": [
-      "src/components/SJXMaxgraphEditor.tsx"
+      "_SJXMaxgraphEditor-BEAppNka.js"
     ]
   },
   "src/routes/pptx-editor.tsx?pick=default&pick=$css": {
-    "file": "assets/pptx-editor-pmXzHUan.js",
+    "file": "assets/pptx-editor-hBPUAXGY.js",
     "name": "pptx-editor",
     "src": "src/routes/pptx-editor.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -415,7 +455,7 @@
       "_index-_XO1Ohf-.js"
     ],
     "dynamicImports": [
-      "src/components/SJXPptxEditor.tsx"
+      "_SJXPptxEditor-PQ1CcAP3.js"
     ]
   },
   "src/routes/solid-google-maps.tsx?pick=default&pick=$css": {
@@ -453,7 +493,7 @@
     ]
   },
   "src/routes/xlsx-preview.tsx?pick=default&pick=$css": {
-    "file": "assets/xlsx-preview-B-3rGGOB.js",
+    "file": "assets/xlsx-preview-CrYhzptg.js",
     "name": "xlsx-preview",
     "src": "src/routes/xlsx-preview.tsx?pick=default&pick=$css",
     "isEntry": true,
@@ -465,11 +505,96 @@
       "_index-_XO1Ohf-.js"
     ],
     "dynamicImports": [
-      "src/components/SJXXlsxPreview.tsx"
+      "_SJXXlsxPreview-yV91UMY5.js"
+    ]
+  },
+  "src/shared/components/docx-editor/docx-sample.ts": {
+    "file": "assets/docx-sample-CZW7DGjq.js",
+    "name": "docx-sample",
+    "src": "src/shared/components/docx-editor/docx-sample.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_preload-helper-CgER5ffx.js",
+      "_SJXDocxEditor-39P40Spm.js",
+      "_office-events-H3JOV5AY.js",
+      "_web-C02gwYou.js",
+      "_ColorField-BrDAQtNl.js",
+      "_bytes-BLG5rZyk.js",
+      "_LinkPanel-WoiOCKsS.js",
+      "__commonjsHelpers-D6-XlEtG.js"
+    ],
+    "dynamicImports": [
+      "_office-events-H3JOV5AY.js"
+    ]
+  },
+  "src/shared/components/maxgraph-editor/MaxgraphDebugPanel.tsx": {
+    "file": "assets/MaxgraphDebugPanel-CGJfgE24.js",
+    "name": "MaxgraphDebugPanel",
+    "src": "src/shared/components/maxgraph-editor/MaxgraphDebugPanel.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_web-C02gwYou.js",
+      "_SJXMaxgraphEditor-BEAppNka.js",
+      "_preload-helper-CgER5ffx.js",
+      "_ColorField-BrDAQtNl.js"
+    ]
+  },
+  "src/shared/components/maxgraph-editor/MaxgraphHtmlLabelDialog.tsx": {
+    "file": "assets/MaxgraphHtmlLabelDialog-li0NlJCn.js",
+    "name": "MaxgraphHtmlLabelDialog",
+    "src": "src/shared/components/maxgraph-editor/MaxgraphHtmlLabelDialog.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_web-C02gwYou.js",
+      "_ColorField-BrDAQtNl.js",
+      "_SJXMaxgraphEditor-BEAppNka.js",
+      "_preload-helper-CgER5ffx.js"
+    ]
+  },
+  "src/shared/components/maxgraph-editor/MaxgraphLinksDialog.tsx": {
+    "file": "assets/MaxgraphLinksDialog-DEVvcoSH.js",
+    "name": "MaxgraphLinksDialog",
+    "src": "src/shared/components/maxgraph-editor/MaxgraphLinksDialog.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "_web-C02gwYou.js",
+      "_LinkPanel-WoiOCKsS.js",
+      "_ColorField-BrDAQtNl.js"
+    ]
+  },
+  "src/shared/components/pptx-editor/pptx-sample.ts": {
+    "file": "assets/pptx-sample-C2Ywdkcw.js",
+    "name": "pptx-sample",
+    "src": "src/shared/components/pptx-editor/pptx-sample.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_SJXPptxEditor-PQ1CcAP3.js",
+      "_office-events-H3JOV5AY.js",
+      "_preload-helper-CgER5ffx.js",
+      "_web-C02gwYou.js",
+      "_ColorField-BrDAQtNl.js",
+      "_bytes-BLG5rZyk.js",
+      "_LinkPanel-WoiOCKsS.js",
+      "__commonjsHelpers-D6-XlEtG.js"
+    ]
+  },
+  "src/shared/components/xlsx-preview/xlsx-sample.ts": {
+    "file": "assets/xlsx-sample-CSbLYIi9.js",
+    "name": "xlsx-sample",
+    "src": "src/shared/components/xlsx-preview/xlsx-sample.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_SJXXlsxPreview-yV91UMY5.js",
+      "_preload-helper-CgER5ffx.js",
+      "_web-C02gwYou.js",
+      "_office-events-H3JOV5AY.js",
+      "__commonjsHelpers-D6-XlEtG.js",
+      "_ColorField-BrDAQtNl.js",
+      "_LinkPanel-WoiOCKsS.js"
     ]
   },
   "virtual:$vinxi/handler/client": {
-    "file": "assets/client-CVJ6YtVw.js",
+    "file": "assets/client-CvlnR6oC.js",
     "name": "client",
     "src": "virtual:$vinxi/handler/client",
     "isEntry": true,
